@@ -5,25 +5,317 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>STEEL CRADLE ―鋼の揺り籠―</title>
   <style>
-    /* 仮のスタイル:フェーズ0でここに計器風UIを作っていく */
+    /* ===================================================================
+       フェーズ0:電力配分パネル(コックピット計器風)
+       CSSだけで描く。画像は一切使わない。
+       =================================================================== */
+
+    /* :root は「ページ全体」を指す。ここで色を名前付きで定義しておくと
+       あとから一箇所いじるだけで全体の色調を変えられる(CSS変数という仕組み)*/
+    :root {
+      --bg: #05070d;          /* 背景の黒(完全な黒より少し青いほうが計器らしい)*/
+      --line: #1d2b36;        /* 枠線の色 */
+      --text: #9fe1cb;        /* 基本の文字色(蛍光グリーン)*/
+      --dim: #4a5b66;         /* 補助文字の色(暗いグレー)*/
+    }
+
+    * { box-sizing: border-box; }  /* 枠線を幅に含める計算方式。ズレ防止のおまじない */
+
     body {
-      background: #05070d;
-      color: #9fe1cb;
-      font-family: monospace;
-      display: flex;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Consolas", "Courier New", monospace;
+      margin: 0;
+      min-height: 100vh;           /* 画面の高さいっぱい */
+      display: flex;               /* 中身を縦に並べて中央寄せ */
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 100vh;
-      margin: 0;
+      gap: 22px;
+      user-select: none;           /* 文字をドラッグ選択できないように(計器っぽさ)*/
     }
-    h1 { font-weight: normal; letter-spacing: 0.3em; }
-    p { color: #5f6e7a; }
+
+    /* ---- 上部のタイトル帯 ---- */
+    .header {
+      text-align: center;
+      letter-spacing: 0.35em;
+      font-size: 13px;
+      color: var(--dim);
+    }
+    .header .title { color: var(--text); font-size: 15px; }
+
+    /* ---- 計器盤ぜんたい(電力パネル + 熱パネル)---- */
+    .console {
+      position: relative;   /* シャットダウン表示を上に重ねるための基準 */
+      display: flex;
+      align-items: stretch; /* 2つのパネルの高さを揃える */
+      gap: 16px;
+    }
+
+    /* ---- ゲージを横に並べる箱 ---- */
+    .panel {
+      display: flex;
+      gap: 26px;
+      padding: 22px 30px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #080c14;
+      /* 内側にうっすら光を落として、計器の奥行きを出す */
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9);
+    }
+
+    /* ---- ゲージ1本ぶん ---- */
+    .gauge {
+      width: 78px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 7px;
+    }
+
+    /* 対応キーの表示(↑ ← → ↓)*/
+    .gauge-key {
+      font-size: 15px;
+      color: var(--dim);
+      line-height: 1;
+    }
+
+    /* ゲージの筒(空の器)*/
+    .gauge-tube {
+      position: relative;          /* 中の bar を「下端そろえ」で置くための基準 */
+      width: 34px;
+      height: 240px;
+      border: 1px solid var(--line);
+      background: #04060a;
+      overflow: hidden;
+      /* 25%ごとの目盛り線。repeating-linear-gradient = 同じ模様の繰り返し */
+      background-image: repeating-linear-gradient(
+        to top,
+        transparent 0px,
+        transparent 23px,
+        rgba(255, 255, 255, 0.07) 23px,
+        rgba(255, 255, 255, 0.07) 24px
+      );
+    }
+
+    /* 実際に伸び縮みする光る棒。高さはJSから % で指定する */
+    .gauge-bar {
+      position: absolute;
+      left: 0;
+      bottom: 0;                   /* 下端から上に伸ばす */
+      width: 100%;
+      height: 25%;                 /* ← ステップ1では仮に25%固定 */
+      background: #3a5f52;         /* ← 仮の色。ステップ3でJSが系統ごとの色に塗り替える */
+      transition: height 0.12s linear, background-color 0.12s linear;
+    }
+
+    /* 数値(38%)の表示 */
+    .gauge-value {
+      font-size: 21px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums; /* 数字の幅を揃えて、変化時にガタつかせない */
+    }
+    .gauge-value .unit { font-size: 11px; color: var(--dim); }
+
+    /* 系統名 */
+    .gauge-label { text-align: center; font-size: 12px; line-height: 1.5; }
+    .gauge-label .en { font-size: 9px; color: var(--dim); letter-spacing: 0.12em; }
+
+    /* =================================================================
+       熱(HEAT)パネル ― 仕様書9.3の中核リソース2
+       ================================================================= */
+    .panel-heat { padding-left: 24px; padding-right: 24px; }
+
+    .heat-tube { width: 40px; }   /* 電力より太くして「別格の計器」に見せる */
+
+    /* 危険域(80%)を示す横線。ここを超えたら警告が出る */
+    .heat-tube::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      bottom: 80%;
+      width: 100%;
+      height: 1px;
+      background: rgba(255, 90, 60, 0.55);
+      z-index: 2;                 /* 熱の棒より前面に出す */
+    }
+
+    /* 警告状態:パネルの枠が赤く明滅する */
+    .panel-heat.warn { border-color: #a83a26; animation: warnBlink 0.55s steps(2) infinite; }
+    @keyframes warnBlink {
+      0%   { background: #080c14; }
+      100% { background: #1a0b08; }
+    }
+
+    /* ラジエーターの状態表示 */
+    .rad {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--dim);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 2px 6px;
+    }
+    /* 展開中は青白く点灯(＝放熱中。ただし被弾に弱い状態)*/
+    .rad.open { color: #8fd8ff; border-color: #2d5f7a; background: #0b1a24; }
+
+    /* =================================================================
+       推進剤・シールドのパネル(仕様書9.3の中核リソース3 と 防御1段目)
+       ================================================================= */
+    .panel-status { padding-left: 22px; padding-right: 22px; }
+
+    /* 残量が少ないときに数値を赤くするための印 */
+    .gauge-value.low .num { color: #ff5a3c !important; }
+
+    /* 補助ラベル(BURST -8 など)*/
+    .sub-label {
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      color: var(--dim);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 2px 6px;
+    }
+
+    /* =================================================================
+       強制シャットダウン演出
+       ================================================================= */
+    /* 計器盤ぜんたいを灰色に沈める。filter = 見た目だけを加工する指定 */
+    .console.shutdown .panel { filter: grayscale(1) brightness(0.35); }
+
+    .shutdown-overlay {
+      position: absolute;
+      inset: 0;                    /* 上下左右0 = 親の全面を覆う */
+      display: none;               /* ふだんは隠しておく */
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: rgba(10, 2, 2, 0.55);
+      color: #ff6a4d;
+      letter-spacing: 0.3em;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .console.shutdown .shutdown-overlay { display: flex; }  /* 停止中だけ表示 */
+    .shutdown-overlay .big { font-size: 17px; animation: warnBlink 0.4s steps(2) infinite; }
+    .shutdown-overlay .sub { font-size: 11px; color: #b8563f; letter-spacing: 0.2em; }
+
+    /* ---- 下部の情報行 ---- */
+    .status {
+      display: flex;
+      gap: 26px;
+      font-size: 12px;
+      color: var(--dim);
+    }
+    .status b { color: var(--text); font-weight: normal; }
+
+    /* ---- 操作説明 ---- */
+    .help {
+      font-size: 11px;
+      color: var(--dim);
+      text-align: center;
+      line-height: 1.9;
+    }
   </style>
 </head>
 <body>
-  <h1>STEEL CRADLE</h1>
-  <p>SYSTEM STANDBY ― フェーズ0開発中</p>
+
+  <div class="header">
+    <div class="title">STEEL CRADLE</div>
+    <div>POWER DISTRIBUTION / 電力配分</div>
+  </div>
+
+  <div class="console" id="console">
+
+    <!-- data-system は「この要素はどの系統か」を書き込んでおくための印。
+         JSがこの名前を手がかりに、対応するゲージを探して動かす -->
+    <div class="panel" id="panel">
+
+      <div class="gauge" data-system="weapon">
+        <div class="gauge-key">↑</div>
+        <div class="gauge-tube"><div class="gauge-bar"></div></div>
+        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+        <div class="gauge-label">武器<br><span class="en">WEAPON</span></div>
+      </div>
+
+      <div class="gauge" data-system="shield">
+        <div class="gauge-key">←</div>
+        <div class="gauge-tube"><div class="gauge-bar"></div></div>
+        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+        <div class="gauge-label">シールド<br><span class="en">SHIELD</span></div>
+      </div>
+
+      <div class="gauge" data-system="engine">
+        <div class="gauge-key">→</div>
+        <div class="gauge-tube"><div class="gauge-bar"></div></div>
+        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+        <div class="gauge-label">エンジン<br><span class="en">ENGINE</span></div>
+      </div>
+
+      <div class="gauge" data-system="sensor">
+        <div class="gauge-key">↓</div>
+        <div class="gauge-tube"><div class="gauge-bar"></div></div>
+        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+        <div class="gauge-label">センサー<br><span class="en">SENSOR</span></div>
+      </div>
+
+    </div>
+
+    <!-- 熱パネル(仕様書9.3:武器発射で蓄積し、真空では放出が遅い)-->
+    <div class="panel panel-heat" id="heat-panel">
+      <div class="gauge">
+        <div class="gauge-key">V</div>
+        <div class="gauge-tube heat-tube"><div class="gauge-bar" id="heat-bar"></div></div>
+        <div class="gauge-value"><span class="num" id="heat-num">0</span><span class="unit">%</span></div>
+        <div class="gauge-label">熱<br><span class="en">HEAT</span></div>
+        <div class="rad" id="rad">RAD CLOSED</div>
+      </div>
+    </div>
+
+    <!-- 推進剤とシールド -->
+    <div class="panel panel-status">
+
+      <!-- 推進剤:電力とは別枠の燃料。急機動で減り、戦闘中は回復しない -->
+      <div class="gauge">
+        <div class="gauge-key">Space</div>
+        <div class="gauge-tube"><div class="gauge-bar" id="prop-bar"></div></div>
+        <div class="gauge-value" id="prop-value"><span class="num" id="prop-num">100</span><span class="unit">%</span></div>
+        <div class="gauge-label">推進剤<br><span class="en">PROPELLANT</span></div>
+        <div class="sub-label">BURST −8</div>
+      </div>
+
+      <!-- シールド強度:シールド系統の電力配分に比例して回復する -->
+      <div class="gauge">
+        <div class="gauge-key">H</div>
+        <div class="gauge-tube"><div class="gauge-bar" id="shield-bar"></div></div>
+        <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
+        <div class="gauge-label">シールド強度<br><span class="en">SHIELD HP</span></div>
+        <div class="sub-label" id="shield-regen">+0.0/s</div>
+      </div>
+
+    </div>
+
+    <!-- 強制シャットダウン中だけ表示される警告 -->
+    <div class="shutdown-overlay">
+      <div class="big">⚠ SYSTEM SHUTDOWN</div>
+      <div class="sub">強制冷却中 ― 操作不能 <span id="shutdown-timer">0.0</span>s</div>
+    </div>
+
+  </div>
+
+  <div class="status">
+    <div>TOTAL <b id="total">100</b>%</div>
+    <div>PRESET <b id="preset">MANUAL</b></div>
+    <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
+  </div>
+
+  <div class="help">
+    ↑武器 / ←シールド / →エンジン / ↓センサー … +10%(他3系統から均等に差し引き)<br>
+    1 攻撃 &nbsp;&nbsp; 2 防御 &nbsp;&nbsp; 3 巡航 &nbsp;&nbsp;|&nbsp;&nbsp; V ラジエーター展開/収納<br>
+    Space 回避バースト(推進剤 −8) &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト(シールド −20)</span>
+  </div>
+
   <script src="src/main.js"></script>
 </body>
 </html>
