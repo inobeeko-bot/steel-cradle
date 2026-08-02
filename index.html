@@ -6,297 +6,426 @@
   <title>STEEL CRADLE ―鋼の揺り籠―</title>
   <style>
     /* ===================================================================
-       フェーズ0:電力配分パネル(コックピット計器風)
-       CSSだけで描く。画像は一切使わない。
+       フェーズ1:コックピット画面
+       ・中央 = Three.js の3D宇宙空間(キャノピー越しの視界)
+       ・左右と下 = HTML/CSSで描いた計器パネル(仕様書11.2「HTML/CSSオーバーレイ」)
+       ・仕様書9.6のレイアウト:左縦=HEAT / 右縦=推進剤 / 下段中央=電力配分
        =================================================================== */
 
-    /* :root は「ページ全体」を指す。ここで色を名前付きで定義しておくと
-       あとから一箇所いじるだけで全体の色調を変えられる(CSS変数という仕組み)*/
     :root {
-      --bg: #05070d;          /* 背景の黒(完全な黒より少し青いほうが計器らしい)*/
-      --line: #1d2b36;        /* 枠線の色 */
-      --text: #9fe1cb;        /* 基本の文字色(蛍光グリーン)*/
-      --dim: #4a5b66;         /* 補助文字の色(暗いグレー)*/
+      --bg: #05070d;
+      --line: #1d2b36;
+      --text: #9fe1cb;
+      --dim: #4a5b66;
+      --panel-bg: rgba(7, 11, 18, 0.82);   /* 半透明。奥の宇宙がうっすら透ける */
     }
 
-    * { box-sizing: border-box; }  /* 枠線を幅に含める計算方式。ズレ防止のおまじない */
+    * { box-sizing: border-box; }
 
     body {
       background: var(--bg);
       color: var(--text);
       font-family: "Consolas", "Courier New", monospace;
       margin: 0;
-      min-height: 100vh;           /* 画面の高さいっぱい */
-      display: flex;               /* 中身を縦に並べて中央寄せ */
-      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;        /* 画面をスクロールさせない(コックピットなので)*/
+      user-select: none;
+    }
+
+    /* ---- 3D宇宙空間。画面全体に敷き、計器はこの上に重ねる ---- */
+    #scene {
+      position: fixed;
+      inset: 0;                /* 上下左右0 = 画面いっぱい */
+      z-index: 0;
+    }
+    #scene canvas { display: block; }
+
+    /* Three.jsが読めなかったときに出る案内 */
+    #scene-error {
+      position: fixed;
+      inset: 0;
+      display: none;
       align-items: center;
       justify-content: center;
-      gap: 22px;
-      user-select: none;           /* 文字をドラッグ選択できないように(計器っぽさ)*/
-    }
-
-    /* ---- 上部のタイトル帯 ---- */
-    .header {
       text-align: center;
-      letter-spacing: 0.35em;
-      font-size: 13px;
+      font-size: 12px;
+      color: #7a4a4a;
+      line-height: 2;
+      z-index: 1;
+    }
+
+    /* ---- キャノピー枠。画面の四隅を暗く落として「窓から見ている」感を出す ---- */
+    .canopy {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;    /* クリックを透過させる */
+      background: radial-gradient(ellipse 75% 65% at 50% 42%,
+                  rgba(0,0,0,0) 55%, rgba(2,4,8,0.75) 100%);
+    }
+
+    /* ===================================================================
+       計器オーバーレイ
+       =================================================================== */
+    .hud {
+      position: fixed;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;    /* 計器はクリック不可。キーボード操作のみ */
+    }
+
+    .hud-top    { position: absolute; top: 14px;  left: 50%; transform: translateX(-50%); text-align: center; }
+    .hud-left   { position: absolute; left: 18px; top: 50%;  transform: translateY(-50%); }
+    .hud-right  { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); }
+    .hud-bottom { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+                  display: flex; flex-direction: column; align-items: center; gap: 8px; }
+
+    .header { letter-spacing: 0.35em; font-size: 11px; color: var(--dim); }
+    .header .title { color: var(--text); font-size: 14px; }
+
+    /* =================================================================
+       ドリフト表示(Shift長押し中)
+       画面端を青く光らせる = 機体の状態が視界の隅で分かるようにする
+       ================================================================= */
+    .drift-frame {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s linear;
+      /* inset = 内向きの影。画面の縁だけが青く発光しているように見せる */
+      box-shadow:
+        inset 0 0 120px rgba(70, 160, 255, 0.30),
+        inset 0 0  26px rgba(150, 215, 255, 0.22);
+      border: 1px solid rgba(120, 200, 255, 0.30);
+    }
+    .hud.drift .drift-frame { opacity: 1; }
+
+    /* 照準の少し上に出る「DRIFT」の文字 */
+    .drift-label {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -54px);
+      font-size: 11px;
+      letter-spacing: 0.5em;
+      color: #8fd8ff;
+      text-indent: 0.5em;          /* 字間の分だけ右にずれるのを打ち消す */
+      opacity: 0;
+      transition: opacity 0.15s linear;
+      white-space: nowrap;
+    }
+    .hud.drift .drift-label { opacity: 1; }
+
+    /* ドリフト中は照準を青くして、通常時と区別する */
+    .hud.drift .crosshair::before,
+    .hud.drift .crosshair::after { background: #8fd8ff; }
+    .hud.drift .crosshair-gap { border-color: #8fd8ff; }
+
+    /* ---- 撃墜数カウンター(右上)---- */
+    .kill-counter {
+      position: absolute;
+      top: 16px; right: 20px;
+      font-size: 11px;
+      letter-spacing: 0.18em;
       color: var(--dim);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      padding: 5px 11px;
+      background: var(--panel-bg);
     }
-    .header .title { color: var(--text); font-size: 15px; }
+    .kill-counter b {
+      color: #ffcf6a;
+      font-weight: normal;
+      font-size: 15px;
+      font-variant-numeric: tabular-nums;
+    }
 
-    /* ---- 計器盤ぜんたい(電力パネル + 熱パネル)---- */
-    .console {
-      position: relative;   /* シャットダウン表示を上に重ねるための基準 */
+    /* ---- 戦闘ログ(HIT / KILL)----
+       画面中央は戦闘が起きる場所なので、ログは左下に置いて視界を塞がないようにする。
+       (仕様書9.6で左下はレーダースコープの位置。実装時にここは移動する) */
+    .combat-log {
+      position: absolute;
+      left: 22px;
+      bottom: 18px;
       display: flex;
-      align-items: stretch; /* 2つのパネルの高さを揃える */
-      gap: 16px;
+      flex-direction: column;
+      align-items: flex-start;   /* 左そろえ */
+      justify-content: flex-end;
+      gap: 3px;
+      height: 70px;              /* 高さを固定し、行が増えても他がずれないようにする */
+      font-size: 11px;
+      letter-spacing: 0.22em;
+    }
+    /* 1行ぶん。出たあとゆっくり消える */
+    .log-line {
+      animation: logFade 2.6s forwards;   /* forwards = 終わった状態のまま止まる */
+    }
+    @keyframes logFade {
+      0%   { opacity: 0; transform: translateY(4px); }
+      12%  { opacity: 1; transform: translateY(0); }
+      70%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    .log-line.hit  { color: #9fe1cb; }
+    .log-line.kill { color: #ffcf6a; font-size: 14px; letter-spacing: 0.3em; }
+
+    /* ---- 照準(仕様書9.6「中央:キャノピー+HUD(照準…)」)---- */
+    .crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 34px; height: 34px;
+      transform: translate(-50%, -50%);
+      opacity: 0.55;
+    }
+    /* 縦線と横線を、疑似要素2つだけで描く(画像を使わない) */
+    .crosshair::before, .crosshair::after {
+      content: "";
+      position: absolute;
+      background: var(--text);
+    }
+    .crosshair::before { left: 50%; top: 0;  width: 1px; height: 100%; margin-left: -0.5px; }
+    .crosshair::after  { top: 50%; left: 0;  height: 1px; width: 100%; margin-top: -0.5px; }
+    /* 中心を空けて、狙う点が見えるようにする */
+    .crosshair-gap {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 12px; height: 12px;
+      transform: translate(-50%, -50%);
+      background: transparent;
+      border: 1px solid var(--text);
+      border-radius: 50%;
     }
 
-    /* ---- ゲージを横に並べる箱 ---- */
+    /* ---- パネル(計器の箱)---- */
     .panel {
       display: flex;
-      gap: 26px;
-      padding: 22px 30px;
+      gap: 20px;
+      padding: 14px 20px;
       border: 1px solid var(--line);
       border-radius: 4px;
-      background: #080c14;
-      /* 内側にうっすら光を落として、計器の奥行きを出す */
-      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9);
+      background: var(--panel-bg);
+      box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.85);
     }
 
     /* ---- ゲージ1本ぶん ---- */
     .gauge {
-      width: 78px;
+      width: 70px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 7px;
+      gap: 6px;
     }
+    .gauge-key { font-size: 13px; color: var(--dim); line-height: 1; }
 
-    /* 対応キーの表示(↑ ← → ↓)*/
-    .gauge-key {
-      font-size: 15px;
-      color: var(--dim);
-      line-height: 1;
-    }
-
-    /* ゲージの筒(空の器)*/
     .gauge-tube {
-      position: relative;          /* 中の bar を「下端そろえ」で置くための基準 */
-      width: 34px;
-      height: 240px;
+      position: relative;
+      width: 30px;
+      height: 110px;           /* 下段(電力)の標準の高さ */
       border: 1px solid var(--line);
-      background: #04060a;
+      background: rgba(4, 6, 10, 0.9);
       overflow: hidden;
-      /* 25%ごとの目盛り線。repeating-linear-gradient = 同じ模様の繰り返し */
       background-image: repeating-linear-gradient(
         to top,
-        transparent 0px,
-        transparent 23px,
-        rgba(255, 255, 255, 0.07) 23px,
-        rgba(255, 255, 255, 0.07) 24px
+        transparent 0px, transparent 21px,
+        rgba(255,255,255,0.07) 21px, rgba(255,255,255,0.07) 22px
       );
     }
 
-    /* 実際に伸び縮みする光る棒。高さはJSから % で指定する */
+    /* 左右の縦型計器は背を高くする(仕様書9.6「周辺視野で針の高さを感じる実機式縦型計器」)*/
+    .panel-heat .gauge-tube,
+    .panel-status .gauge-tube { height: 190px; }
+
     .gauge-bar {
       position: absolute;
-      left: 0;
-      bottom: 0;                   /* 下端から上に伸ばす */
+      left: 0; bottom: 0;
       width: 100%;
-      height: 25%;                 /* ← ステップ1では仮に25%固定 */
-      background: #3a5f52;         /* ← 仮の色。ステップ3でJSが系統ごとの色に塗り替える */
+      height: 25%;
+      background: #3a5f52;
       transition: height 0.12s linear, background-color 0.12s linear;
     }
 
-    /* 数値(38%)の表示 */
-    .gauge-value {
-      font-size: 21px;
-      line-height: 1;
-      font-variant-numeric: tabular-nums; /* 数字の幅を揃えて、変化時にガタつかせない */
-    }
-    .gauge-value .unit { font-size: 11px; color: var(--dim); }
-
-    /* 系統名 */
-    .gauge-label { text-align: center; font-size: 12px; line-height: 1.5; }
-    .gauge-label .en { font-size: 9px; color: var(--dim); letter-spacing: 0.12em; }
-
-    /* =================================================================
-       熱(HEAT)パネル ― 仕様書9.3の中核リソース2
-       ================================================================= */
-    .panel-heat { padding-left: 24px; padding-right: 24px; }
-
-    .heat-tube { width: 40px; }   /* 電力より太くして「別格の計器」に見せる */
-
-    /* 危険域(80%)を示す横線。ここを超えたら警告が出る */
-    .heat-tube::after {
-      content: "";
-      position: absolute;
-      left: 0;
-      bottom: 80%;
-      width: 100%;
-      height: 1px;
-      background: rgba(255, 90, 60, 0.55);
-      z-index: 2;                 /* 熱の棒より前面に出す */
-    }
-
-    /* 警告状態:パネルの枠が赤く明滅する */
-    .panel-heat.warn { border-color: #a83a26; animation: warnBlink 0.55s steps(2) infinite; }
-    @keyframes warnBlink {
-      0%   { background: #080c14; }
-      100% { background: #1a0b08; }
-    }
-
-    /* ラジエーターの状態表示 */
-    .rad {
-      font-size: 10px;
-      letter-spacing: 0.1em;
-      color: var(--dim);
-      border: 1px solid var(--line);
-      border-radius: 2px;
-      padding: 2px 6px;
-    }
-    /* 展開中は青白く点灯(＝放熱中。ただし被弾に弱い状態)*/
-    .rad.open { color: #8fd8ff; border-color: #2d5f7a; background: #0b1a24; }
-
-    /* =================================================================
-       推進剤・シールドのパネル(仕様書9.3の中核リソース3 と 防御1段目)
-       ================================================================= */
-    .panel-status { padding-left: 22px; padding-right: 22px; }
-
-    /* 残量が少ないときに数値を赤くするための印 */
+    .gauge-value { font-size: 18px; line-height: 1; font-variant-numeric: tabular-nums; }
+    .gauge-value .unit { font-size: 10px; color: var(--dim); }
     .gauge-value.low .num { color: #ff5a3c !important; }
 
-    /* 補助ラベル(BURST -8 など)*/
-    .sub-label {
-      font-size: 9px;
-      letter-spacing: 0.08em;
-      color: var(--dim);
-      border: 1px solid var(--line);
-      border-radius: 2px;
-      padding: 2px 6px;
+    .gauge-label { text-align: center; font-size: 11px; line-height: 1.45; }
+    .gauge-label .en { font-size: 8px; color: var(--dim); letter-spacing: 0.1em; }
+
+    /* ---- 熱パネル ---- */
+    .panel-heat { padding-left: 18px; padding-right: 18px; }
+    .panel-heat .gauge-tube { width: 36px; }
+
+    /* 危険域(80%)の赤線 */
+    .panel-heat .gauge-tube::after {
+      content: "";
+      position: absolute;
+      left: 0; bottom: 80%;
+      width: 100%; height: 1px;
+      background: rgba(255, 90, 60, 0.55);
+      z-index: 2;
     }
 
-    /* =================================================================
+    .panel-heat.warn { border-color: #a83a26; animation: warnBlink 0.55s steps(2) infinite; }
+    @keyframes warnBlink {
+      0%   { background: var(--panel-bg); }
+      100% { background: rgba(26, 11, 8, 0.9); }
+    }
+
+    .rad {
+      font-size: 9px; letter-spacing: 0.08em; color: var(--dim);
+      border: 1px solid var(--line); border-radius: 2px; padding: 2px 5px;
+    }
+    .rad.open { color: #8fd8ff; border-color: #2d5f7a; background: rgba(11,26,36,0.9); }
+
+    /* ---- 推進剤・シールドのパネル ---- */
+    .panel-status { padding-left: 18px; padding-right: 18px; }
+    .sub-label {
+      font-size: 8px; letter-spacing: 0.06em; color: var(--dim);
+      border: 1px solid var(--line); border-radius: 2px; padding: 2px 5px;
+    }
+
+    /* ---- 下部の情報行と操作説明 ---- */
+    .status { display: flex; gap: 22px; font-size: 11px; color: var(--dim); }
+    .status b { color: var(--text); font-weight: normal; }
+
+    .help { font-size: 10px; color: var(--dim); text-align: center; line-height: 1.8; }
+
+    /* ===================================================================
        強制シャットダウン演出
-       ================================================================= */
-    /* 計器盤ぜんたいを灰色に沈める。filter = 見た目だけを加工する指定 */
-    .console.shutdown .panel { filter: grayscale(1) brightness(0.35); }
+       =================================================================== */
+    .hud.shutdown .panel { filter: grayscale(1) brightness(0.35); }
 
     .shutdown-overlay {
       position: absolute;
-      inset: 0;                    /* 上下左右0 = 親の全面を覆う */
-      display: none;               /* ふだんは隠しておく */
+      inset: 0;
+      display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      background: rgba(10, 2, 2, 0.55);
+      background: rgba(10, 2, 2, 0.5);
       color: #ff6a4d;
       letter-spacing: 0.3em;
       z-index: 5;
       pointer-events: none;
     }
-    .console.shutdown .shutdown-overlay { display: flex; }  /* 停止中だけ表示 */
+    .hud.shutdown .shutdown-overlay { display: flex; }
     .shutdown-overlay .big { font-size: 17px; animation: warnBlink 0.4s steps(2) infinite; }
     .shutdown-overlay .sub { font-size: 11px; color: #b8563f; letter-spacing: 0.2em; }
-
-    /* ---- 下部の情報行 ---- */
-    .status {
-      display: flex;
-      gap: 26px;
-      font-size: 12px;
-      color: var(--dim);
-    }
-    .status b { color: var(--text); font-weight: normal; }
-
-    /* ---- 操作説明 ---- */
-    .help {
-      font-size: 11px;
-      color: var(--dim);
-      text-align: center;
-      line-height: 1.9;
-    }
   </style>
 </head>
 <body>
 
-  <div class="header">
-    <div class="title">STEEL CRADLE</div>
-    <div>POWER DISTRIBUTION / 電力配分</div>
+  <!-- Three.js が描画するキャンバスがここに入る -->
+  <div id="scene"></div>
+  <div id="scene-error">
+    3D空間を読み込めませんでした。<br>
+    インターネット接続を確認して、Ctrl+F5 で再読み込みしてください。<br>
+    (計器パネルはそのまま動作します)
   </div>
 
-  <div class="console" id="console">
+  <!-- キャノピーの枠(四隅を暗く落とすだけの飾り) -->
+  <div class="canopy"></div>
 
-    <!-- data-system は「この要素はどの系統か」を書き込んでおくための印。
-         JSがこの名前を手がかりに、対応するゲージを探して動かす -->
-    <div class="panel" id="panel">
+  <!-- 計器オーバーレイ。id="console" は main.js がシャットダウン表示に使う -->
+  <div class="hud" id="console">
 
-      <div class="gauge" data-system="weapon">
-        <div class="gauge-key">↑</div>
-        <div class="gauge-tube"><div class="gauge-bar"></div></div>
-        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-        <div class="gauge-label">武器<br><span class="en">WEAPON</span></div>
-      </div>
+    <!-- ドリフト中の青い枠と表示 -->
+    <div class="drift-frame"></div>
+    <div class="drift-label">D R I F T</div>
 
-      <div class="gauge" data-system="shield">
-        <div class="gauge-key">←</div>
-        <div class="gauge-tube"><div class="gauge-bar"></div></div>
-        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-        <div class="gauge-label">シールド<br><span class="en">SHIELD</span></div>
-      </div>
+    <!-- 画面中央の照準 -->
+    <div class="crosshair"><span class="crosshair-gap"></span></div>
 
-      <div class="gauge" data-system="engine">
-        <div class="gauge-key">→</div>
-        <div class="gauge-tube"><div class="gauge-bar"></div></div>
-        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-        <div class="gauge-label">エンジン<br><span class="en">ENGINE</span></div>
-      </div>
+    <!-- 撃墜数 -->
+    <div class="kill-counter">KILLS <b id="kill-count">0</b></div>
 
-      <div class="gauge" data-system="sensor">
-        <div class="gauge-key">↓</div>
-        <div class="gauge-tube"><div class="gauge-bar"></div></div>
-        <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-        <div class="gauge-label">センサー<br><span class="en">SENSOR</span></div>
-      </div>
+    <!-- 戦闘ログ(HIT / KILL) -->
+    <div class="combat-log" id="combat-log"></div>
 
-    </div>
-
-    <!-- 熱パネル(仕様書9.3:武器発射で蓄積し、真空では放出が遅い)-->
-    <div class="panel panel-heat" id="heat-panel">
-      <div class="gauge">
-        <div class="gauge-key">V</div>
-        <div class="gauge-tube heat-tube"><div class="gauge-bar" id="heat-bar"></div></div>
-        <div class="gauge-value"><span class="num" id="heat-num">0</span><span class="unit">%</span></div>
-        <div class="gauge-label">熱<br><span class="en">HEAT</span></div>
-        <div class="rad" id="rad">RAD CLOSED</div>
+    <div class="hud-top">
+      <div class="header">
+        <div class="title">STEEL CRADLE</div>
+        <div>PHASE 1 ― COMBAT CORE &nbsp;<span id="build" style="color:#33424d"></span></div>
       </div>
     </div>
 
-    <!-- 推進剤とシールド -->
-    <div class="panel panel-status">
-
-      <!-- 推進剤:電力とは別枠の燃料。急機動で減り、戦闘中は回復しない -->
-      <div class="gauge">
-        <div class="gauge-key">Space</div>
-        <div class="gauge-tube"><div class="gauge-bar" id="prop-bar"></div></div>
-        <div class="gauge-value" id="prop-value"><span class="num" id="prop-num">100</span><span class="unit">%</span></div>
-        <div class="gauge-label">推進剤<br><span class="en">PROPELLANT</span></div>
-        <div class="sub-label">BURST −8</div>
+    <!-- 左:熱(仕様書9.6「左縦:HEATゲージ」) -->
+    <div class="hud-left">
+      <div class="panel panel-heat" id="heat-panel">
+        <div class="gauge">
+          <div class="gauge-key">V</div>
+          <div class="gauge-tube"><div class="gauge-bar" id="heat-bar"></div></div>
+          <div class="gauge-value"><span class="num" id="heat-num">0</span><span class="unit">%</span></div>
+          <div class="gauge-label">熱<br><span class="en">HEAT</span></div>
+          <div class="rad" id="rad">RAD CLOSED</div>
+        </div>
       </div>
-
-      <!-- シールド強度:シールド系統の電力配分に比例して回復する -->
-      <div class="gauge">
-        <div class="gauge-key">H</div>
-        <div class="gauge-tube"><div class="gauge-bar" id="shield-bar"></div></div>
-        <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
-        <div class="gauge-label">シールド強度<br><span class="en">SHIELD HP</span></div>
-        <div class="sub-label" id="shield-regen">+0.0/s</div>
-      </div>
-
     </div>
 
-    <!-- 強制シャットダウン中だけ表示される警告 -->
+    <!-- 右:推進剤(仕様書9.6「右縦:推進剤ゲージ」)とシールド強度 -->
+    <div class="hud-right">
+      <div class="panel panel-status">
+        <div class="gauge">
+          <div class="gauge-key">Space</div>
+          <div class="gauge-tube"><div class="gauge-bar" id="prop-bar"></div></div>
+          <div class="gauge-value" id="prop-value"><span class="num" id="prop-num">100</span><span class="unit">%</span></div>
+          <div class="gauge-label">推進剤<br><span class="en">PROPELLANT</span></div>
+          <div class="sub-label">BURST −8</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-key">H</div>
+          <div class="gauge-tube"><div class="gauge-bar" id="shield-bar"></div></div>
+          <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
+          <div class="gauge-label">シールド<br><span class="en">SHIELD HP</span></div>
+          <div class="sub-label" id="shield-regen">+0.0/s</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 下段中央:電力配分(仕様書9.6「下段中央=電力配分十字パネル」) -->
+    <div class="hud-bottom">
+      <div class="panel" id="panel">
+        <div class="gauge" data-system="weapon">
+          <div class="gauge-key">↑</div>
+          <div class="gauge-tube"><div class="gauge-bar"></div></div>
+          <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+          <div class="gauge-label">武器<br><span class="en">WEAPON</span></div>
+        </div>
+        <div class="gauge" data-system="shield">
+          <div class="gauge-key">←</div>
+          <div class="gauge-tube"><div class="gauge-bar"></div></div>
+          <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+          <div class="gauge-label">シールド<br><span class="en">SHIELD</span></div>
+        </div>
+        <div class="gauge" data-system="engine">
+          <div class="gauge-key">→</div>
+          <div class="gauge-tube"><div class="gauge-bar"></div></div>
+          <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+          <div class="gauge-label">エンジン<br><span class="en">ENGINE</span></div>
+        </div>
+        <div class="gauge" data-system="sensor">
+          <div class="gauge-key">↓</div>
+          <div class="gauge-tube"><div class="gauge-bar"></div></div>
+          <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
+          <div class="gauge-label">センサー<br><span class="en">SENSOR</span></div>
+        </div>
+      </div>
+
+      <div class="status">
+        <div>TOTAL <b id="total">100</b>%</div>
+        <div>PRESET <b id="preset">MANUAL</b></div>
+        <div>SPEED <b id="speed">0</b></div>
+        <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
+      </div>
+
+      <div class="help">
+        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; F 発射(熱+8) &nbsp; Space 回避バースト &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span><br>
+        <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
+        &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト</span>
+      </div>
+    </div>
+
     <div class="shutdown-overlay">
       <div class="big">⚠ SYSTEM SHUTDOWN</div>
       <div class="sub">強制冷却中 ― 操作不能 <span id="shutdown-timer">0.0</span>s</div>
@@ -304,18 +433,15 @@
 
   </div>
 
-  <div class="status">
-    <div>TOTAL <b id="total">100</b>%</div>
-    <div>PRESET <b id="preset">MANUAL</b></div>
-    <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
-  </div>
+  <!-- Three.js 本体(CDN)。バージョンを固定しておくと、ある日突然壊れることがない。
+       0.150.1 は「普通の<script>タグで読める」最後の系列。
+       ダブルクリックで index.html を開く運用を保つために、この版を選んでいる。 -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
 
-  <div class="help">
-    ↑武器 / ←シールド / →エンジン / ↓センサー … +10%(他3系統から均等に差し引き)<br>
-    1 攻撃 &nbsp;&nbsp; 2 防御 &nbsp;&nbsp; 3 巡航 &nbsp;&nbsp;|&nbsp;&nbsp; V ラジエーター展開/収納<br>
-    Space 回避バースト(推進剤 −8) &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト(シールド −20)</span>
-  </div>
+  <!-- 3D空間(星空・敵機)。main.js より先に読む必要がある -->
+  <script src="src/scene.js"></script>
 
+  <!-- 計器と7パラメーターのロジック -->
   <script src="src/main.js"></script>
 </body>
 </html>
