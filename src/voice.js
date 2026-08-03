@@ -33,6 +33,7 @@ const VOICE = {
     OVERHEAT:        { text: 'WARNING. WARNING. OVERHEAT.',  priority: 2 },
     SHIELD_FAILURE:  { text: 'WARNING. SHIELD FAILURE.',     priority: 2 },
     INCOMING:        { text: 'INCOMING. INCOMING.',          priority: 2 },
+    MISSILE_INBOUND: { text: 'MISSILE. MISSILE.', priority: 2, cooldown: 5 },
     CRITICAL_DAMAGE: { text: 'WARNING. CRITICAL DAMAGE.',    priority: 2 },
     POWER_FAILURE:   { text: 'POWER FAILURE.',               priority: 2 },
 

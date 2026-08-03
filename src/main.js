@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-30 missile';
+const BUILD = 'p1-33 flare-side';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -690,6 +690,45 @@ function applyViewMode(isCockpit) {
   viewModeEl.textContent = nowCockpit ? 'COCKPIT' : '3RD';
   consoleEl.classList.toggle('cockpit', nowCockpit);
   return nowCockpit;
+}
+
+// 敵がミサイルの発射予告に入った。scene.js から呼ばれる
+function onIncomingMissile() {
+  if (missionState !== 'active') return;
+  playLockWarning();
+  playLockWarning();
+  speakVoice('MISSILE_INBOUND');
+  addCombatLog('MISSILE INBOUND', 'hull');
+}
+
+// 敵のミサイルが自機に当たった
+function onPlayerMissileHit() {
+  if (missionState !== 'active') return;
+
+  hitsTaken += 1;
+  hitVignette = 0.6;
+  startShake(INCOMING.SHAKE_HULL);
+
+  if (shieldHp > 0) {
+    shieldHp = Math.max(shieldHp - ENEMY_MISSILE.SHIELD_DAMAGE, 0);
+    damageFlash = 0.4;
+    playShieldHit();
+    addCombatLog('MISSILE HIT ― SHIELD −' + ENEMY_MISSILE.SHIELD_DAMAGE, 'hull');
+    if (shieldHp <= 0) { addCombatLog('SHIELD DOWN', 'hull'); playShieldDown(); }
+  } else {
+    hullDamage += 1;
+    playHullDamage();
+    const brokenName = breakRandomInstrument();
+    addCombatLog('MISSILE HIT ― HULL ' + hullDamage + '/' + HULL.MAX_DAMAGE, 'hull');
+    if (brokenName) addCombatLog(brokenName, 'hull');
+    if (hullDamage >= HULL.MAX_DAMAGE) endMission('failed');
+  }
+}
+
+// 敵がフレアを撒いた
+function onEnemyFlare(tooHot) {
+  playFlare();
+  addCombatLog(tooHot ? '敵フレア ― 失敗' : '敵フレア', 'warn');
 }
 
 // 敵が発射予告に入った(＝こちらが狙われた)。scene.js から呼ばれる

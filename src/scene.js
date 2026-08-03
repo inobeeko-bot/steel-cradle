@@ -342,8 +342,12 @@ let missileFlameMaterial = null;
 const FLARE = {
   COUNT:        8,    // 搭載数。戦闘中の補給なし
   LIFE:       4.5,    // 燃えている秒数
-  SPEED:       14,    // 撒かれたあと後方へ流れる速さ
-  SPREAD:     6.0,    // 左右にばらける量
+  // 射出の勢い。ここが弱いと自機のすぐ後ろに留まってしまい、
+  // ミサイルがフレアへ向かう途中で自機に当たってしまう。
+  // 実際のフレアも「勢いよく撃ち出す」もので、その理屈とも合う。
+  SPEED:       38,    // 撒かれたあと後方へ飛ぶ速さ
+  SPREAD:      16,    // 左右上下にばらける量
+  DRAG:       0.25,   // 減速の強さ。小さいほど遠くまで離れる
   DECOY_RANGE: 55,    // この距離内の敵をだませる
   HEAT_LIMIT:  55,    // 自機の熱がこれを超えると、もうだませない
   CONFUSE_SEC: 3.0,   // だませた敵が狙いを外している秒数
@@ -352,6 +356,23 @@ const FLARE = {
 
 let flares = [];
 let flareGeometry = null;
+
+// --- 敵のミサイルとフレア -------------------------------------------
+// 自機と同じ仕組みを敵にも持たせる。これでフレアの本来用途
+//「飛んできたミサイルを逸らす」が初めて機能する。
+const ENEMY_MISSILE = {
+  AMMO:          3,    // 1機あたりの搭載数(リスポーンで補充)
+  INTERVAL:   11.0,    // 次に撃つまでの間隔(秒)
+  TELEGRAPH:   1.1,    // 発射前に光って知らせる時間。銃(0.5)より長い
+  RANGE:        95,    // この距離内でだけ撃ってくる
+  MIN_RANGE:    22,    // 近すぎると撃たない
+  SHIELD_DAMAGE: 40,   // 命中時にシールドを削る量(銃の15より重い)
+
+  // 敵がフレアを撒く条件
+  FLARE_AMMO:    3,    // 1機あたりの搭載数
+  FLARE_RANGE:  34,    // 自機のミサイルがこの距離まで迫ったら撒く
+  FLARE_COOL:  2.5,    // 連続で撒かないための間隔(秒)
+};
 
 // --- 敵の弾の設定 ---------------------------------------------------
 const ENEMY_BOLT = {
@@ -1586,10 +1607,18 @@ function updateMissiles(dt) {
     // --- 誘導 ---
     // 目標へのまっすぐな向きへ、一定の速さでしか曲がれない。
     // 曲がる速さに上限があるから、急旋回で振り切る余地が生まれる。
-    const tgt = m.decoy ? m.decoy : (m.target && m.target.alive ? m.target : null);
-    if (tgt) {
-      const want = (m.decoy ? m.decoy.position : tgt.group.position)
-        .clone().sub(m.mesh.position).normalize();
+    // フレアに引っかかっていれば、そちらへ向かう。
+    let aimPos = null;
+    if (m.decoy) {
+      aimPos = m.decoy.position;
+    } else if (m.fromEnemy) {
+      aimPos = playerShip.position;                       // 敵のミサイルは自機を狙う
+    } else if (m.target && m.target.alive) {
+      aimPos = m.target.group.position;
+    }
+
+    if (aimPos) {
+      const want = aimPos.clone().sub(m.mesh.position).normalize();
       // lerp で少しずつ向きを寄せ、正規化して長さを戻す
       m.direction.lerp(want, Math.min(MISSILE.TURN_RATE * dt, 1)).normalize();
     }
@@ -1602,6 +1631,25 @@ function updateMissiles(dt) {
     m.life -= dt;
 
     // --- 命中判定 ---
+    // 敵のミサイルは自機に、自機のミサイルは敵に当たる
+    if (m.fromEnemy) {
+      if (m.mesh.position.distanceTo(playerShip.position) < MISSILE.HIT_RADIUS) {
+        spawnDebris(m.mesh.position, 16, 0.3, 13);
+        scene.remove(m.mesh);
+        if (m.material) m.material.dispose();
+        missiles.splice(i, 1);
+        onPlayerMissileHit();     // main.js:大きめのダメージ
+        continue;
+      }
+      if (m.life <= 0) {
+        spawnDebris(m.mesh.position, 6, 0.2, 6);
+        scene.remove(m.mesh);
+        if (m.material) m.material.dispose();
+        missiles.splice(i, 1);
+      }
+      continue;
+    }
+
     let struck = null;
     for (const e of enemies) {
       if (!e.alive) continue;
@@ -1633,39 +1681,57 @@ function updateMissiles(dt) {
 // 戻り値:{ ok, fooled } … ok=撒けたか / fooled=だませた敵の数
 // 自機の熱が高いと「本体のほうが熱い」ので誰もだませない。
 // ===================================================================
-function dropFlare(playerHeat) {
-  if (!sceneReady) return { ok: false, fooled: 0 };
-
+// 指定した位置からフレアを1組(3個)撒く。最後の1個を返す。
+// 自機も敵も同じ処理を使う。
+function spawnFlareAt(position, quaternion) {
   if (!flareGeometry) flareGeometry = new THREE.OctahedronGeometry(0.34);
 
-  // --- 見た目:後方へ流れる小さな光を3つ撒く ---
-  const back = new THREE.Vector3(0, 0, 1).applyQuaternion(playerShip.quaternion);
+  // 機体から見た「右」「下」「後ろ」の向き
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+  const down  = new THREE.Vector3(0, -1, 0).applyQuaternion(quaternion);
+  const back  = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion);
+  let last = null;
+
   for (let i = 0; i < 3; i++) {
     const mat = new THREE.MeshBasicMaterial({
       color: FLARE.COLOR, transparent: true, opacity: 1,
     });
     const mesh = new THREE.Mesh(flareGeometry, mat);
-    mesh.position.copy(playerShip.position);
+    mesh.position.copy(position);
 
-    // 後ろへ流しつつ、左右上下にばらけさせる
-    const vel = back.clone().multiplyScalar(FLARE.SPEED).add(new THREE.Vector3(
-      (Math.random() - 0.5) * FLARE.SPREAD,
-      (Math.random() - 0.5) * FLARE.SPREAD,
-      (Math.random() - 0.5) * FLARE.SPREAD));
+    // ★ 真後ろではなく「横下」へ撃ち出すのが肝。
+    // 真後ろへ流すと、追ってくるミサイルから見て
+    // 「自機 → フレア」が一直線に並んでしまい、
+    // フレアへ向かう途中で自機に当たってしまう。
+    // 横へ飛ばせば、ミサイルは自機から逸れた方向へ曲がっていく。
+    const sideSign = (i % 2 === 0) ? 1 : -1;
+    const dir = right.clone().multiplyScalar(sideSign * (0.7 + Math.random() * 0.5))
+      .addScaledVector(down, 0.35 + Math.random() * 0.4)
+      .addScaledVector(back, 0.30)
+      .normalize();
+
+    const vel = dir.multiplyScalar(FLARE.SPEED * (0.85 + Math.random() * 0.3));
 
     scene.add(mesh);
-    flares.push({ mesh: mesh, velocity: vel, life: FLARE.LIFE, maxLife: FLARE.LIFE });
+    last = { mesh: mesh, velocity: vel, life: FLARE.LIFE, maxLife: FLARE.LIFE };
+    flares.push(last);
   }
+  return last;
+}
+
+function dropFlare(playerHeat) {
+  if (!sceneReady) return { ok: false, fooled: 0 };
+
+  const dropped = spawnFlareAt(playerShip.position, playerShip.quaternion);
 
   // --- 効果:自機が熱すぎると誰もだませない ---
   if (playerHeat >= FLARE.HEAT_LIMIT) return { ok: true, fooled: 0 };
 
   let fooled = 0;
 
-  // 飛んでいるミサイルの目標をフレアへ移す(将来、敵のミサイルに効く)
-  const decoy = flares[flares.length - 1];
+  // 飛んできている敵のミサイルの目標をフレアへ移す(本来用途)
   for (const m of missiles) {
-    if (m.fromEnemy) { m.decoy = decoy.mesh; fooled++; }
+    if (m.fromEnemy && !m.decoy) { m.decoy = dropped.mesh; fooled++; }
   }
 
   // 狙いをつけている敵の照準を外す
@@ -1686,7 +1752,7 @@ function updateFlares(dt) {
   for (let i = flares.length - 1; i >= 0; i--) {
     const f = flares[i];
     f.mesh.position.addScaledVector(f.velocity, dt);
-    f.velocity.multiplyScalar(1 - 0.7 * dt);   // だんだん減速
+    f.velocity.multiplyScalar(1 - FLARE.DRAG * dt);   // だんだん減速
 
     f.life -= dt;
     // 燃え尽きるにつれて小さく暗くなる
@@ -1780,6 +1846,13 @@ function createEnemy() {
     // 熱の痕跡。発射や被弾で跳ね上がり、時間とともに冷める。
     // 仕様書9.3「敵のHEATが探知手段(撃ちまくる敵ほどよく見える)」の初歩版。
     heatSig: 0,
+
+    // ミサイルとフレア
+    missileAmmo:  ENEMY_MISSILE.AMMO,
+    missileTimer: ENEMY_MISSILE.INTERVAL * (0.4 + Math.random() * 0.6),
+    missileTele:  0,     // ミサイル発射予告の残り秒
+    flareAmmo:    ENEMY_MISSILE.FLARE_AMMO,
+    flareCool:    0,
   };
 }
 
@@ -1846,6 +1919,12 @@ function updateEnemyAI(e, dt) {
   const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
   e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-AI.TURN_RATE * dt));
 
+  // --- ミサイル(攻撃状態のときだけ)---
+  updateEnemyMissileLogic(e, dt, distance);
+
+  // --- フレア:自機のミサイルが迫ってきたら撒く ---
+  updateEnemyFlareLogic(e, dt);
+
   // --- 攻撃状態のときだけ、予告 → 発射をくり返す ---
   if (e.state === 'attack') {
     if (e.telegraph > 0) {
@@ -1864,6 +1943,103 @@ function updateEnemyAI(e, dt) {
         onIncomingLock();             // main.js:狙われた警告音
       }
     }
+  }
+}
+
+// ===================================================================
+// 敵のミサイル:予告してから撃つ
+//
+// 銃より長い予告(1.1秒)を置いてある。ミサイルは避けるのに
+// 機体を大きく振るか、フレアを撒くかの判断が要るため。
+// ===================================================================
+function updateEnemyMissileLogic(e, dt, distance) {
+  if (e.missileTele > 0) {
+    e.missileTele -= dt;
+    if (e.missileTele <= 0) {
+      e.missileTele = 0;
+      fireEnemyMissile(e);
+      e.missileTimer = ENEMY_MISSILE.INTERVAL;
+      e.heatSig = SENSOR.HEAT_LINGER * 1.5;   // 撃つと大きく熱を出す
+    }
+    return;
+  }
+
+  if (e.state !== 'attack') return;
+  if (e.missileAmmo <= 0) return;
+  if (distance > ENEMY_MISSILE.RANGE || distance < ENEMY_MISSILE.MIN_RANGE) return;
+
+  e.missileTimer -= dt;
+  if (e.missileTimer <= 0) {
+    e.missileTele = ENEMY_MISSILE.TELEGRAPH;
+    onIncomingMissile();     // main.js:警報と音声
+  }
+}
+
+function fireEnemyMissile(e) {
+  if (e.missileAmmo <= 0) return;
+  e.missileAmmo -= 1;
+
+  if (!missileGeometry) {
+    missileGeometry = new THREE.ConeGeometry(0.22, 1.4, 5);
+    missileGeometry.rotateX(-Math.PI / 2);
+    missileMaterial = new THREE.MeshBasicMaterial({ color: MISSILE.COLOR });
+    missileFlameMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd9a0, transparent: true, opacity: 0.55,
+    });
+  }
+
+  // 敵のミサイルは赤くして、自機のもの(橙)と見分けられるようにする
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff5a3c });
+  const mesh = new THREE.Mesh(missileGeometry, mat);
+
+  const flameGeo = new THREE.ConeGeometry(0.16, 1.1, 5);
+  flameGeo.rotateX(Math.PI / 2);
+  flameGeo.translate(0, 0, 1.2);
+  mesh.add(new THREE.Mesh(flameGeo, missileFlameMaterial));
+
+  const offset = new THREE.Vector3(0, -0.4, -1.2).applyQuaternion(e.group.quaternion);
+  mesh.position.copy(e.group.position).add(offset);
+
+  const direction = playerShip.position.clone().sub(mesh.position).normalize();
+
+  scene.add(mesh);
+  missiles.push({
+    mesh: mesh,
+    direction: direction,
+    target: null,
+    fromEnemy: true,     // ★ 自機を狙うミサイル
+    life: MISSILE.LIFE,
+    material: mat,
+  });
+}
+
+// ===================================================================
+// 敵のフレア:自機のミサイルが迫ってきたら撒く
+//
+// 自機のフレアと同じ理屈で、敵も「熱いと騙せない」。
+// 撃った直後(heatSig が高い)の敵は自分の熱で見つかってしまう。
+// ===================================================================
+function updateEnemyFlareLogic(e, dt) {
+  if (e.flareCool > 0) e.flareCool -= dt;
+  if (e.flareAmmo <= 0 || e.flareCool > 0) return;
+
+  // 自分を狙っている自機のミサイルを探す
+  for (const m of missiles) {
+    if (m.fromEnemy || m.decoy) continue;
+    if (m.target !== e) continue;
+    if (m.mesh.position.distanceTo(e.group.position) > ENEMY_MISSILE.FLARE_RANGE) continue;
+
+    e.flareAmmo -= 1;
+    e.flareCool = ENEMY_MISSILE.FLARE_COOL;
+
+    // 撃った直後で熱い敵は、自分の熱のほうが強くて騙せない
+    const tooHot = (e.heatSig > SENSOR.HEAT_LINGER * 0.8);
+
+    const decoy = spawnFlareAt(e.group.position, e.group.quaternion);
+    if (!tooHot && decoy) m.decoy = decoy.mesh;
+
+    onEnemyFlare(tooHot);   // main.js:ログと音
+    break;
   }
 }
 
@@ -1887,6 +2063,14 @@ function updateEnemyGlow(e, dt) {
     r = Math.max(r, t);
     g = Math.max(g, t * 0.45);   // オレンジ寄りの色
     b = Math.max(b, t * 0.15);
+  }
+
+  // ミサイルの予告は白紫。銃の予告(オレンジ)と色で区別できるようにする
+  if (e.missileTele > 0) {
+    const t = 1 - e.missileTele / ENEMY_MISSILE.TELEGRAPH;
+    r = Math.max(r, t);
+    g = Math.max(g, t * 0.55);
+    b = Math.max(b, t * 0.95);
   }
 
   for (const material of e.materials) material.emissive.setRGB(r, g, b);
@@ -1967,6 +2151,7 @@ function currentEnemyState() {
 
   for (const e of enemies) {
     if (!e.alive) continue;
+    if (e.missileTele > 0) return 'MISSILE';   // いちばん危ない
     if (e.telegraph > 0) return 'FIRING';   // 撃たれる直前は最優先で知らせる
     const d = e.group.position.distanceTo(playerShip.position);
     if (d < nearestDist) { nearestDist = d; nearest = e; }
@@ -2110,6 +2295,11 @@ function respawnEnemy(e) {
   setEnemyState(e, 'approach');
   e.fireTimer = AI.FIRE_INTERVAL;
   e.telegraph = 0;
+  e.missileAmmo = ENEMY_MISSILE.AMMO;
+  e.missileTimer = ENEMY_MISSILE.INTERVAL * (0.5 + Math.random() * 0.5);
+  e.missileTele = 0;
+  e.flareAmmo = ENEMY_MISSILE.FLARE_AMMO;
+  e.flareCool = 0;
 
   // 点滅の消し忘れがないよう、光をゼロに戻しておく
   e.hitFlash = 0;
