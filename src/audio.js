@@ -300,11 +300,37 @@ function playEnemyHit() {
   playNoise(0.10, 0.16, 1600, 380);
 }
 
-// 敵を撃墜した(低い轟音 + ノイズ)
+// ===================================================================
+// 爆発
+//
+// 爆発音は1つの音ではなく、時間差で重なる何層かでできている。
+//   1. 破裂の瞬間 … ごく短く鋭い。これが無いと「ボワッ」と気の抜けた音になる
+//   2. 本体      … 広く開いた帯域が一気に低いほうへ落ちる「ドゥン」
+//   3. 腹の低音   … 音程を下へ滑らせる。体に来る重さはここ
+//   4. 破片      … 少し遅らせて散らす
+//   5. 余韻      … いちばん長く、低く残る
+// 順番と遅らせ方が音の印象を決めるので、数字は時間の並びとして読むこと。
+// ===================================================================
+
+// 敵を撃墜した
 function playExplosion() {
-  playNoise(AUDIO.KILL_DUR, AUDIO.KILL_GAIN, 1700, 55);
-  playSweep(130, 28, AUDIO.KILL_DUR * 0.85, 0.32, 'sawtooth');
-  playTone(78, 0.36, 0.24, 'square');
+  playNoise(0.06, 0.42, 6000, 1800, 'bandpass');        // 1. 破裂
+  playNoise(0.85, 0.44, 5200, 40);                      // 2. 本体
+  playSweep(120, 22, 0.80, 0.40, 'sawtooth');           // 3. 腹の低音
+  playTone(46, 0.70, 0.30, 'square', 0.02);
+  playNoise(0.55, 0.20, 2600, 320, 'bandpass', 0.09);   // 4. 破片
+  playNoise(0.90, 0.13, 900, 90, 'lowpass', 0.22);      // 5. 余韻
+}
+
+// 自機が撃墜された。敵より一段大きく、長く尾を引かせる
+function playPlayerExplosion() {
+  playNoise(0.09, 0.48, 7000, 2000, 'bandpass');        // 1. 破裂
+  playNoise(1.40, 0.50, 6000, 28);                      // 2. 本体
+  playSweep(140, 16, 1.30, 0.46, 'sawtooth');           // 3. 腹の低音
+  playTone(38, 1.20, 0.34, 'square', 0.02);
+  playSweep(700, 90, 0.60, 0.16, 'square', 0.05);       //    金属が裂ける音
+  playNoise(0.80, 0.24, 3000, 260, 'bandpass', 0.10);   // 4. 破片
+  playNoise(1.70, 0.18, 800, 55, 'lowpass', 0.30);      // 5. 余韻
 }
 
 // ===================================================================
@@ -453,13 +479,15 @@ function playMissionComplete() {
   playTone(131, 0.60, g * 0.8, 'sawtooth', 0.32);   // さらに下で土台を作る
 }
 
-// 任務失敗(落ちていく3音)
-function playMissionFailed() {
+// 任務失敗(落ちていく3音)。
+// delay で鳴り始めを遅らせられる ― 自機の爆発音と重ならないようにするため。
+function playMissionFailed(delay) {
   const g = AUDIO.JINGLE_GAIN;
-  playTone(196, 0.20, g, 'sawtooth', 0.00);
-  playTone(155, 0.20, g, 'sawtooth', 0.22);
-  playTone(117, 0.85, g, 'sawtooth', 0.44);
-  playNoise(1.0, 0.18, 550, 45, 'lowpass', 0.44);
+  const d = delay || 0;
+  playTone(196, 0.20, g, 'sawtooth', d + 0.00);
+  playTone(155, 0.20, g, 'sawtooth', d + 0.22);
+  playTone(117, 0.85, g, 'sawtooth', d + 0.44);
+  playNoise(1.0, 0.18, 550, 45, 'lowpass', d + 0.44);
 }
 
 // 時間切れ

@@ -198,7 +198,7 @@ const PLAYER = {
 // ドリフト(Shift)と組み合わせると、機首を横へ向けて噴射 = 横滑りの回避になる。
 // これが「回避バースト」という名前の中身。
 const BURST = {
-  IMPULSE:    52,    // 一度の噴射で足す速度(最高速度50とほぼ同じ = 体感で倍近く出る)
+  IMPULSE:    73,    // 一度の噴射で足す速度(最高速度50の1.5倍。噴射直後は約90出る)
   COAST_SEC:  2.0,   // 噴射の勢いが残っている秒数
   SHAKE:    0.34,    // 噴射時の画面の揺れ
 };
@@ -390,8 +390,8 @@ const MISSILE = {
 };
 
 let missiles = [];
-let missileGeometry = null;
-let missileMaterial = null;
+let missileGeometry = null;        // 自機のミサイルの見本(これを複製して撃つ)
+let enemyMissileTemplate = null;   // 敵のミサイルの見本(色だけ違う)
 let missileFlameMaterial = null;
 
 // --- フレア(武器仕様書4章:回避装備はこれ一本)------------------------
@@ -401,7 +401,7 @@ let missileFlameMaterial = null;
 //   3. 自機HEATが高いと騙せない ── 本体が一番熱いため
 // 3番目が肝で、「熱管理できている者だけがフレアを活かせる」という設計になる。
 const FLARE = {
-  COUNT:        8,    // 搭載数。戦闘中の補給なし
+  COUNT:       48,    // 搭載数。戦闘中の補給なし
   LIFE:       4.5,    // 燃えている秒数
   // 射出の勢い。ここが弱いと自機のすぐ後ろに留まってしまい、
   // ミサイルがフレアへ向かう途中で自機に当たってしまう。
@@ -1917,27 +1917,85 @@ function fireBolt(color) {
 // ミサイルの発射(武器仕様書:発射にセンサーロック必須)
 // ロックしている敵を覚えて飛び出し、その敵を追いかける。
 // ===================================================================
-function fireMissile() {
-  if (!sceneReady || !hasLock()) return false;
+// ===================================================================
+// ミサイルの見た目を組み立てる
+//
+// 1本の円錐だけだと「尖った棒」にしか見えないので、実物と同じ
+// 「尖頭 + 胴体 + 帯 + 尾翼4枚 + 噴射炎」の構成にしてある。
+// 面数は円錐と円柱を6角形に抑えているので、ローポリのまま情報量だけ増える。
+//
+// color は本体の色。自機は橙、敵は赤で撃ち分ける。
+// ===================================================================
+function createMissileMesh(color) {
+  const g = new THREE.Group();
 
-  if (!missileGeometry) {
-    // 細い円錐。ローポリのまま「弾頭」らしく見せる
-    missileGeometry = new THREE.ConeGeometry(0.22, 1.4, 5);
-    missileGeometry.rotateX(-Math.PI / 2);   // 前(-Z)へ向ける
-    missileMaterial = new THREE.MeshBasicMaterial({ color: MISSILE.COLOR });
+  const bodyMat = new THREE.MeshBasicMaterial({ color: color });
+  // 帯と尾翼は本体より暗くして、のっぺりさせない
+  const trimMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(color).multiplyScalar(0.45),
+  });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
+
+  // --- 尖頭(弾頭)---
+  const noseGeo = new THREE.ConeGeometry(0.17, 0.55, 6);
+  noseGeo.rotateX(-Math.PI / 2);
+  noseGeo.translate(0, 0, -0.72);
+  const nose = new THREE.Mesh(noseGeo, bodyMat);
+  nose.add(new THREE.LineSegments(new THREE.EdgesGeometry(noseGeo), edgeMat));
+  g.add(nose);
+
+  // --- 胴体 ---
+  const bodyGeo = new THREE.CylinderGeometry(0.17, 0.17, 1.0, 6);
+  bodyGeo.rotateX(Math.PI / 2);
+  bodyGeo.translate(0, 0, 0.05);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.add(new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), edgeMat));
+  g.add(body);
+
+  // --- 中央の帯。1本入るだけで「作られた物」に見える ---
+  const bandGeo = new THREE.CylinderGeometry(0.20, 0.20, 0.16, 6);
+  bandGeo.rotateX(Math.PI / 2);
+  bandGeo.translate(0, 0, -0.10);
+  g.add(new THREE.Mesh(bandGeo, trimMat));
+
+  // --- 尾翼4枚(十字)---
+  for (let i = 0; i < 4; i++) {
+    const finGeo = new THREE.BoxGeometry(0.42, 0.035, 0.34);
+    finGeo.translate(0.24, 0, 0.42);          // 外へ張り出させ、後ろへ寄せる
+    const fin = new THREE.Mesh(finGeo, trimMat);
+    fin.rotation.z = i * Math.PI / 2;          // 90度ずつ回して十字に配置
+    g.add(fin);
+  }
+
+  // --- 後端のノズル ---
+  const nozzleGeo = new THREE.CylinderGeometry(0.13, 0.16, 0.18, 6);
+  nozzleGeo.rotateX(Math.PI / 2);
+  nozzleGeo.translate(0, 0, 0.62);
+  g.add(new THREE.Mesh(nozzleGeo, trimMat));
+
+  // --- 噴射炎 ---
+  if (!missileFlameMaterial) {
     missileFlameMaterial = new THREE.MeshBasicMaterial({
       color: 0xffd9a0, transparent: true, opacity: 0.55,
     });
   }
+  const flameGeo = new THREE.ConeGeometry(0.15, 1.3, 6);
+  flameGeo.rotateX(Math.PI / 2);
+  flameGeo.translate(0, 0, 1.35);
+  g.add(new THREE.Mesh(flameGeo, missileFlameMaterial));
+
+  return g;
+}
+
+function fireMissile() {
+  if (!sceneReady || !hasLock()) return false;
+
+  // 見本を1つだけ作っておき、撃つたびに複製する。
+  // 複製は形と材質を共有するので、何発撃っても重くならない。
+  if (!missileGeometry) missileGeometry = createMissileMesh(MISSILE.COLOR);
 
   const side = (missiles.length % 2 === 0) ? -1 : 1;   // 左右交互に撃つ
-  const mesh = new THREE.Mesh(missileGeometry, missileMaterial);
-
-  // 噴射炎を後ろに付ける
-  const flameGeo = new THREE.ConeGeometry(0.16, 1.1, 5);
-  flameGeo.rotateX(Math.PI / 2);
-  flameGeo.translate(0, 0, 1.2);
-  mesh.add(new THREE.Mesh(flameGeo, missileFlameMaterial));
+  const mesh = missileGeometry.clone();
 
   const offset = new THREE.Vector3(side * MISSILE.OFFSET_X, MISSILE.OFFSET_Y, -1.2);
   offset.applyQuaternion(playerShip.quaternion);
@@ -1993,7 +2051,8 @@ function updateMissiles(dt) {
       if (m.mesh.position.distanceTo(playerShip.position) < MISSILE.HIT_RADIUS) {
         spawnDebris(m.mesh.position, 16, 0.3, 13);
         scene.remove(m.mesh);
-        if (m.material) m.material.dispose();
+        // ※ 材質は見本と共有しているので破棄しない。
+        //    ここで dispose すると、飛んでいる他のミサイルまで真っ黒になる。
         missiles.splice(i, 1);
         onPlayerMissileHit();     // main.js:大きめのダメージ
         continue;
@@ -2001,7 +2060,6 @@ function updateMissiles(dt) {
       if (m.life <= 0) {
         spawnDebris(m.mesh.position, 6, 0.2, 6);
         scene.remove(m.mesh);
-        if (m.material) m.material.dispose();
         missiles.splice(i, 1);
       }
       continue;
@@ -2663,23 +2721,10 @@ function fireEnemyMissile(e) {
   if (e.missileAmmo <= 0) return;
   e.missileAmmo -= 1;
 
-  if (!missileGeometry) {
-    missileGeometry = new THREE.ConeGeometry(0.22, 1.4, 5);
-    missileGeometry.rotateX(-Math.PI / 2);
-    missileMaterial = new THREE.MeshBasicMaterial({ color: MISSILE.COLOR });
-    missileFlameMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffd9a0, transparent: true, opacity: 0.55,
-    });
-  }
-
-  // 敵のミサイルは赤くして、自機のもの(橙)と見分けられるようにする
-  const mat = new THREE.MeshBasicMaterial({ color: 0xff5a3c });
-  const mesh = new THREE.Mesh(missileGeometry, mat);
-
-  const flameGeo = new THREE.ConeGeometry(0.16, 1.1, 5);
-  flameGeo.rotateX(Math.PI / 2);
-  flameGeo.translate(0, 0, 1.2);
-  mesh.add(new THREE.Mesh(flameGeo, missileFlameMaterial));
+  // 敵のミサイルは赤くして、自機のもの(橙)と見分けられるようにする。
+  // 形は同じで色だけ違う ― 見本を色ごとに1つずつ持っておく。
+  if (!enemyMissileTemplate) enemyMissileTemplate = createMissileMesh(0xff5a3c);
+  const mesh = enemyMissileTemplate.clone();
 
   const offset = new THREE.Vector3(0, -0.4, -1.2).applyQuaternion(e.group.quaternion);
   mesh.position.copy(e.group.position).add(offset);
@@ -2693,7 +2738,6 @@ function fireEnemyMissile(e) {
     target: null,
     fromEnemy: true,     // ★ 自機を狙うミサイル
     life: MISSILE.LIFE,
-    material: mat,
   });
 }
 
@@ -3075,6 +3119,20 @@ function respawnEnemy(e) {
   // 点滅の消し忘れがないよう、光をゼロに戻しておく
   e.hitFlash = 0;
   for (const material of e.materials) material.emissive.setRGB(0, 0, 0);
+}
+
+// ===================================================================
+// 自機の爆散(MISSION FAILED の瞬間)
+//
+// 敵の撃墜と同じく破片をまき散らす。三人称なら自機が砕けるのが見え、
+// コックピットなら破片が視界を横切っていく。
+// 機体そのものは消さない ― リザルト画面の背景として残しておきたいため。
+// ===================================================================
+function explodePlayer() {
+  if (!sceneReady) return;
+  spawnDebris(playerShip.position, DEBRIS.KILL_COUNT * 2, DEBRIS.KILL_SIZE * 1.3,
+              DEBRIS.KILL_SPEED * 1.4);
+  for (const glow of engineGlows) glow.material.opacity = 0;   // 噴射を止める
 }
 
 // ===================================================================

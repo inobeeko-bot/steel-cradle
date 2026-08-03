@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-41 tab help';
+const BUILD = 'p1-42 missile/boom';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -47,12 +47,15 @@ const HEAT = {
   // 放熱(自然6.0 + ラジエーター8.0 = 14.0/秒)に負けて
   // 熱がいっさい上がらない ― つまり何も起きない数字だった。
   //
-  // そこで放熱を超えるところまで上げてある。
-  //   エンジン100% … 発熱20.0/秒。ラジエーター展開でも +6.0/秒 で溜まる
-  //   エンジン 25% … 発熱 5.0/秒。巡航しているぶんには気にならない
-  // 武器(0.35)に対しては約1/1.7。控えめにしたいなら 0.14 まで下げられるが、
-  // それより下は上の理由で「無いのと同じ」になる。
-  PER_ENGINE:     0.20,
+  // 一度 0.20 まで上げたが効きすぎたので、その0.6倍に落としてある。
+  //   エンジン100% … 発熱12.0/秒
+  //   エンジン 25% … 発熱 3.0/秒
+  // 武器(0.35)に対しては約1/2.9。
+  //
+  // 注意:エンジン単独では放熱(14.0/秒)に届かないので、
+  // 「エンジン全振り・武器0%」では熱は上がらない。
+  // 武器にも配っている状態で、エンジンぶんが上乗せされて効いてくる数字。
+  PER_ENGINE:     0.12,
 
   VENT_BASE:      6.0,   // 自然放熱。真空なので「遅い」のがこのゲームの肝(仕様書9.3)
   VENT_RADIATOR: 8.0,   // ラジエーター展開中に上乗せされる放熱量
@@ -1258,7 +1261,9 @@ function renderWeapon() {
 
   // フレアの残数。熱が高いと効かないので、そのときは赤くする
   flareCountEl.textContent = flareCount;
-  flareRowEl.classList.toggle('low', flareCount <= 2 || heat >= FLARE.HEAT_LIMIT);
+  // 残りが搭載数の1/6を切ったら赤くする(搭載数を変えても目安が変わらないように)
+  flareRowEl.classList.toggle('low',
+    flareCount <= Math.ceil(FLARE.COUNT / 6) || heat >= FLARE.HEAT_LIMIT);
 }
 
 // ===================================================================
@@ -1422,7 +1427,11 @@ function endMission(result) {
     resultTitleEl.textContent = 'TIME UP';
     resultReasonEl.textContent = '制限時間到達 ― 任務失敗';
   } else {
-    playMissionFailed();
+    // 自機の爆発が先。ジングルは爆発が収まってから鳴らす
+    explodePlayer();          // scene.js:自機の位置に破片をまき散らす
+    playPlayerExplosion();
+    startShake(1.6);
+    playMissionFailed(1.1);
     resultTitleEl.textContent = 'MISSION FAILED';
     resultReasonEl.textContent = '機体構造 崩壊';
   }
