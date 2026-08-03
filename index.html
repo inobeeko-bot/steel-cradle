@@ -122,8 +122,8 @@
                   inset 0 0 26px rgba(0, 0, 0, 0.9);
     }
 
-    /* 戦闘ログは右下の計器と重なるので上へ逃がす */
-    .hud.cockpit .combat-log { bottom: 198px; }
+    /* コックピットでは計器がすべて下段に降りるので、ログは右上へ戻せる */
+    .hud.cockpit .combat-log { right: 22px; bottom: 198px; }
 
     /* =================================================================
        被弾ダメージ表示(仕様書9.3「被弾表現=計器の破損」)
@@ -328,8 +328,10 @@
        (右下は将来の兵装パネルの位置。そちらの実装時に再配置する) */
     .combat-log {
       position: absolute;
-      right: 22px;
-      bottom: 172px;   /* 兵装パネルの上に置く */
+      /* 右の推進剤/シールド計器と兵装パネルの、どちらにも重ならない位置。
+         三人称では右計器が画面中央の高さにあるので、左へ寄せて逃がす。 */
+      right: 230px;
+      bottom: 250px;
       display: flex;
       flex-direction: column;
       align-items: flex-end;     /* 右そろえ */
@@ -360,7 +362,7 @@
     .weapon-panel {
       position: absolute;
       right: 22px;
-      bottom: 92px;
+      bottom: 40px;    /* 三人称では右計器が画面中央の高さにあるので、その下に置く */
       min-width: 116px;
       padding: 7px 12px;
       border: 1px solid var(--line);
@@ -396,12 +398,80 @@
 
     .weapon-panel .wp-sub { font-size: 9px; letter-spacing: 0.1em; color: var(--dim); }
 
+    /* =================================================================
+       ロックオン表示(ミサイルを撃てる状態)
+       照準の位置に重ねるので、位置は main.js が毎コマ書き込む。
+       ================================================================= */
+    .lock-ring {
+      position: absolute;
+      display: none;
+      width: 132px;
+      height: 132px;
+      margin-left: -66px;   /* 幅の半分だけ左へ = 照準の位置が円の中心になる */
+      margin-top:  -66px;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .lock-ring.on { display: block; }
+
+    /* 外側の円。ゆっくり縮んで「締まっていく」感じを出す */
+    .lock-ring-outer {
+      position: absolute;
+      inset: 0;
+      border: 2px solid #ff3a24;
+      border-radius: 50%;
+      box-shadow: 0 0 16px rgba(255, 58, 36, 0.75),
+            inset 0 0 16px rgba(255, 58, 36, 0.30);
+      animation: lockRingPulse 0.62s ease-out infinite;
+    }
+    /* 内側の円。速く点滅させて緊張感を作る */
+    .lock-ring-inner {
+      position: absolute;
+      inset: 26%;
+      border: 1px solid #ff6a4d;
+      border-radius: 50%;
+      animation: lockBlink 0.24s steps(2) infinite;
+    }
+    .lock-ring-label {
+      position: absolute;
+      /* 円の「上」に出す。下に出すと下段の電力パネルと重なって読みにくい */
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-bottom: 10px;
+      white-space: nowrap;       /* 折り返さない */
+      font-size: 15px;
+      letter-spacing: 0.34em;
+      color: #ff3a24;
+      text-shadow: 0 0 12px rgba(255, 58, 36, 0.9);
+      animation: lockBlink 0.24s steps(2) infinite;
+    }
+    @keyframes lockBlink {
+      0%, 49%   { opacity: 1; }
+      50%, 100% { opacity: 0.12; }
+    }
+    @keyframes lockRingPulse {
+      0%   { transform: scale(1.22); opacity: 0.25; }
+      70%  { transform: scale(1.00); opacity: 1; }
+      100% { transform: scale(1.00); opacity: 0.55; }
+    }
+
+    /* EMPを浴びている間だけ出す警告バッジ(ふだんは display:none) */
+    .emp-badge {
+      display: none;
+      color: #7fd4ff;
+      animation: warnBlink 0.5s steps(2) infinite;
+    }
+    .emp-badge.on { display: block; }
+
     /* 残弾が少ない、または電力不足で撃てないとき */
     .weapon-panel.low { border-color: #a83a26; }
     .weapon-panel.low .wp-ammo { color: #ff5a3c; }
 
-    /* コックピットでは計器台の上に載せる */
-    .hud.cockpit .weapon-panel { bottom: 118px; }
+    /* コックピットでは、右の推進剤/シールド計器の「左どなり」に置く。
+       以前は同じ場所に重なっていて、あとから描かれる右計器の下に隠れていた。
+       計器台の一列に並べることで、隠れず、かつ計器盤に組み込まれて見える。 */
+    .hud.cockpit .weapon-panel { right: 246px; bottom: 14px; }
 
     /* =================================================================
        レーダースコープ(仕様書9.6「下段左:自機中心・精度は電力依存」)
@@ -694,6 +764,13 @@
     <!-- 画面中央の照準 -->
     <div class="crosshair"><span class="crosshair-gap"></span></div>
 
+    <!-- ロックオン表示。照準の位置に重ねる。三人称でもコックピットでも出す -->
+    <div class="lock-ring" id="lock-ring">
+      <div class="lock-ring-outer"></div>
+      <div class="lock-ring-inner"></div>
+      <div class="lock-ring-label">LOCKED ON</div>
+    </div>
+
     <!-- 撃墜数 -->
     <div class="kill-counter">KILLS <b id="kill-count">0</b><span style="font-size:11px">/<span id="kill-goal">10</span></span></div>
 
@@ -702,7 +779,9 @@
       <div class="wp-name" id="wp-name">BEAM</div>
       <div class="wp-jp" id="wp-jp">ビーム砲</div>
       <div class="wp-ammo"><b id="wp-ammo">∞</b></div>
-      <div class="wp-sub">熱 <span id="wp-heat">+8</span> &nbsp; R 切替</div>
+      <div class="wp-sub">熱 <span id="wp-heat">+3×3</span> &nbsp; R 切替</div>
+      <!-- 範囲攻撃(ボム/EMP)。B=投下 / N=切替 -->
+      <div class="wp-flare" id="wp-area-row"><span id="wp-area-name">BOMB</span> <b id="wp-area-ammo">4</b> &nbsp; B/N</div>
       <div class="wp-flare" id="wp-flare-row">FLARE <b id="wp-flare">8</b> &nbsp; C</div>
     </div>
 
@@ -737,7 +816,7 @@
           <div class="gauge-tube"><div class="gauge-bar" id="heat-bar"></div></div>
           <div class="gauge-value"><span class="num" id="heat-num">0</span><span class="unit">%</span></div>
           <div class="gauge-label">熱<br><span class="en">HEAT</span></div>
-          <div class="rad" id="rad">RAD CLOSED</div>
+          <div class="rad open" id="rad">RAD OPEN</div>
         </div>
       </div>
     </div>
@@ -800,6 +879,8 @@
         <div>HULL <b id="hull">5</b>/5</div>
         <div>VIEW <b id="view-mode">3RD</b></div>
         <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
+        <!-- EMPを浴びている間だけ出す警告。ふだんは非表示 -->
+        <div id="emp-badge" class="emp-badge">EMP <b>0.0</b>s</div>
       </div>
 
       <div class="help">

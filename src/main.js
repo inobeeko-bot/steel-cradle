@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-34 pyro';
+const BUILD = 'p1-35 bomb/emp';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -128,6 +128,7 @@ const CAPTURE = {
   BEEP_START: 0.52,   // 捉えた直後の鳴動間隔(秒)
   BEEP_END:   0.085,  // 捉え続けたときの最短の間隔
   RAMP_SEC:   2.6,    // この秒数かけて「ビー」から「ビビビ」へ詰まる
+  LOCK_BEEP:  0.22,   // ロック完了後の「ピー」の間隔。音の長さとほぼ同じ = 途切れない
 };
 
 // ===================================================================
@@ -145,11 +146,13 @@ const WEAPONS = [
     key: 'BEAM',
     label: 'BEAM',        // ビーム砲
     jp: 'ビーム砲',
-    heat: 8,              // 1発ごとに上がる熱(重い)
+    heat: 3,              // 1条ごとに上がる熱。3点バーストなので合計は約9
     ammo: Infinity,       // 弾数無限。撃ち放題
     minPower: 15,         // 武器への電力配分がこれ未満だと撃てない
     auto: false,          // 押しっぱなしでは連射しない
-    interval: 0,
+    interval: 0.45,       // 次のバーストまでの間隔
+    burst: 3,             // ★ 1回の引き金で3条を続けて撃つ(3点バースト)
+    burstGap: 0.085,      // バースト内の1条ごとの間隔(秒)
     boltColor: 0x9fe1cb,
   },
   {
@@ -196,13 +199,61 @@ let fireCooldown = 0;                 // 次に撃てるようになるまでの
 let flareCount = 8;                   // フレアの残数(scene.js の FLARE.COUNT と揃える)
 let saidAmmoOut = false;              // 弾切れ音声を言ったか(1回だけ)
 
+// --- 3点バーストの途中経過 ---
+// 引き金を1回引くと3条が続けて出る。1条目はその場で撃ち、
+// 残りは「あと何条・次まで何秒」を覚えておいて毎コマ撃ち足していく。
+let burstLeft  = 0;   // 撃ち残している条の数
+let burstTimer = 0;   // 次の1条までの残り秒
+
+// ===================================================================
+// 範囲攻撃(武器仕様書3章)
+//
+// 主武器とは別の枠にしてある。仕様書でも「主武器3系統」と「範囲攻撃3種」は
+// 別の層として書かれているため、切替キーも発射キーも分けた。
+//   B … 発射 / N … ボム⇄EMP の切替
+//
+// ボム … HULL/シールドを削る素直な物理範囲ダメージ
+// EMP  … 電力を攻める。キルは取れないが、範囲内の敵を数秒黙らせる
+// ===================================================================
+const AREA_WEAPONS = [
+  {
+    key: 'BOMB', label: 'BOMB', jp: 'ボム',
+    kind: 'bomb',
+    ammo: 4,          // 少ない。ここぞで使う
+    heat: 2,          // 投げるだけなので熱はほとんど出ない
+    minPower: 0,      // 電力もいらない
+    interval: 1.2,
+  },
+  {
+    key: 'EMP', label: 'EMP', jp: 'EMP弾',
+    kind: 'emp',
+    ammo: 3,
+    heat: 6,          // 強い電磁パルスを作るので、自分もそれなりに発熱する
+    minPower: 20,     // ★ 電力を食う装備。武器へ配ってないと撃てない
+    interval: 1.2,
+  },
+];
+
+let areaIndex = 0;
+let areaAmmo = AREA_WEAPONS.map((w) => w.ammo);
+let areaCooldown = 0;
+
 // 今の兵装を取り出す短縮形
 const currentWeapon = () => WEAPONS[weaponIndex];
+const currentArea   = () => AREA_WEAPONS[areaIndex];
 
 // --- 各リソースの現在値 ---------------------------------------------
 let heat = 0;               // 現在の熱量(0〜100)
-let radiatorOpen = false;   // ラジエーターを展開しているか
+let radiatorOpen = true;    // ラジエーターを展開しているか(出撃時は展開状態)
 let shutdownLeft = 0;       // 強制シャットダウンの残り秒数(0 なら通常状態)
+
+// EMPを浴びている残り秒数(自分のEMPに巻き込まれたとき)。
+// この間はシールドが再生せず、センサーの精度も落ちる。
+let empLeft = 0;
+// 自機がEMPを受けたときのききめ。ここを書き換えれば重さを調整できる
+const EMP_SELF = {
+  SENSOR_MULT: 0.35,   // センサーの効きをこの割合まで落とす
+};
 
 let propellant = PROP.MAX;  // 推進剤の残量
 let shieldHp   = SHIELD.MAX;// シールド強度の残量
@@ -253,6 +304,7 @@ let hitVignette   = 0;       // 被弾した瞬間に強く光る赤の残り時
 // 照準の捕捉音のための状態
 let lastAimState = 'CLEAR';   // 前のコマの照準状態(変わった瞬間を知るため)
 let beepTimer = 0;            // 次の「ビー」までの残り秒
+let lockBeepTimer = 0;        // ロック中の「ピー」までの残り秒
 let overheatTimer = 0;        // 熱の警告音を鳴らす間隔の残り秒
 let lastTimeWarned = false;   // 残り1分の警告をもう鳴らしたか
 
@@ -314,6 +366,7 @@ const radarRangeEl  = document.getElementById('radar-range');
 const radarSensorEl = document.getElementById('radar-sensor');
 const markerLayer   = document.getElementById('marker-layer');
 const crosshairEl   = document.querySelector('.crosshair');
+const lockRingEl    = document.getElementById('lock-ring');
 const viewModeEl    = document.getElementById('view-mode');
 const weaponPanelEl = document.getElementById('weapon-panel');
 const weaponNameEl  = document.getElementById('wp-name');
@@ -322,6 +375,10 @@ const weaponHeatEl  = document.getElementById('wp-heat');
 const weaponJpEl    = document.getElementById('wp-jp');
 const flareCountEl  = document.getElementById('wp-flare');
 const flareRowEl    = document.getElementById('wp-flare-row');
+const areaNameEl    = document.getElementById('wp-area-name');
+const areaAmmoEl    = document.getElementById('wp-area-ammo');
+const areaRowEl     = document.getElementById('wp-area-row');
+const empBadgeEl    = document.getElementById('emp-badge');
 
 const timerElMission = document.getElementById('mission-timer');
 const resultPanel    = document.getElementById('result-panel');
@@ -405,6 +462,10 @@ function renderHeat() {
   const flashRed = hitVignette / 0.45;
   vignetteEl.style.opacity = Math.min(baseRed + flashRed * 0.75, 1);
 
+  // EMPを浴びている間だけ、残り秒数を出す
+  empBadgeEl.classList.toggle('on', empLeft > 0);
+  if (empLeft > 0) empBadgeEl.querySelector('b').textContent = empLeft.toFixed(1);
+
   // いちばん近い敵の熱。パイロ弾がどれだけ効いているかを見せる
   const eHeat = nearestEnemyHeat();
   enemyHeatEl.textContent = eHeat;
@@ -466,6 +527,7 @@ function renderStatus() {
 function currentShieldRegen() {
   if (isBroken('shield')) return 0;            // シールド系が壊れていると再生しない
   if (shutdownLeft > 0) return 0;              // 停止中は回復しない(＝無防備)
+  if (empLeft > 0) return 0;                   // EMPを浴びている間は再生が止まる
   if (shieldHp >= SHIELD.MAX) return 0;        // 満タンなら回復不要
   return power.shield * SHIELD.REGEN_PER_POWER;
 }
@@ -677,6 +739,18 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
+  // B キー … 範囲攻撃の投下(ボム / EMP)
+  if (event.key.toLowerCase() === 'b' && !event.repeat) {
+    fireArea();
+    return;
+  }
+
+  // N キー … 範囲攻撃の切替(ボム ⇄ EMP)
+  if (event.key.toLowerCase() === 'n') {
+    switchArea();
+    return;
+  }
+
   // F キー … 主兵装発射(仕様書9.6)
   // 押しっぱなしでは連射しない。撃つ回数=熱の上がり方をプレイヤーが自分で決める形にする。
   // 仕様書9.3「攻撃的なプレイヤーほどリスクを背負う」を、この1行が担っている。
@@ -829,9 +903,18 @@ function updateVoiceAlerts(dt) {
 // 判定そのものは3D側(scene.js の updateAim)。ここは音の担当。
 // 捉えた瞬間に1回鳴らし、捉えている間は一定間隔で鳴らし続ける。
 // ===================================================================
+// 実際に効いているセンサーの強さ(%)。
+// 配分そのものではなく、故障とEMPの影響を通したあとの値を使う。
+// 索敵半径・ロック時間・レーダーはすべてこの1か所を見る。
+function effectiveSensor() {
+  let pct = power.sensor;
+  if (isBroken('sensor')) pct *= 0.5;          // センサー計器の故障
+  if (empLeft > 0) pct *= EMP_SELF.SENSOR_MULT; // EMPで一時的に低下
+  return pct;
+}
+
 function updateAimFeedback(dt) {
-  const sensorPct = isBroken('sensor') ? power.sensor * 0.5 : power.sensor;
-  const state = updateAim(dt, sensorPct);
+  const state = updateAim(dt, effectiveSensor());
 
   if (state !== 'CLEAR') {
     // 捉え続けた時間に応じて 0→1 へ。1に近いほど間隔が詰まる
@@ -844,6 +927,19 @@ function updateAimFeedback(dt) {
     if (state === 'LOCKED' && lastAimState !== 'LOCKED') {
       speakVoice('LOCK');          // ロックが満ちた瞬間
       playLockTone();
+      lockBeepTimer = CAPTURE.LOCK_BEEP;
+    }
+
+    // --- ロック中は「ピー」という高音を鳴らし続ける ---
+    // 捕捉中の「ビビビ」とは別の音にして、状態が変わったことを耳で分からせる
+    if (state === 'LOCKED') {
+      lockBeepTimer -= dt;
+      if (lockBeepTimer <= 0) {
+        playLockedBeep();
+        lockBeepTimer = CAPTURE.LOCK_BEEP;
+      }
+      lastAimState = state;
+      return;                      // ロック中は捕捉音のほうは鳴らさない
     }
 
     if (lastAimState === 'CLEAR') {
@@ -912,13 +1008,35 @@ function renderCrosshair() {
   crosshairEl.style.top  = ((-aim.y * 0.5 + 0.5) * 100) + '%';
 }
 
+// ===================================================================
+// ロックオン表示(赤い円と「LOCKED ON」)
+//
+// 照準に重ねるので、視点に関わらず出す。
+// コックピットではHTMLの十字は消えるが、こちらは光像式照準器の
+// レティクルの位置に重なるため、そのまま使える。
+// ===================================================================
+function renderLockRing() {
+  const locked = (currentAimState() === 'LOCKED');
+  const aim = locked ? getAimNdc() : null;
+
+  if (!locked || !aim || !aim.visible) {
+    lockRingEl.classList.remove('on');
+    return;
+  }
+
+  lockRingEl.classList.add('on');
+  lockRingEl.style.left = ((aim.x * 0.5 + 0.5) * 100) + '%';
+  lockRingEl.style.top  = ((-aim.y * 0.5 + 0.5) * 100) + '%';
+}
+
 function renderRadar() {
-  // センサー系が壊れていると索敵半径が半分になる(仕様書9.3)
-  const sensorPct = isBroken('sensor') ? power.sensor * 0.5 : power.sensor;
+  // センサー系が壊れていると索敵半径が半分に、EMPを浴びるとさらに落ちる
+  const sensorPct = effectiveSensor();
   const range = sensorRange(sensorPct);
   radarRangeEl.textContent = Math.round(range);
-  radarSensorEl.textContent = power.sensor;
-  radarEl.classList.toggle('noisy', isBroken('sensor'));   // レーダーにノイズを出す
+  radarSensorEl.textContent = Math.round(sensorPct);
+  // 故障中とEMP中はレーダーにノイズを出す
+  radarEl.classList.toggle('noisy', isBroken('sensor') || empLeft > 0);
 
   // 索敵範囲内の敵だけが返ってくる。範囲外の敵はここに含まれない
   const contacts = getContacts(sensorPct);
@@ -1023,10 +1141,21 @@ function renderWeapon() {
   weaponNameEl.textContent = w.label;
   weaponJpEl.textContent = w.jp;
   weaponAmmoEl.textContent = (left === Infinity) ? '\u221e' : left;   // ∞
-  weaponHeatEl.textContent = '+' + w.heat;
+  // 3点バーストの武器は「1条ぶんの熱 ×3」と出す(1回の引き金で3条出るため)
+  weaponHeatEl.textContent = w.burst ? ('+' + w.heat + '×' + w.burst)
+                                     : ('+' + w.heat);
 
-  // 残りが少ない、または電力不足で撃てないときは赤くする
-  const low = (left !== Infinity && left <= 10);
+  // --- 範囲攻撃(ボム/EMP)---
+  const a = currentArea();
+  areaNameEl.textContent = a.label;
+  areaAmmoEl.textContent = areaAmmo[areaIndex];
+  areaRowEl.classList.toggle('low',
+    areaAmmo[areaIndex] <= 0 || power.weapon < a.minPower);
+
+  // 残りが少ない、または電力不足で撃てないときは赤くする。
+  // 「残り10発」で固定にすると、最大6発のミサイルが常に赤くなってしまうので、
+  // 搭載数に対する割合(1/4以下)で判断する。
+  const low = (left !== Infinity && left <= Math.max(2, Math.ceil(w.ammo * 0.25)));
   const noPower = (power.weapon < w.minPower);
   weaponPanelEl.classList.toggle('low', low || noPower);
   weaponPanelEl.classList.toggle('beam', w.key === 'BEAM');
@@ -1202,6 +1331,9 @@ function endMission(result) {
     resultReasonEl.textContent = '機体構造 崩壊';
   }
 
+  // ロックオン表示を消す(戦闘が止まるので、出しっぱなしにしない)
+  lockRingEl.classList.remove('on');
+
   // 戦果
   rKillsEl.textContent = killCount;
   rHitsEl.textContent  = hitsTaken;
@@ -1230,14 +1362,19 @@ function restartMission() {
   power.weapon = 25; power.shield = 25; power.engine = 25; power.sensor = 25;
   presetEl.textContent = 'MANUAL';
   heat = 0;
-  radiatorOpen = false;
+  radiatorOpen = true;   // 出撃時はラジエーター展開状態
   shutdownLeft = 0;
+  empLeft = 0;
   propellant = PROP.MAX;
   shieldHp = SHIELD.MAX;
   weaponIndex = 0;
   ammo = WEAPONS.map((w) => w.ammo);   // 弾を積み直す
   fireCooldown = 0;
+  burstLeft = 0;
   saidAmmoOut = false;
+  areaIndex = 0;
+  areaAmmo = AREA_WEAPONS.map((w) => w.ammo);   // 範囲攻撃も積み直す
+  areaCooldown = 0;
 
   // --- 損傷を消す ---
   hullDamage = 0;
@@ -1304,13 +1441,30 @@ function fire() {
     return;
   }
 
-  if (ammo[weaponIndex] !== Infinity) ammo[weaponIndex] -= 1;
+  fireOnce(w);        // 1条目
+  fireCooldown = w.interval;
+
+  // 3点バーストの武器は、残り2条を予約しておく。
+  // ここで一度に3条撃たず、時間を空けて撃つから「ドドドッ」と聞こえる。
+  if (w.burst && w.burst > 1) {
+    burstLeft  = w.burst - 1;
+    burstTimer = w.burstGap;
+  }
+}
+
+// ===================================================================
+// 1条だけ撃つ ― 弾数を減らし、熱を上げ、3Dへ弾を出す
+//
+// fire() から呼ばれるほか、3点バーストの2条目・3条目もここを通る。
+// 「撃てるかどうかの確認」は fire() が済ませている前提。
+// ===================================================================
+function fireOnce(w) {
+  const index = WEAPONS.indexOf(w);
+  if (ammo[index] !== Infinity) ammo[index] -= 1;
 
   heat = Math.min(heat + w.heat, HEAT.MAX);
   fireBolt(w.boltColor, w.pyro);   // scene.js:弾を飛ばす
   playFireSound();
-
-  fireCooldown = w.interval;
 
   // 撃った手応え。被弾(0.55)よりずっと弱い、ごく小さな振動
   startShake(FEEL.SHAKE_FIRE);
@@ -1319,10 +1473,107 @@ function fire() {
   if (heat >= HEAT.MAX) {
     heat = HEAT.MAX;
     shutdownLeft = HEAT.SHUTDOWN_SEC;
+    burstLeft = 0;             // 停止したのでバーストの残りは撃てない
     playShutdown();
     speakVoice('POWER_FAILURE');
     console.log('OVERHEAT ― 強制シャットダウン(発射熱)');
   }
+}
+
+// バーストの残り条を撃ち足す。毎コマ呼ばれる
+function updateBurst(dt) {
+  if (burstLeft <= 0) return;
+
+  // 途中でシャットダウンしたり武器を替えたら、残りは撃たない
+  const w = currentWeapon();
+  if (shutdownLeft > 0 || !w.burst || ammo[weaponIndex] <= 0) {
+    burstLeft = 0;
+    return;
+  }
+
+  burstTimer -= dt;
+  if (burstTimer > 0) return;
+
+  fireOnce(w);
+  burstLeft -= 1;
+  burstTimer = w.burstGap;
+}
+
+// ===================================================================
+// 範囲攻撃の発射(Bキー)
+//
+// 主武器と違い「当てる」のではなく「置く」。数秒後にその場で炸裂する。
+// 自分も巻き込まれるので、撃ったら離れる操作とセットになる。
+// ===================================================================
+function fireArea() {
+  const a = currentArea();
+
+  if (isBroken('weapon')) { addCombatLog('武器系 損傷', 'hull'); playDenied(); return; }
+  if (areaCooldown > 0) return;
+
+  // EMPは電力を食う装備。武器へ配っていないと撃てない
+  if (power.weapon < a.minPower) {
+    addCombatLog('出力不足', 'hull');
+    playDenied();
+    return;
+  }
+  if (areaAmmo[areaIndex] <= 0) {
+    addCombatLog(a.label + ' OUT', 'hull');
+    playDryFire();
+    speakVoice('AMMO_DEPLETED');
+    return;
+  }
+
+  if (!launchOrdnance(a.kind)) { playDenied(); return; }
+
+  areaAmmo[areaIndex] -= 1;
+  areaCooldown = a.interval;
+  heat = Math.min(heat + a.heat, HEAT.MAX);
+  playOrdnanceLaunch(a.kind === 'emp');
+  addCombatLog(a.jp + ' 投下', 'warn');
+  startShake(FEEL.SHAKE_FIRE * 1.5);
+  renderWeapon();
+}
+
+// 範囲攻撃の切替(Nキー)
+function switchArea() {
+  areaIndex = (areaIndex + 1) % AREA_WEAPONS.length;
+  playPresetConfirm();
+  addCombatLog(currentArea().jp, 'warn');
+  renderWeapon();
+}
+
+// ===================================================================
+// 炸裂の結果を受け取る ― scene.js から呼ばれる
+// ===================================================================
+
+// 範囲攻撃が炸裂した。hit=巻き込んだ機数 / killed=そのうち撃墜した数
+function onAreaBlast(kind, hit, killed) {
+  playBlast(kind === 'emp');
+
+  if (kind === 'emp') {
+    if (hit > 0) addCombatLog('EMP ― ' + hit + '機 沈黙', 'kill');
+    else         addCombatLog('EMP ― 効果なし', 'warn');
+  } else {
+    if (hit > 0) addCombatLog('BOMB ― ' + hit + '機に命中', 'kill');
+    else         addCombatLog('BOMB ― 外れ', 'warn');
+  }
+}
+
+// 自分のボムに巻き込まれた
+function onPlayerBlast(damage) {
+  if (damage <= 0) return;
+  addCombatLog('自爆 ― 爆風', 'hull');
+  takeDamage(damage);
+}
+
+// 自分のEMPに巻き込まれた。
+// シールドが再生せず、センサーも落ちる ― 撃ったら離れる、を守らせる代償。
+function onPlayerEmp(seconds) {
+  empLeft = Math.max(empLeft, seconds);
+  addCombatLog('EMP 被曝 ― 系統低下', 'hull');
+  playEmpHit();
+  speakVoice('SYSTEMS_DOWN');
 }
 
 // ===================================================================
@@ -1370,6 +1621,7 @@ function tick(now) {
   }
 
   updateAutoFire(dt);               // 機関砲の連射
+  updateBurst(dt);                  // ビーム砲の3点バーストの残り条
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
   updateView(dt);                   // W/A/S/D による機首操作
@@ -1384,6 +1636,7 @@ function tick(now) {
   renderRadar();       // レーダーと敵マーカー
   renderWeapon();      // 兵装パネル(残弾)
   renderCrosshair();   // 照準(弾道の向きに合わせる)
+  renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
 
   requestAnimationFrame(tick);   // 次のコマを予約(これで無限に回り続ける)
 }
@@ -1468,6 +1721,13 @@ function update(dt) {
   burstFlash  = Math.max(burstFlash  - dt, 0);
   damageFlash = Math.max(damageFlash - dt, 0);
   hitVignette = Math.max(hitVignette - dt, 0);
+
+  // 範囲攻撃の間隔と、EMPを浴びている残り時間を数える
+  areaCooldown = Math.max(areaCooldown - dt, 0);
+  if (empLeft > 0) {
+    empLeft = Math.max(empLeft - dt, 0);
+    if (empLeft === 0) playReboot();   // 系統が戻った合図
+  }
 
   if (shutdownLeft > 0) {
     // --- 停止中:強制冷却しながらカウントダウン。シールドは回復しない ---

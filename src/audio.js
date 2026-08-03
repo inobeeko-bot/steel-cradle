@@ -205,10 +205,29 @@ function playCaptureBeep(progress) {
   playTone(AUDIO.CAPTURE_FREQ * (1 + p * 0.22), dur, AUDIO.CAPTURE_GAIN, AUDIO.CAPTURE_WAVE);
 }
 
-// ロック完了。捕捉の「ビビビ」が途切れ、澄んだ連続音に変わる合図
+// ===================================================================
+// ロックオン(切り札を撃てる状態)
+//
+// 捕捉の「ビビビ」から、はっきり別物の音に切り替わることが大事。
+// ここだけ音を高く張り、下に低い唸りを重ねて緊張感を作っている。
+// ===================================================================
+
+// ロックが satisfied した瞬間。駆け上がって高音で張りつめる
 function playLockTone() {
-  playTone(520, 0.42, 0.24, 'square');
-  playTone(780, 0.42, 0.16, 'square', 0.02);
+  // 一気に駆け上がる。ここが「決まった」合図になる
+  playSweep(420, 1480, 0.26, 0.26, 'square');
+  // 張りついた高音
+  playTone(1480, 0.55, 0.20, 'square', 0.22);
+  // 下に低い唸りを重ねる。高音だけだと軽く、これがあると重く緊張する
+  playSweep(150, 96, 0.70, 0.26, 'sawtooth');
+  playTone(62, 0.75, 0.20, 'square', 0.05);
+}
+
+// ロック継続中の「ピー」。高く、ほぼ途切れずに鳴り続ける
+function playLockedBeep() {
+  playTone(1560, 0.20, 0.15, 'square');
+  playTone(1040, 0.20, 0.07, 'square');   // 少し厚みを足す
+  playTone(78, 0.20, 0.10, 'square');     // 低い脈。緊張感はここから出る
 }
 
 // ミサイル発射。噴射の吹き出しと低い突き上げ
@@ -237,6 +256,41 @@ function playFireSound() {
             AUDIO.FIRE_NOISE_FROM, AUDIO.FIRE_NOISE_TO, 'bandpass');
   playSweep(AUDIO.FIRE_FREQ_START, AUDIO.FIRE_FREQ_END,
             AUDIO.FIRE_DUR, AUDIO.FIRE_GAIN, AUDIO.FIRE_WAVE);
+}
+
+// ===================================================================
+// 範囲攻撃(ボム/EMP)
+// ===================================================================
+
+// 投下音。ボムは「ポン」と押し出す音、EMPは充電が抜ける高めの音
+function playOrdnanceLaunch(isEmp) {
+  if (isEmp) {
+    playSweep(210, 620, 0.22, 0.20, 'square');
+    playNoise(0.14, 0.10, 900, 2600, 'bandpass');
+  } else {
+    playNoise(0.16, 0.20, 700, 180);
+    playTone(96, 0.16, 0.22, 'square');
+  }
+}
+
+// 炸裂音。ボムは低い轟音、EMPは「ボンッ…ジジ」という放電の感じ
+function playBlast(isEmp) {
+  if (isEmp) {
+    playSweep(520, 44, 0.42, 0.30, 'square');
+    playNoise(0.50, 0.20, 3200, 240, 'bandpass');
+    playTone(58, 0.30, 0.20, 'square', 0.05);
+  } else {
+    playNoise(0.62, 0.34, 1900, 45);
+    playSweep(110, 24, 0.55, 0.34, 'sawtooth');
+    playTone(64, 0.42, 0.26, 'square');
+  }
+}
+
+// 自分のEMPを浴びた(系統が落ちる低い唸り)
+function playEmpHit() {
+  playSweep(340, 40, 0.70, 0.30, 'sawtooth');
+  playNoise(0.55, 0.16, 2400, 200, 'bandpass');
+  playTone(46, 0.55, 0.22, 'square', 0.08);
 }
 
 // 敵に当たった

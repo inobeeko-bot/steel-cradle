@@ -36,6 +36,7 @@ const VOICE = {
     MISSILE_INBOUND: { text: 'MISSILE. MISSILE.', priority: 2, cooldown: 5 },
     CRITICAL_DAMAGE: { text: 'WARNING. CRITICAL DAMAGE.',    priority: 2 },
     POWER_FAILURE:   { text: 'POWER FAILURE.',               priority: 2 },
+    SYSTEMS_DOWN:    { text: 'WARNING. SYSTEMS DOWN.', priority: 2, cooldown: 6 },
 
     // 状態通知(低優先・割り込まれる側)
     TARGET_ACQUIRED:  { text: 'TARGET ACQUIRED.',            priority: 1 },

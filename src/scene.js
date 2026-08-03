@@ -306,6 +306,19 @@ const AIM = {
   LOCK_KEEP:      0.4,   // 照準から外れてもロックを保つ猶予(秒)
 };
 
+// --- 照準の微追尾(ソフトエイムアシスト)-----------------------------
+// 敵が照準のすぐ近くにいるときだけ、機首をほんのわずかに敵へ寄せる。
+// 気づかない強さに保つのが目的なので、数値を上げすぎないこと。
+// 目安:MAX_RATE を FEEL.TURN_SPEED(0.80)の1/6以上にすると
+//      「勝手に動いた」と分かるようになる。
+const ASSIST = {
+  ENABLED:   true,
+  CONE:      0.048,  // 効き始める角度(ラジアン)。約2.7度=照準のすぐ内側だけ
+  MAX_RATE:  0.13,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)の約1/6
+  RANGE:      220,   // これより遠い敵には効かない
+  MIN_RANGE:    8,   // 近すぎる敵には効かない(すれ違いで振り回されるため)
+};
+
 // 照準の状態。今は2段階だが、将来ロックオンで3段階目を使う。
 //   'CLEAR'    … 何も捉えていない
 //   'TRACKING' … 照準の先に敵がいる(捕捉中)
@@ -321,7 +334,7 @@ const MISSILE = {
   SPEED:       58,   // 弾速。ビーム(90)より遅いが、曲がって追いかける
   TURN_RATE:  2.4,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
   LIFE:       9.0,   // 燃焼時間(秒)。切れると失速して消える
-  DAMAGE:       3,   // 敵HPを減らす量(敵HP5なので2発で撃墜)
+  DAMAGE:       5,   // 敵HPを減らす量。敵の最大HPと同じ = 当たれば1発で撃墜
   HIT_RADIUS: 3.6,   // 当たり判定。ビームより甘い
   COLOR:  0xff9d4d,
   OFFSET_X:  1.0,    // 発射口の左右
@@ -371,6 +384,40 @@ const PYRO = {
   MARK_SEC:    6.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
   COLOR: 0xff7a2a,
 };
+
+// --- 範囲攻撃:ボムとEMP(武器仕様書3章)---------------------------
+// 主武器が「1機を狙って当てる」のに対し、こちらは「広さ」で当てる。
+// 撃ってから数秒後にその場で炸裂するので、敵の進路に置いてくる使い方になる
+// (仕様書のいう「置き攻め」)。
+//
+// ボム … HULL/シールドを削る素直な物理範囲ダメージ。
+// EMP  … 電力を攻める。キルは取れないが、範囲内の機体を数秒黙らせる。
+//
+// どちらも自分が巻き込まれる。撃ったら離れる、が要る武器にしてある。
+const BOMB = {
+  SPEED:       46,   // 弾(90)よりずっと遅い。前へ「置く」感覚
+  FUSE:       1.5,   // 発射してから炸裂するまでの秒数
+  RADIUS:      24,   // 爆発が届く半径
+  DAMAGE:       4,   // 中心での威力(HP)。敵の最大HPは5なので、中心なら瀕死
+  SELF_RADIUS: 18,   // 自機がこれより近いと巻き込まれる
+  SELF_DAMAGE: 25,   // 巻き込まれたときにシールドを削る量
+  COLOR:  0xffb04a,
+};
+
+const EMP = {
+  SPEED:       52,
+  FUSE:       1.4,
+  RADIUS:      38,   // ボムより広い。当てやすいが、HPは1も削れない
+  STUN_SEC:   4.5,   // 敵の行動不能秒数(動かない・撃たない)
+  SELF_RADIUS: 26,   // 自機がこれより近いと自分も食らう
+  SELF_SEC:   4.0,   // 自機のシールド再生停止・センサー低下が続く秒数
+  COLOR:  0x7fd4ff,
+};
+
+let ordnance = [];        // 飛んでいるボム/EMP弾
+let blasts   = [];        // 炸裂の光(ふくらみながら消える球)
+let ordnanceGeometry = null;
+let blastGeometry    = null;
 
 // 敵のHEAT。100を超えると自機と同じく強制シャットダウンする。
 const ENEMY_HEAT = {
@@ -1284,9 +1331,13 @@ function resetFlight() {
   for (const b of bolts)      scene.remove(b.mesh);
   for (const b of enemyBolts) scene.remove(b.mesh);
   for (const d of debris)   { scene.remove(d.mesh); d.mesh.material.dispose(); }
+  for (const o of ordnance) { scene.remove(o.mesh); o.mesh.material.dispose(); }
+  for (const b of blasts)   { scene.remove(b.mesh); b.mesh.material.dispose(); }
   bolts.length = 0;
   enemyBolts.length = 0;
   debris.length = 0;
+  ordnance.length = 0;
+  blasts.length = 0;
 
   // 敵を全機復活させて前方に置き直す
   for (const e of enemies) respawnEnemy(e);
@@ -1528,9 +1579,62 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
   const step = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(pitchRate * dt, yawRate * dt, rollRate * dt, 'XYZ'));
   shipQuat.multiply(step);
+
+  applyAimAssist(dt);     // ごくわずかに敵へ機首を寄せる(下で説明)
+
   shipQuat.normalize();   // 計算誤差が溜まって歪むのを防ぐ
 
   // ※ 実際に機体とカメラを向けるのは updateFlight()。ここでは向きを決めるだけ。
+}
+
+// ===================================================================
+// 照準の微追尾(ソフトエイムアシスト)
+//
+// 敵が照準のすぐ近くにいるときだけ、機首をほんのわずかに敵へ寄せる。
+// 「勝手に狙ってくれる」ほど強いと操縦している感じが消えるので、
+//   ・効く範囲は照準のごく近く(ASSIST.CONE)だけ
+//   ・寄せる速さは操縦の1/6以下(ASSIST.MAX_RATE 対 FEEL.TURN_SPEED)
+//   ・照準の縁ほど弱く、中心に近いほど強い(境目で「吸い付いた」と感じさせない)
+// の3つで、気づかない強さに抑えている。
+// ===================================================================
+function applyAimAssist(dt) {
+  if (!ASSIST.ENABLED) return;
+
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(shipQuat);
+
+  // 照準にいちばん近い敵を1機だけ選ぶ
+  let best = null;
+  let bestAngle = ASSIST.CONE;
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+
+    const to = e.group.position.clone().sub(playerShip.position);
+    const dist = to.length();
+    if (dist > ASSIST.RANGE || dist < ASSIST.MIN_RANGE) continue;
+
+    to.normalize();
+    // 内積(dot)= 2つの向きがどれだけ同じ方を向いているか。1 なら真正面。
+    // acos で「何ラジアンずれているか」に直す。
+    const angle = Math.acos(Math.max(-1, Math.min(1, forward.dot(to))));
+    if (angle < bestAngle) { bestAngle = angle; best = to; }
+  }
+
+  if (!best) return;
+
+  // 縁で 0、中心で 1。境目をなめらかにして「入った瞬間」を感じさせない
+  const weight = 1 - bestAngle / ASSIST.CONE;
+  // 今コマで寄せる角度。残りのずれ以上には動かさない(行き過ぎ防止)
+  const stepAngle = Math.min(bestAngle, ASSIST.MAX_RATE * dt) * weight;
+  if (stepAngle <= 0.00001) return;
+
+  // 回す軸 = 「今の機首」と「敵の方向」の両方に直角な向き(外積)
+  const axis = new THREE.Vector3().crossVectors(forward, best);
+  if (axis.lengthSq() < 1e-8) return;   // ほぼ真正面。回す必要がない
+  axis.normalize();
+
+  // 世界の軸まわりの回転なので、こちらは前から掛ける(premultiply)
+  shipQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, stepAngle));
 }
 
 // ===================================================================
@@ -1682,9 +1786,16 @@ function updateMissiles(dt) {
     }
 
     if (struck) {
-      // ミサイルは1発で複数ダメージ。まとめて減らす
-      for (let d = 0; d < MISSILE.DAMAGE && struck.alive; d++) {
-        hitEnemy(struck, m.mesh.position, true);
+      // ミサイルは切り札。まとめてHPを減らすので、当たればふつう1発で落ちる。
+      // hitEnemy を何度も呼ばず、ここで一度に減らす(命中音が重ならないように)
+      struck.hitFlash = ENEMY.FLASH_SEC;
+      struck.heatSig  = SENSOR.HEAT_LINGER;
+      struck.hp -= MISSILE.DAMAGE;
+      if (struck.hp <= 0) {
+        killEnemy(struck);
+      } else {
+        setEnemyState(struck, 'evade');
+        onHit(struck.hp);
       }
       spawnDebris(m.mesh.position, 14, 0.3, 12);
       scene.remove(m.mesh);
@@ -1793,6 +1904,163 @@ function updateFlares(dt) {
   }
 }
 
+// ===================================================================
+// 範囲攻撃(ボム/EMP)の発射
+//
+// kind は 'bomb' か 'emp'。自機の速度をそのまま引き継いで前へ放り出す。
+// 引き継ぐのは「置き攻め」のため ― 減速して撒けば、その場に置いてこられる。
+// ===================================================================
+function launchOrdnance(kind) {
+  if (!sceneReady) return false;
+
+  const cfg = (kind === 'emp') ? EMP : BOMB;
+
+  // 八面体。ローポリのまま「弾頭とは違う何か」に見える形を選んでいる
+  if (!ordnanceGeometry) ordnanceGeometry = new THREE.OctahedronGeometry(0.55);
+
+  const material = new THREE.MeshBasicMaterial({ color: cfg.COLOR });
+  const mesh = new THREE.Mesh(ordnanceGeometry, material);
+
+  // 輪郭線を付けて、他のローポリと見た目を揃える
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(ordnanceGeometry),
+    new THREE.LineBasicMaterial({ color: 0xffffff })
+  );
+  mesh.add(edges);
+
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  mesh.position.copy(playerShip.position).addScaledVector(forward, 2.2);
+  scene.add(mesh);
+
+  ordnance.push({
+    mesh: mesh,
+    // 自機の速度 + 前方への射出速度。ドリフト中に撒くと真横へ流れていく
+    velocity: shipVelocity.clone().addScaledVector(forward, cfg.SPEED),
+    fuse: cfg.FUSE,
+    kind: kind,
+  });
+  return true;
+}
+
+// 投げた弾を進め、信管の時間が来たら炸裂させる
+function updateOrdnance(dt) {
+  for (let i = ordnance.length - 1; i >= 0; i--) {
+    const o = ordnance[i];
+
+    o.mesh.position.addScaledVector(o.velocity, dt);
+    o.mesh.rotation.x += 4 * dt;    // くるくる回して「投げた物」らしく見せる
+    o.mesh.rotation.y += 5.5 * dt;
+
+    o.fuse -= dt;
+    // 炸裂が近づくと点滅を速める(いつ爆発するか読めるようにする)
+    const blink = Math.sin(o.fuse * (o.fuse < 0.6 ? 40 : 14));
+    o.mesh.visible = blink > -0.4;
+
+    if (o.fuse <= 0) {
+      detonateOrdnance(o);
+      scene.remove(o.mesh);
+      o.mesh.material.dispose();
+      ordnance.splice(i, 1);
+    }
+  }
+}
+
+// ===================================================================
+// 炸裂
+//
+// 距離で効き目が落ちる「減衰(げんすい)」を入れてある。
+// 中心に置ければ強く、端をかすめただけならほとんど効かない。
+// 結果を main.js に返して、ログと音はそちらに任せる。
+// ===================================================================
+function detonateOrdnance(o) {
+  const cfg = (o.kind === 'emp') ? EMP : BOMB;
+  const pos = o.mesh.position.clone();
+
+  spawnBlast(pos, cfg.RADIUS, cfg.COLOR);
+  spawnDebris(pos, 14, 0.30, 22);
+
+  let hitCount = 0;
+  let killCountHere = 0;
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const d = e.group.position.distanceTo(pos);
+    if (d > cfg.RADIUS) continue;
+
+    // 1 = 中心 / 0 = 半径のふち
+    const falloff = 1 - d / cfg.RADIUS;
+    e.hitFlash = ENEMY.FLASH_SEC;
+    e.heatSig  = SENSOR.HEAT_LINGER;
+
+    if (o.kind === 'emp') {
+      // 電力を落とす。HPは1も減らないが、範囲内の敵は数秒なにもできない
+      e.empLeft = Math.max(e.empLeft, EMP.STUN_SEC * falloff);
+      e.telegraph = 0;
+      e.missileTele = 0;
+      hitCount += 1;
+
+    } else {
+      // 素直な物理ダメージ。中心なら4、ふち近くなら0
+      const damage = Math.round(BOMB.DAMAGE * falloff);
+      if (damage <= 0) continue;
+      hitCount += 1;
+      e.hp -= damage;
+      if (e.hp <= 0) {
+        killEnemy(e);
+        killCountHere += 1;
+      } else {
+        setEnemyState(e, 'evade');
+        onHit(e.hp);
+      }
+    }
+  }
+
+  // --- 自分が巻き込まれたか ---
+  // 撃ったら離れる、を守らせるための仕掛け。範囲攻撃の代償にあたる。
+  const selfDist = playerShip.position.distanceTo(pos);
+  if (o.kind === 'emp') {
+    if (selfDist <= EMP.SELF_RADIUS) onPlayerEmp(EMP.SELF_SEC);
+  } else {
+    if (selfDist <= BOMB.SELF_RADIUS) {
+      const falloff = 1 - selfDist / BOMB.SELF_RADIUS;
+      onPlayerBlast(Math.round(BOMB.SELF_DAMAGE * falloff));
+    }
+  }
+
+  onAreaBlast(o.kind, hitCount, killCountHere);
+}
+
+// 炸裂の光。半透明の球がふくらみながら消えていくだけの簡単な表現
+function spawnBlast(position, radius, color) {
+  if (!blastGeometry) blastGeometry = new THREE.IcosahedronGeometry(1, 1);
+
+  const material = new THREE.MeshBasicMaterial({
+    color: color, transparent: true, opacity: 0.42, wireframe: true,
+  });
+  const mesh = new THREE.Mesh(blastGeometry, material);
+  mesh.position.copy(position);
+  mesh.scale.setScalar(radius * 0.2);
+  scene.add(mesh);
+
+  blasts.push({ mesh: mesh, radius: radius, life: 0.55, maxLife: 0.55 });
+}
+
+function updateBlasts(dt) {
+  for (let i = blasts.length - 1; i >= 0; i--) {
+    const b = blasts[i];
+    b.life -= dt;
+    const t = 1 - Math.max(b.life / b.maxLife, 0);   // 0 → 1
+    b.mesh.scale.setScalar(b.radius * (0.2 + t * 0.8));
+    b.mesh.material.opacity = 0.42 * (1 - t);
+
+    if (b.life <= 0) {
+      scene.remove(b.mesh);
+      b.mesh.material.dispose();
+      blasts.splice(i, 1);
+    }
+  }
+}
+
 // 飛んでいる弾を進め、命中判定をして、寿命が尽きたものを消す
 function updateBolts(dt) {
   // 後ろから前へ回すのがコツ。途中で要素を消しても番号がずれない
@@ -1885,6 +2153,9 @@ function createEnemy() {
     burnLeft: 0,       // パイロ弾で燃えている残り秒数
     heatDown: 0,       // 熱で停止している残り秒数
 
+    // EMPで電力を落とされている残り秒数。この間は動けず撃てない
+    empLeft: 0,
+
     // ミサイルとフレア
     missileAmmo:  ENEMY_MISSILE.AMMO,
     missileTimer: ENEMY_MISSILE.INTERVAL * (0.4 + Math.random() * 0.6),
@@ -1920,6 +2191,16 @@ function updateEnemyAI(e, dt) {
   // 強制シャットダウン中は何もできない(自機と同じ)
   if (e.heatDown > 0) {
     e.heatDown -= dt;
+    e.telegraph = 0;
+    e.missileTele = 0;
+    return;
+  }
+
+  // --- EMPで電力を落とされている間も何もできない ---
+  // 熱による停止と結果は同じだが、原因が違う(熱=自分の発熱 / EMP=撃たれた)。
+  // 別々に持っておくと、表示や音を分けられる。
+  if (e.empLeft > 0) {
+    e.empLeft -= dt;
     e.telegraph = 0;
     e.missileTele = 0;
     return;
@@ -2142,6 +2423,14 @@ function updateEnemyGlow(e, dt) {
     r = Math.max(r, t * 0.6); g = Math.max(g, t * 0.6); b = Math.max(b, t);
   }
 
+  // EMPで止まっている間は水色に不規則に明滅させる(電気が飛んでいる感じ)
+  if (e.empLeft > 0) {
+    const t = 0.20 + 0.30 * Math.abs(Math.sin(sceneTime * 23));
+    r = Math.max(r, t * 0.25);
+    g = Math.max(g, t * 0.75);
+    b = Math.max(b, t);
+  }
+
   // ミサイルの予告は白紫。銃の予告(オレンジ)と色で区別できるようにする
   if (e.missileTele > 0) {
     const t = 1 - e.missileTele / ENEMY_MISSILE.TELEGRAPH;
@@ -2228,6 +2517,7 @@ function currentEnemyState() {
 
   for (const e of enemies) {
     if (!e.alive) continue;
+    if (e.empLeft > 0) return 'EMP';           // EMPで沈黙中 = 好機
     if (e.heatDown > 0) return 'OVERHEAT';     // 敵が熱で停止中 = 好機
     if (e.missileTele > 0) return 'MISSILE';   // いちばん危ない
     if (e.telegraph > 0) return 'FIRING';   // 撃たれる直前は最優先で知らせる
@@ -2387,6 +2677,7 @@ function respawnEnemy(e) {
   e.heat = 0;
   e.burnLeft = 0;
   e.heatDown = 0;
+  e.empLeft = 0;
   e.missileAmmo = ENEMY_MISSILE.AMMO;
   e.missileTimer = ENEMY_MISSILE.INTERVAL * (0.5 + Math.random() * 0.5);
   e.missileTele = 0;
@@ -2474,6 +2765,8 @@ function updateScene(dt, elapsed) {
   updateBolts(dt);
   updateMissiles(dt);
   updateFlares(dt);
+  updateOrdnance(dt);   // ボム/EMPの飛翔と炸裂
+  updateBlasts(dt);     // 炸裂の光
   updateEnemyBolts(dt);   // 敵の弾は敵が死んでいても飛び続ける
   updateDebris(dt);
 
