@@ -383,6 +383,17 @@
       color: var(--text);
     }
     .weapon-panel .wp-jp  { font-size: 9px; letter-spacing: 0.1em; color: var(--dim); }
+    .weapon-panel .wp-flare {
+      margin-top: 5px;
+      padding-top: 5px;
+      border-top: 1px solid var(--line);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: var(--dim);
+    }
+    .weapon-panel .wp-flare b { color: #fff0b0; font-weight: normal; font-size: 14px; }
+    .weapon-panel .wp-flare.low b { color: #ff5a3c; }
+
     .weapon-panel .wp-sub { font-size: 9px; letter-spacing: 0.1em; color: var(--dim); }
 
     /* 残弾が少ない、または電力不足で撃てないとき */
@@ -692,6 +703,7 @@
       <div class="wp-jp" id="wp-jp">ビーム砲</div>
       <div class="wp-ammo"><b id="wp-ammo">∞</b></div>
       <div class="wp-sub">熱 <span id="wp-heat">+8</span> &nbsp; R 切替</div>
+      <div class="wp-flare" id="wp-flare-row">FLARE <b id="wp-flare">8</b> &nbsp; C</div>
     </div>
 
     <!-- 戦闘ログ(HIT / KILL) -->
@@ -790,7 +802,7 @@
       </div>
 
       <div class="help">
-        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; Space 回避バースト &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
+        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; Space 回避バースト &nbsp; C フレア &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
         <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
         &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト</span>
       </div>

@@ -43,6 +43,11 @@ const VOICE = {
     ONE_MINUTE:       { text: 'ONE MINUTE.',                 priority: 1 },
     FUEL_LOW:         { text: 'FUEL LOW.',                   priority: 1 },
     AMMO_DEPLETED:    { text: 'AMMO DEPLETED.',              priority: 1 },
+    LOCK:             { text: 'LOCK.',           priority: 1, cooldown: 4 },
+    MISSILE_AWAY:     { text: 'MISSILE AWAY.',   priority: 1, cooldown: 2 },
+    NO_LOCK:          { text: 'NO LOCK.',        priority: 1, cooldown: 4 },
+    FLARES_OUT:       { text: 'FLARES OUT.',     priority: 1, cooldown: 6 },
+    FLARE_INEFFECTIVE:{ text: 'HEAT TOO HIGH.',  priority: 1, cooldown: 6 },
   },
 };
 

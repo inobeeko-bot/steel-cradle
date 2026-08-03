@@ -296,6 +296,14 @@ const AIM = {
   CAPTURE_MULT:   2.2,   // 捕捉半径 = 敵の当たり半径 × これ
   CAPTURE_SPREAD: 0.05,  // 距離に応じて広がる分(遠い敵も捉えられるように)
   CAPTURE_RANGE:  240,   // この距離より遠い敵は捕捉しない
+
+  // --- ロックオン(武器仕様書:ミサイルは発射にセンサーロック必須)---
+  // 捕捉を続けるとロックが進み、満ちると LOCKED になる。
+  // かかる時間はセンサーの電力配分で変わる。
+  // 「センサー厚め → ミサイル型」という配分スタイルの対応を、この数字が作る。
+  LOCK_SEC_MIN:   0.8,   // センサー100%のときのロック所要時間(秒)
+  LOCK_SEC_MAX:   2.8,   // センサー0%のときの所要時間
+  LOCK_KEEP:      0.4,   // 照準から外れてもロックを保つ猶予(秒)
 };
 
 // 照準の状態。今は2段階だが、将来ロックオンで3段階目を使う。
@@ -304,7 +312,46 @@ const AIM = {
 //   'LOCKED'   … 捕捉を維持しきってロックした(※中身は将来実装)
 let aimState = 'CLEAR';
 let aimTarget = null;      // 今捉えている敵
-let aimHoldTime = 0;       // 捕捉を続けている秒数(ロックオンの判定に使う予定)
+let aimHoldTime = 0;       // 捕捉を続けている秒数
+let lockProgress = 0;      // ロックの進み具合(0〜1)。1で LOCKED
+let lockGrace = 0;         // 照準から外れてからロックが切れるまでの残り秒
+
+// --- ミサイル(武器仕様書:切り札枠。発射にセンサーロック必須)---------
+const MISSILE = {
+  SPEED:       58,   // 弾速。ビーム(90)より遅いが、曲がって追いかける
+  TURN_RATE:  2.4,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
+  LIFE:       9.0,   // 燃焼時間(秒)。切れると失速して消える
+  DAMAGE:       3,   // 敵HPを減らす量(敵HP5なので2発で撃墜)
+  HIT_RADIUS: 3.6,   // 当たり判定。ビームより甘い
+  COLOR:  0xff9d4d,
+  OFFSET_X:  1.0,    // 発射口の左右
+  OFFSET_Y: -0.5,
+};
+
+let missiles = [];
+let missileGeometry = null;
+let missileMaterial = null;
+let missileFlameMaterial = null;
+
+// --- フレア(武器仕様書4章:回避装備はこれ一本)------------------------
+// 熱源のデコイ。
+//   1. ミサイルの誘導を逸らす(本来用途)
+//   2. 敵センサーに偽の熱反応を撒く = 位置の誤魔化し
+//   3. 自機HEATが高いと騙せない ── 本体が一番熱いため
+// 3番目が肝で、「熱管理できている者だけがフレアを活かせる」という設計になる。
+const FLARE = {
+  COUNT:        8,    // 搭載数。戦闘中の補給なし
+  LIFE:       4.5,    // 燃えている秒数
+  SPEED:       14,    // 撒かれたあと後方へ流れる速さ
+  SPREAD:     6.0,    // 左右にばらける量
+  DECOY_RANGE: 55,    // この距離内の敵をだませる
+  HEAT_LIMIT:  55,    // 自機の熱がこれを超えると、もうだませない
+  CONFUSE_SEC: 3.0,   // だませた敵が狙いを外している秒数
+  COLOR:  0xfff0b0,
+};
+
+let flares = [];
+let flareGeometry = null;
 
 // --- 敵の弾の設定 ---------------------------------------------------
 const ENEMY_BOLT = {
@@ -1187,6 +1234,10 @@ function resetFlight() {
   camQuat.identity();
 
   // 飛んでいるものをすべて片付ける
+  for (const m of missiles)   scene.remove(m.mesh);
+  missiles.length = 0;
+  for (const f of flares)   { scene.remove(f.mesh); f.mesh.material.dispose(); }
+  flares.length = 0;
   for (const b of bolts)      scene.remove(b.mesh);
   for (const b of enemyBolts) scene.remove(b.mesh);
   for (const d of debris)   { scene.remove(d.mesh); d.mesh.material.dispose(); }
@@ -1238,7 +1289,12 @@ function currentSpeed() {
 // 状態は 'CLEAR' → 'TRACKING' → (将来) 'LOCKED' と段階を上げていく想定。
 // 今回は2段階まで。LOCKED へ上げる条件はここに足せばよい。
 // ===================================================================
-function updateAim(dt) {
+function lockSeconds(sensorPercent) {
+  const ratio = Math.max(0, Math.min(sensorPercent || 0, 100)) / 100;
+  return AIM.LOCK_SEC_MAX + ratio * (AIM.LOCK_SEC_MIN - AIM.LOCK_SEC_MAX);
+}
+
+function updateAim(dt, sensorPercent) {
   if (!sceneReady) { aimState = 'CLEAR'; return aimState; }
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
@@ -1269,21 +1325,33 @@ function updateAim(dt) {
   }
 
   // --- 状態遷移 ---
+  // CLEAR(何もない) → TRACKING(捉えた) → LOCKED(ロック完了)
   if (best) {
     if (aimState === 'CLEAR') {
       aimState = 'TRACKING';   // 捉えた瞬間
       aimHoldTime = 0;
+      lockProgress = 0;
     }
     aimTarget = best;
     aimHoldTime += dt;
+    lockGrace = AIM.LOCK_KEEP;
 
-    // ここに「一定時間捉え続けたら LOCKED へ」を将来足す。
-    // 例: if (aimHoldTime > AIM.LOCK_SEC) aimState = 'LOCKED';
+    // ロックの進み。センサー配分が高いほど速く満ちる
+    lockProgress = Math.min(lockProgress + dt / lockSeconds(sensorPercent), 1);
+    if (lockProgress >= 1) aimState = 'LOCKED';
+
+  } else if (lockGrace > 0 && aimState === 'LOCKED') {
+    // 照準から外れても、少しの間はロックを保つ。
+    // 揺れや一瞬の被弾でロックが飛ぶと、ミサイルが使い物にならないため。
+    lockGrace -= dt;
+    if (lockGrace <= 0) { aimState = 'CLEAR'; aimTarget = null; aimHoldTime = 0; lockProgress = 0; }
 
   } else {
     aimState = 'CLEAR';        // 外したら即座に戻る
     aimTarget = null;
     aimHoldTime = 0;
+    lockProgress = 0;
+    lockGrace = 0;
   }
 
   // --- レティクルの見た目に反映 ---
@@ -1294,6 +1362,14 @@ function updateAim(dt) {
       capturing ? COCKPIT.RETICLE_LOCK : COCKPIT.RETICLE_COLOR);
     parts.reticleMat.opacity =
       capturing ? COCKPIT.RETICLE_OPACITY_LOCK : COCKPIT.RETICLE_OPACITY;
+
+    // ロック完了で照準環が縮む。狙いが定まった感じを出す
+    if (parts.reticle) {
+      const target = (aimState === 'LOCKED')
+        ? COCKPIT.RETICLE_SIZE * 0.62 : COCKPIT.RETICLE_SIZE;
+      const cur = parts.reticle.scale.x;
+      parts.reticle.scale.setScalar(cur + (target - cur) * 0.25);
+    }
   }
 
   return aimState;
@@ -1307,6 +1383,16 @@ function currentAimState() {
 // 敵を捉え続けている秒数(捕捉音を詰めていくのに使う)
 function currentAimHold() {
   return aimHoldTime;
+}
+
+// ロックの進み具合(0〜1)。1でロック完了
+function currentLockProgress() {
+  return lockProgress;
+}
+
+// ロックしている敵がいるか
+function hasLock() {
+  return aimState === 'LOCKED' && aimTarget && aimTarget.alive;
 }
 
 // ===================================================================
@@ -1446,6 +1532,173 @@ function fireBolt(color) {
 
     scene.add(mesh);
     bolts.push({ mesh: mesh, direction: direction, life: BOLT.LIFE, volleyId: volleyCounter });
+  }
+}
+
+// ===================================================================
+// ミサイルの発射(武器仕様書:発射にセンサーロック必須)
+// ロックしている敵を覚えて飛び出し、その敵を追いかける。
+// ===================================================================
+function fireMissile() {
+  if (!sceneReady || !hasLock()) return false;
+
+  if (!missileGeometry) {
+    // 細い円錐。ローポリのまま「弾頭」らしく見せる
+    missileGeometry = new THREE.ConeGeometry(0.22, 1.4, 5);
+    missileGeometry.rotateX(-Math.PI / 2);   // 前(-Z)へ向ける
+    missileMaterial = new THREE.MeshBasicMaterial({ color: MISSILE.COLOR });
+    missileFlameMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd9a0, transparent: true, opacity: 0.55,
+    });
+  }
+
+  const side = (missiles.length % 2 === 0) ? -1 : 1;   // 左右交互に撃つ
+  const mesh = new THREE.Mesh(missileGeometry, missileMaterial);
+
+  // 噴射炎を後ろに付ける
+  const flameGeo = new THREE.ConeGeometry(0.16, 1.1, 5);
+  flameGeo.rotateX(Math.PI / 2);
+  flameGeo.translate(0, 0, 1.2);
+  mesh.add(new THREE.Mesh(flameGeo, missileFlameMaterial));
+
+  const offset = new THREE.Vector3(side * MISSILE.OFFSET_X, MISSILE.OFFSET_Y, -1.2);
+  offset.applyQuaternion(playerShip.quaternion);
+  mesh.position.copy(playerShip.position).add(offset);
+  mesh.quaternion.copy(playerShip.quaternion);
+
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+
+  scene.add(mesh);
+  missiles.push({
+    mesh: mesh,
+    direction: direction,
+    target: aimTarget,     // 発射時にロックしていた敵を覚えておく
+    life: MISSILE.LIFE,
+  });
+  return true;
+}
+
+// ミサイルを進め、目標へ向きを曲げ、当たったら爆発させる
+function updateMissiles(dt) {
+  for (let i = missiles.length - 1; i >= 0; i--) {
+    const m = missiles[i];
+
+    // --- 誘導 ---
+    // 目標へのまっすぐな向きへ、一定の速さでしか曲がれない。
+    // 曲がる速さに上限があるから、急旋回で振り切る余地が生まれる。
+    const tgt = m.decoy ? m.decoy : (m.target && m.target.alive ? m.target : null);
+    if (tgt) {
+      const want = (m.decoy ? m.decoy.position : tgt.group.position)
+        .clone().sub(m.mesh.position).normalize();
+      // lerp で少しずつ向きを寄せ、正規化して長さを戻す
+      m.direction.lerp(want, Math.min(MISSILE.TURN_RATE * dt, 1)).normalize();
+    }
+
+    m.mesh.position.addScaledVector(m.direction, MISSILE.SPEED * dt);
+    // 弾頭を進行方向へ向ける
+    m.mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(
+      new THREE.Vector3(0, 0, 0), m.direction.clone().negate(), new THREE.Vector3(0, 1, 0)));
+
+    m.life -= dt;
+
+    // --- 命中判定 ---
+    let struck = null;
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (m.mesh.position.distanceTo(e.group.position) < MISSILE.HIT_RADIUS) { struck = e; break; }
+    }
+
+    if (struck) {
+      // ミサイルは1発で複数ダメージ。まとめて減らす
+      for (let d = 0; d < MISSILE.DAMAGE && struck.alive; d++) {
+        hitEnemy(struck, m.mesh.position, true);
+      }
+      spawnDebris(m.mesh.position, 14, 0.3, 12);
+      scene.remove(m.mesh);
+      missiles.splice(i, 1);
+      continue;
+    }
+
+    if (m.life <= 0) {
+      spawnDebris(m.mesh.position, 6, 0.2, 6);
+      scene.remove(m.mesh);
+      missiles.splice(i, 1);
+    }
+  }
+}
+
+// ===================================================================
+// フレアを撒く
+//
+// 戻り値:{ ok, fooled } … ok=撒けたか / fooled=だませた敵の数
+// 自機の熱が高いと「本体のほうが熱い」ので誰もだませない。
+// ===================================================================
+function dropFlare(playerHeat) {
+  if (!sceneReady) return { ok: false, fooled: 0 };
+
+  if (!flareGeometry) flareGeometry = new THREE.OctahedronGeometry(0.34);
+
+  // --- 見た目:後方へ流れる小さな光を3つ撒く ---
+  const back = new THREE.Vector3(0, 0, 1).applyQuaternion(playerShip.quaternion);
+  for (let i = 0; i < 3; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: FLARE.COLOR, transparent: true, opacity: 1,
+    });
+    const mesh = new THREE.Mesh(flareGeometry, mat);
+    mesh.position.copy(playerShip.position);
+
+    // 後ろへ流しつつ、左右上下にばらけさせる
+    const vel = back.clone().multiplyScalar(FLARE.SPEED).add(new THREE.Vector3(
+      (Math.random() - 0.5) * FLARE.SPREAD,
+      (Math.random() - 0.5) * FLARE.SPREAD,
+      (Math.random() - 0.5) * FLARE.SPREAD));
+
+    scene.add(mesh);
+    flares.push({ mesh: mesh, velocity: vel, life: FLARE.LIFE, maxLife: FLARE.LIFE });
+  }
+
+  // --- 効果:自機が熱すぎると誰もだませない ---
+  if (playerHeat >= FLARE.HEAT_LIMIT) return { ok: true, fooled: 0 };
+
+  let fooled = 0;
+
+  // 飛んでいるミサイルの目標をフレアへ移す(将来、敵のミサイルに効く)
+  const decoy = flares[flares.length - 1];
+  for (const m of missiles) {
+    if (m.fromEnemy) { m.decoy = decoy.mesh; fooled++; }
+  }
+
+  // 狙いをつけている敵の照準を外す
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.group.position.distanceTo(playerShip.position) > FLARE.DECOY_RANGE) continue;
+    e.telegraph = 0;                       // 発射予告を中断させる
+    e.fireTimer = FLARE.CONFUSE_SEC;       // しばらく撃てなくなる
+    setEnemyState(e, 'approach');          // 攻撃態勢を解く
+    fooled++;
+  }
+
+  return { ok: true, fooled: fooled };
+}
+
+// フレアを流し、燃え尽きたものを消す
+function updateFlares(dt) {
+  for (let i = flares.length - 1; i >= 0; i--) {
+    const f = flares[i];
+    f.mesh.position.addScaledVector(f.velocity, dt);
+    f.velocity.multiplyScalar(1 - 0.7 * dt);   // だんだん減速
+
+    f.life -= dt;
+    // 燃え尽きるにつれて小さく暗くなる
+    const t = Math.max(f.life / f.maxLife, 0);
+    f.mesh.material.opacity = t;
+    f.mesh.scale.setScalar(0.6 + t * 0.8);
+
+    if (f.life <= 0) {
+      scene.remove(f.mesh);
+      f.mesh.material.dispose();
+      flares.splice(i, 1);
+    }
   }
 }
 
@@ -1937,6 +2190,8 @@ function updateScene(dt, elapsed) {
   if (!sceneReady) return;
 
   updateBolts(dt);
+  updateMissiles(dt);
+  updateFlares(dt);
   updateEnemyBolts(dt);   // 敵の弾は敵が死んでいても飛び続ける
   updateDebris(dt);
 

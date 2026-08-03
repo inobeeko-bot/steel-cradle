@@ -205,6 +205,24 @@ function playCaptureBeep(progress) {
   playTone(AUDIO.CAPTURE_FREQ * (1 + p * 0.22), dur, AUDIO.CAPTURE_GAIN, AUDIO.CAPTURE_WAVE);
 }
 
+// ロック完了。捕捉の「ビビビ」が途切れ、澄んだ連続音に変わる合図
+function playLockTone() {
+  playTone(520, 0.42, 0.24, 'square');
+  playTone(780, 0.42, 0.16, 'square', 0.02);
+}
+
+// ミサイル発射。噴射の吹き出しと低い突き上げ
+function playMissileLaunch() {
+  playNoise(0.55, 0.34, 1800, 240, 'bandpass');
+  playSweep(180, 60, 0.40, 0.26, 'sawtooth');
+}
+
+// フレア投下。ポンと弾け出る音
+function playFlare() {
+  playNoise(0.34, 0.26, 900, 2600, 'bandpass');
+  playSweep(120, 300, 0.18, 0.16, 'square');
+}
+
 // 敵に狙われた(相手が発射予告に入った)
 function playLockWarning() {
   playTone(AUDIO.WARN_FREQ, AUDIO.WARN_DUR, AUDIO.WARN_GAIN, AUDIO.WARN_WAVE);

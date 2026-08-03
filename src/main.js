@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-29 roll';
+const BUILD = 'p1-30 missile';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -164,11 +164,24 @@ const WEAPONS = [
     interval: 0.09,       // 連射の間隔(秒)。毎秒約11発
     boltColor: 0xffcf6a,
   },
+  {
+    key: 'MISSILE',
+    label: 'MISSILE',     // 誘導弾
+    jp: 'ミサイル',
+    heat: 3,              // 中くらい
+    ammo: 6,              // 切り札枠。数は少ない
+    minPower: 0,
+    auto: false,
+    interval: 0.6,        // 連続では撃てない
+    needsLock: true,      // ★ センサーロックがないと撃てない
+    boltColor: 0xff9d4d,
+  },
 ];
 
 let weaponIndex = 0;                  // 今選んでいる兵装
-let ammo = [Infinity, WEAPONS[1].ammo];   // 兵装ごとの残弾
+let ammo = [Infinity, WEAPONS[1].ammo, WEAPONS[2].ammo];   // 兵装ごとの残弾
 let fireCooldown = 0;                 // 次に撃てるようになるまでの残り秒
+let flareCount = 8;                   // フレアの残数(scene.js の FLARE.COUNT と揃える)
 let saidAmmoOut = false;              // 弾切れ音声を言ったか(1回だけ)
 
 // 今の兵装を取り出す短縮形
@@ -294,6 +307,8 @@ const weaponNameEl  = document.getElementById('wp-name');
 const weaponAmmoEl  = document.getElementById('wp-ammo');
 const weaponHeatEl  = document.getElementById('wp-heat');
 const weaponJpEl    = document.getElementById('wp-jp');
+const flareCountEl  = document.getElementById('wp-flare');
+const flareRowEl    = document.getElementById('wp-flare-row');
 
 const timerElMission = document.getElementById('mission-timer');
 const resultPanel    = document.getElementById('result-panel');
@@ -567,6 +582,14 @@ window.addEventListener('keydown', (event) => {
   keysHeld.add(event.key.toLowerCase());   // 押しっぱなし判定用に記録
   resumeAudio();   // ブラウザの規則で、最初のキー入力があるまで音は鳴らせない
 
+  // C キー … フレア投下(武器仕様書4章)
+  // ※ 仕様書9.6ではCはマスターコーション確認。そちらは未実装のため
+  //   暫定でここに割り当てている。実装時にキーを見直すこと。
+  if (event.key.toLowerCase() === 'c') {
+    if (missionState === 'active') useFlare();
+    return;
+  }
+
   // X キー … 三人称 ⇄ コックピット の切り替え
   // 視点は「今どちらか」を scene.js だけが持っている。
   // 同じ状態を2か所で持つとズレる原因になるので、ここでは尋ねて反転させるだけ。
@@ -742,13 +765,21 @@ function updateVoiceAlerts(dt) {
 // 捉えた瞬間に1回鳴らし、捉えている間は一定間隔で鳴らし続ける。
 // ===================================================================
 function updateAimFeedback(dt) {
-  const state = updateAim(dt);
+  const sensorPct = isBroken('sensor') ? power.sensor * 0.5 : power.sensor;
+  const state = updateAim(dt, sensorPct);
 
   if (state !== 'CLEAR') {
     // 捉え続けた時間に応じて 0→1 へ。1に近いほど間隔が詰まる
-    const progress = Math.min(currentAimHold() / CAPTURE.RAMP_SEC, 1);
+    // ロックの進み具合をそのまま音の詰まり方に使う。
+    // 「音が詰まりきる=ロック完了」が耳で分かるようになる。
+    const progress = currentLockProgress();
     const interval = CAPTURE.BEEP_START +
                      (CAPTURE.BEEP_END - CAPTURE.BEEP_START) * progress;
+
+    if (state === 'LOCKED' && lastAimState !== 'LOCKED') {
+      speakVoice('LOCK');          // ロックが満ちた瞬間
+      playLockTone();
+    }
 
     if (lastAimState === 'CLEAR') {
       speakVoice('TARGET_ACQUIRED');
@@ -876,11 +907,44 @@ function renderRadar() {
   }
 }
 
+// ===================================================================
+// フレアを撒く(武器仕様書4章:回避装備はこれ一本)
+//
+// 熱が高いと騙せない、が肝。
+// 「熱管理できている者だけがフレアを活かせる」という設計をここで作る。
+// ===================================================================
+function useFlare() {
+  if (flareCount <= 0) {
+    addCombatLog('FLARE EMPTY', 'hull');
+    playDryFire();
+    speakVoice('FLARES_OUT');
+    return;
+  }
+
+  const result = dropFlare(heat);
+  if (!result.ok) return;
+
+  flareCount -= 1;
+  playFlare();
+  renderWeapon();
+
+  if (heat >= 55) {
+    // 本体のほうが熱いので、偽の熱源として通用しない
+    addCombatLog('FLARE ― 熱すぎる', 'hull');
+    speakVoice('FLARE_INEFFECTIVE');
+  } else if (result.fooled > 0) {
+    addCombatLog('FLARE ― ' + result.fooled + '機を撹乱', 'warn');
+  } else {
+    addCombatLog('FLARE', 'warn');
+  }
+}
+
 // 兵装を切り替える(仕様書9.6:R)
 function switchWeapon() {
   weaponIndex = (weaponIndex + 1) % WEAPONS.length;
   fireCooldown = 0;
-  saidAmmoOut = false;   // 別の武器に替えたので、また弾切れを知らせてよい
+  saidAmmoOut = false;
+  flareCount = 8;   // 別の武器に替えたので、また弾切れを知らせてよい
   playPresetConfirm();
   addCombatLog(currentWeapon().jp, 'warn');
   renderWeapon();
@@ -901,6 +965,10 @@ function renderWeapon() {
   const noPower = (power.weapon < w.minPower);
   weaponPanelEl.classList.toggle('low', low || noPower);
   weaponPanelEl.classList.toggle('beam', w.key === 'BEAM');
+
+  // フレアの残数。熱が高いと効かないので、そのときは赤くする
+  flareCountEl.textContent = flareCount;
+  flareRowEl.classList.toggle('low', flareCount <= 2 || heat >= 55);
 }
 
 // ===================================================================
@@ -1102,7 +1170,7 @@ function restartMission() {
   propellant = PROP.MAX;
   shieldHp = SHIELD.MAX;
   weaponIndex = 0;
-  ammo = [Infinity, WEAPONS[1].ammo];   // 弾を積み直す
+  ammo = [Infinity, WEAPONS[1].ammo, WEAPONS[2].ammo];   // 弾を積み直す
   fireCooldown = 0;
   saidAmmoOut = false;
 
@@ -1150,6 +1218,24 @@ function fire() {
     addCombatLog('AMMO OUT', 'hull');
     playDryFire();                 // 撃鉄だけが落ちる「カチカチ」
     if (!saidAmmoOut) { speakVoice('AMMO_DEPLETED'); saidAmmoOut = true; }
+    return;
+  }
+
+  // ミサイルはセンサーロックがないと撃てない(武器仕様書)
+  if (w.needsLock) {
+    if (!hasLock()) {
+      addCombatLog('NO LOCK', 'hull');
+      playDenied();
+      speakVoice('NO_LOCK');
+      return;
+    }
+    if (!fireMissile()) { playDenied(); return; }
+    ammo[weaponIndex] -= 1;
+    heat = Math.min(heat + w.heat, HEAT.MAX);
+    fireCooldown = w.interval;
+    playMissileLaunch();
+    speakVoice('MISSILE_AWAY');
+    startShake(FEEL.SHAKE_FIRE * 2);
     return;
   }
 
