@@ -14,22 +14,143 @@ let renderer = null;   // 描画装置(実際に絵を描く人)
 let scene    = null;   // 空間(物を置く箱)
 let camera   = null;   // カメラ(＝自機のコックピットからの視点)
 
-let stars = null;      // 星空
+let stars     = null;  // 遠い星(自機について来る=流れない背景)
+let starsNear = null;  // 近い星(空間に固定。通り抜けるので流れる=視差)
 
 let sceneReady = false;   // 3Dの準備ができたか
+
+// ===================================================================
+// ゲームフィール調整値
+//
+// 「操縦の手応え」と「画面の質感」に関わる数字を、ここ1か所に集めてある。
+// 遊びながらこの数字だけを書き換えて、好みを探せるようにするためのもの。
+// ===================================================================
+const FEEL = {
+  // --- 1. 機体の慣性 ---
+  TURN_SPEED:   0.80,   // 最大の旋回速度(ラジアン/秒。約46度/秒)
+  TURN_SMOOTH:  0.18,   // 旋回速度の立ち上がり・減衰にかかる時間(秒)
+                        //   大きいほど重い機体。0にすると今までどおり即座に最高速
+  BANK_ANGLE:   0.55,   // 旋回時に機体を傾ける最大角(ラジアン。約32度)
+  BANK_SMOOTH:  0.30,   // 傾きの追従時間(秒)。大きいほどゆっくり倒れ、ゆっくり戻る
+  CAM_LAG:      0.14,   // カメラが機首に追いつくまでの時間(秒)
+                        //   0にすると遅延なし。大きいほど「機体が先に動く」感が強い
+  AIM_DISTANCE:  300,   // 照準を置く距離。カメラが遅れても弾道の先を指すために使う
+
+  // --- 2. 常時のアイドル揺れ(機体は静止しない)---
+  // 周期の違うサイン波を2本重ねて、ゆっくり不規則に漂う値を作る。
+  // 乱数をそのまま使うとカクカク震えるが、この方法なら滑らかに揺れる。
+  IDLE_SWAY: {
+    ANGLE:      0.011,  // 機首の揺れ幅(ラジアン。約0.63度)
+                        //   0 にするとぴたりと止まる。上げすぎると酔う
+    PERIOD_A:     7.4,  // 遅い波の周期(秒)。大きいほどゆったり漂う
+    PERIOD_B:     3.1,  // 速い波の周期(秒)
+    SPEED_GAIN:   0.7,  // 最高速のとき、揺れが何倍になるか
+    DRIFT_GAIN:  0.45,  // ドリフト中に何倍ぶん上乗せするか
+    HEAD_RATIO:  0.55,  // 内装が画面の中でずれる量(機首の揺れに対する割合)。
+                        //   0 にすると内装は画面に貼り付いたまま動かない
+  },
+
+  // --- 3. カメラの生命感 ---
+  CAM_PULL:        3.5,  // 最高速のときカメラが後ろへ引く距離
+  FOV_BASE:         70,  // 標準の視野角(度)
+  FOV_GAIN:          9,  // 最高速で広がる視野角(度)。大きいほど速度感が強い
+  CAM_SPEED_SMOOTH: 0.55,// 引き・視野角の追従時間(秒)
+  CAM_LAG_DRIFT:   0.40, // ドリフト中のカメラ追従時間(通常より緩める=滑ってる感)
+  SHAKE_FIRE:      0.10, // 射撃時のごく小さな振動(被弾の 0.55 に対してごく弱く)
+
+  // --- 4. 見た目の底上げ ---
+  GLOW_FLICKER:   0.14,  // エンジン噴射光のゆらぎの大きさ
+  BOLT_TRAIL:       11,  // ビームの残光の長さ
+  STAR_NEAR_COUNT: 700,  // 近い星の数(視差用の2層目)
+  STAR_NEAR_FIELD: 760,  // 近い星をばらまく立方体の一辺
+};
 
 // --- 視点(機首の向き)の設定 ---------------------------------------
 // 仕様書9.6:W/S = ピッチ(上下) / A/D = ヨー(左右)
 const VIEW = {
-  // 旋回の速さ(ラジアン/秒)。三人称視点では画面全体が回るため、
-  // コックピット視点より酔いやすい。仕様どおり控えめの値から始める。
-  TURN_SPEED: 0.80,             // 約46度/秒
   PITCH_LIMIT: Math.PI * 0.45,  // 上下を向ける限界(約81度)。真上で一回転するのを防ぐ
 };
 
 let viewPitch = 0;   // 上下の向き(ラジアン)。プラス=上
 let viewYaw   = 0;   // 左右の向き(ラジアン)。プラス=左
-let lastYawDir = 0;  // 直前の左右入力(見た目の傾きに使う)
+
+// 今の「回転の速さ」。キー入力はこの値を動かし、この値が角度を動かす。
+// 入力→角度 を直結させず1段はさむことで、慣性のある動きになる。
+let yawRate   = 0;   // ラジアン/秒
+let pitchRate = 0;
+
+let camQuat = null;  // カメラの向き。機体より少し遅れて追いつく。initScene で作る
+
+// --- コックピット視点の設定 -----------------------------------------
+// 仕様書11.2は「案A・コックピット視点」が本命。三人称は操縦しやすさのために併設し、
+// X キーで行き来できるようにする(参考:スターフォックス64のコックピットモード)
+const COCKPIT = {
+  // --- 目の位置(機体の中心から見た相対位置)---
+  EYE_FORWARD: 0.70,   // 機首方向へどれだけ前に目を置くか。
+                       //   小さいほど後ろ=キャノピーの内側に座っている感じになる
+  EYE_UP:      0.55,   // どれだけ上に置くか(キャノピーの高さ)
+
+  // --- 内装の配置 ---
+  //
+  // 方針:「壁」ではなく「縁」。宇宙が7割以上そのまま見えること。
+  // ガラス面は張らない(素通し)。反射光も置かない。
+  //
+  // 内装はすべて「平面のシルエット」で作る。箱にすると画面端で奥行きの側面が
+  // 写り込み、細く作ったつもりでも太い枠になってしまうため。
+  //
+  // 大きさは画面に対する割合で指定する。ウィンドウの縦横比や、
+  // 速度による視野角の変化があっても、画面上の比率が保たれる。
+  PANEL_DIST:    2.0,   // 内装を置く距離
+
+  DASH_TOP:     0.26,   // 計器台が覆う画面下部の割合(HTML計器を載せる高さぶん確保)
+  DASH_TAPER:   0.66,   // 台形の上辺 ÷ 下辺。小さいほど台形がはっきりする
+
+  DASH_TRIM:   0.009,   // 計器台の上辺に走る明るい縁取りの太さ(画面高さの割合)
+
+  PILLAR_EDGE:  0.93,   // 支柱の左右位置(画面の半幅に対する割合。1.0=画面端)
+  PILLAR_WIDTH: 0.050,  // 支柱の太さ(画面幅に対する割合)
+  PILLAR_LEAN:  0.16,   // 支柱の傾き(上ほど内側へ)
+
+  TOP_BAR:     0.075,   // 上枠が覆う画面上部の割合
+
+  // 自機の機首。ガラスの向こうに、計器台の上へ突き出して見える部分。
+  // 実際の機体モデルは目の真下に隠れて見えないため、
+  // 「前へ伸びた機首の先端」だけを専用のシルエットとして描く。
+  NOSE_RISE:    0.20,   // 計器台の上辺から上へ突き出す高さ(画面高さの割合)
+                        //   中央のHTML計器パネルより高く出す必要がある
+  NOSE_WIDTH:   0.13,   // 計器台の位置での機首の幅(画面幅の割合)
+  NOSE_TIP:     0.30,   // 先端の幅 ÷ 根元の幅。小さいほど鋭くとがる
+
+  // --- 光像式照準器(リフレクターサイト)---
+  // 参考:WW2戦闘機。計器台の中央に立つ小さな箱と、斜めに立つ半透明のガラス板。
+  // ガラス板に映るレティクルが弾道の向きを示す(レティクルは次の段階)。
+  SIGHT_DIST:      1.25,   // 目からの距離。近いほど大きく見える
+  SIGHT_GLASS_CY:  0.50,   // ガラス板の中心の高さ(画面上からの割合)。
+                           //   0.50 = 画面中央 = 弾道の向きと一致する位置
+  SIGHT_GLASS_W:  0.105,   // ガラス板の幅(画面幅の割合)
+  SIGHT_GLASS_H:  0.135,   // ガラス板の高さ(画面高さの割合)
+  SIGHT_GLASS_OPACITY: 0.08,  // ガラスの濃さ。上げると視界が曇る
+  SIGHT_TILT:      0.30,   // ガラス板の傾き(上を手前へ倒す)
+  SIGHT_BASE_W:   0.050,   // 土台の幅(画面幅の割合)
+  SIGHT_BASE_TOP: 0.575,   // 土台の上端の高さ(画面上からの割合)
+
+  RETICLE_SIZE:    0.62,   // レティクルの大きさ(ガラス板の高さに対する割合)
+  RETICLE_COLOR: 0x9fe1cb, // 通常時の色
+  RETICLE_LOCK:  0xff4b2b, // 敵を捉えているときの色
+  RETICLE_OPACITY: 0.85,   // 通常時の明るさ
+  RETICLE_OPACITY_LOCK: 1.0, // 捉えているときの明るさ
+
+  COLOR: 0x05080b,      // 内装の色。星より暗い、ほぼ黒のシルエット
+  EDGE:  0x3c6a60,      // 輪郭線(これだけが形を伝える)
+  EDGE_OPACITY: 0.55,   // 輪郭線の濃さ
+  GLINT: 0x9fe1cb,      // 計器の輝点
+};
+
+// 今コックピット視点か。true なら自機モデルを消して機首の中から見る
+let cockpitView = false;
+let cockpitInterior = null;   // コックピットの内装(自機に付いている3Dオブジェクト)
+let sceneTime = 0;   // 起動からの累計秒。ふらつきの計算に使う
+let camSpeedEase = 0;// カメラの引き・視野角に使う「なめらかにした速度の割合」(0〜1)
 
 // --- 自機の設定 -----------------------------------------------------
 const PLAYER = {
@@ -49,11 +170,10 @@ const PLAYER = {
   // --- 三人称カメラ ---
   // 高さ÷後退距離 が大きいほど、機体は画面の下のほうに映る。
   // 下部の電力パネルに機体が隠れないよう、高さは控えめ・距離は長めにしている。
-  CAM_HEIGHT:  0.7,   // 機体からどれだけ上にカメラを置くか
-  CAM_BACK:   10.5,   // 機体からどれだけ後ろにカメラを置くか
-
-  ROLL:       0.55,   // 旋回時に機体を傾ける量(見た目だけ。カメラは傾けない=酔い対策)
+  CAM_HEIGHT:  0.7,   // 機体からどれだけ上にカメラを置くか(三人称)
+  CAM_BACK:   10.5,   // 機体からどれだけ後ろにカメラを置くか(三人称)
 };
+// ※ 旋回時の機体の傾き(バンク)は FEEL.BANK_ANGLE に移した
 
 // --- 自機の状態 -----------------------------------------------------
 let playerShip  = null;   // 位置と向きを持つ入れ物(カメラはこれを基準に置く)
@@ -95,6 +215,8 @@ const BOLT = {
 let bolts = [];            // 飛んでいる弾のリスト
 let boltGeometry = null;   // 弾の形(使い回すので1つだけ作る)
 let boltMaterial = null;   // 弾の材質(同上)
+let boltTrailGeometry = null;   // 残光の形
+let boltTrailMaterial = null;   // 残光の材質
 
 // 1回の発射は左右2条のビームだが、ダメージは「1発ぶん」として数えたい。
 // そこで発射ごとに通し番号(斉射番号)を振り、同じ番号の2本目は
@@ -132,6 +254,32 @@ const AI = {
   TELEGRAPH:     0.5,    // 発射の何秒前から光り始めるか(避ける余地)
   EVADE_SEC:     3.0,    // 被弾後に逃げ回る秒数
 };
+
+// --- センサー精度の設定(仕様書9.3の7つ目「センサー精度:電力配分依存」)---
+const SENSOR = {
+  MIN_RANGE:   45,    // センサー配分0%のときの索敵半径
+  MAX_RANGE:  260,    // センサー配分100%のときの索敵半径
+  HEAT_BONUS: 1.5,    // 熱を出している敵は索敵半径の何倍まで映るか
+  HEAT_LINGER: 1.5,   // 発射・被弾のあと何秒間「熱い」とみなすか
+};
+
+// --- 照準(エイム)の設定 -------------------------------------------
+// 当たり判定(HIT_RADIUS)とは別に「捕捉半径」を持たせる。
+// 捕捉のほうを大きくしておくと、アイドル揺れで捕捉が細かく点滅しない。
+// またロックオンの調整を、命中のしやすさと切り離して行える。
+const AIM = {
+  CAPTURE_MULT:   2.2,   // 捕捉半径 = 敵の当たり半径 × これ
+  CAPTURE_SPREAD: 0.05,  // 距離に応じて広がる分(遠い敵も捉えられるように)
+  CAPTURE_RANGE:  240,   // この距離より遠い敵は捕捉しない
+};
+
+// 照準の状態。今は2段階だが、将来ロックオンで3段階目を使う。
+//   'CLEAR'    … 何も捉えていない
+//   'TRACKING' … 照準の先に敵がいる(捕捉中)
+//   'LOCKED'   … 捕捉を維持しきってロックした(※中身は将来実装)
+let aimState = 'CLEAR';
+let aimTarget = null;      // 今捉えている敵
+let aimHoldTime = 0;       // 捕捉を続けている秒数(ロックオンの判定に使う予定)
 
 // --- 敵の弾の設定 ---------------------------------------------------
 const ENEMY_BOLT = {
@@ -226,9 +374,14 @@ function initScene() {
   sun.position.set(-1, 1.3, 0.8);   // 左上手前から当てる
   scene.add(sun);
 
-  // --- 星空 ---
+  // --- 星空(2層)---
+  // 遠い層は自機について来るので流れない(=無限遠の背景)。
+  // 近い層は空間に置いたまま自機が通り抜けるので、少しずつ流れる = 視差が生まれる。
   stars = createStarfield();
   scene.add(stars);
+
+  starsNear = createNearStars();
+  scene.add(starsNear);
 
   // --- 流れる宇宙塵 ---
   dust = createDustField();
@@ -240,10 +393,19 @@ function initScene() {
   playerShip  = new THREE.Group();
   playerModel = createPlayerFighter();
   playerShip.add(playerModel);
+
+  // コックピットの内装。自機に付けるので、機体と一緒に動く。
+  // 目の位置に置いておき、そこを原点として各パーツを配置する。
+  cockpitInterior = createCockpitInterior();
+  cockpitInterior.position.set(0, COCKPIT.EYE_UP, -COCKPIT.EYE_FORWARD);
+  cockpitInterior.visible = false;   // 三人称では見せない
+  playerShip.add(cockpitInterior);
+
   playerShip.position.set(0, 0, 0);
   scene.add(playerShip);
 
   shipVelocity = new THREE.Vector3(0, 0, 0);
+  camQuat      = new THREE.Quaternion();   // カメラの向き(機体より少し遅れる)
 
   // --- 敵機(2機)---
   for (let i = 0; i < ENEMY_COUNT; i++) {
@@ -296,6 +458,50 @@ function createStarfield() {
   });
 
   return new THREE.Points(geometry, material);
+}
+
+// ===================================================================
+// 近い星の層を作る(視差用)
+//
+// 遠い星は自機について来るので画面上を動かないが、この層は空間に置いたまま。
+// 自機が通り抜けることで、遠い星に対してゆっくり流れて見える。
+// 箱から出たら反対側へ回り込ませるので、どこまで飛んでも尽きない。
+// ===================================================================
+function createNearStars() {
+  const positions = new Float32Array(FEEL.STAR_NEAR_COUNT * 3);
+  for (let i = 0; i < FEEL.STAR_NEAR_COUNT; i++) {
+    positions[i * 3 + 0] = (Math.random() - 0.5) * FEEL.STAR_NEAR_FIELD;
+    positions[i * 3 + 1] = (Math.random() - 0.5) * FEEL.STAR_NEAR_FIELD;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * FEEL.STAR_NEAR_FIELD;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  // 遠い星より少し大きく明るくして、手前にあることを分かりやすくする
+  const material = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 2.6,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0.75,
+  });
+  return new THREE.Points(geometry, material);
+}
+
+// 点の集まりを自機の周りの箱に収め続ける(はみ出したら反対側へ回り込ませる)
+function wrapPointsAroundShip(geometry, fieldSize) {
+  const arr = geometry.attributes.position.array;
+  const half = fieldSize / 2;
+  const center = [playerShip.position.x, playerShip.position.y, playerShip.position.z];
+
+  for (let i = 0; i < arr.length; i += 3) {
+    for (let a = 0; a < 3; a++) {
+      const diff = arr[i + a] - center[a];
+      if (diff > half)       arr[i + a] -= fieldSize;
+      else if (diff < -half) arr[i + a] += fieldSize;
+    }
+  }
+  geometry.attributes.position.needsUpdate = true;
 }
 
 // ===================================================================
@@ -477,6 +683,266 @@ function createPlayerFighter() {
 }
 
 // ===================================================================
+// コックピットの内装を組み立てる
+//
+// 参考:スターフォックス64のコックピットモード。
+// 「囲まれている」と感じるのは、視界の下と左右が機体の内側で塞がれているから。
+// そこで計器台・左右の支柱・上枠の4つで画面の縁を物理的に埋める。
+//
+// 材質は MeshBasicMaterial(光の影響を受けない単色)を使う。
+// 機内は本来暗いので、太陽の向きで明るさが変わってしまうと不自然なため。
+// ===================================================================
+function createSilhouette(points) {
+  // Shape = 平面の輪郭。点を順につないで閉じると、その内側が面になる。
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
+  shape.closePath();
+
+  const mesh = new THREE.Mesh(
+    new THREE.ShapeGeometry(shape),
+    new THREE.MeshBasicMaterial({ color: COCKPIT.COLOR, side: THREE.DoubleSide })
+  );
+
+  // 輪郭線。ほぼ黒のシルエットなので、形を伝えるのはこの線だけ。
+  const linePoints = points.map((pt) => new THREE.Vector3(pt[0], pt[1], 0));
+  linePoints.push(linePoints[0].clone());   // 最後に始点へ戻して閉じる
+  mesh.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(linePoints),
+    new THREE.LineBasicMaterial({
+      color: COCKPIT.EDGE, transparent: true, opacity: COCKPIT.EDGE_OPACITY,
+    })
+  ));
+
+  return mesh;
+}
+
+function createCockpitInterior() {
+  const g = new THREE.Group();
+
+  // --- 計器台(台形)---
+  // 「縦横1」の大きさで作っておき、毎コマ画面に合わせて拡大縮小する。
+  // 下辺を広く、上辺を狭くすると台形になる。
+  const t = COCKPIT.DASH_TAPER * 0.5;
+  const dash = createSilhouette([
+    [-0.5, -0.5], [0.5, -0.5], [t, 0.5], [-t, 0.5],
+  ]);
+  g.add(dash);
+
+  // --- 計器の輝点 ---
+  // 計器台の子にして、台の拡大縮小をそのまま受け継がせる。
+  // 天面のすぐ内側に一列っぽく散らす。
+  const glintCount = 18;
+  const glintPos = new Float32Array(glintCount * 3);
+  for (let i = 0; i < glintCount; i++) {
+    glintPos[i * 3 + 0] = (Math.random() - 0.5) * (COCKPIT.DASH_TAPER * 0.88);
+    glintPos[i * 3 + 1] = 0.5 - 0.10 - Math.random() * 0.16;
+    glintPos[i * 3 + 2] = 0.01;   // 面よりほんの少し手前に出して隠れないようにする
+  }
+  const glintGeo = new THREE.BufferGeometry();
+  glintGeo.setAttribute('position', new THREE.BufferAttribute(glintPos, 3));
+  dash.add(new THREE.Points(glintGeo, new THREE.PointsMaterial({
+    color: COCKPIT.GLINT, size: 2.5, sizeAttenuation: false,
+    transparent: true, opacity: 0.7,
+  })));
+
+  // --- 左右の支柱 ---
+  // 縦長の細い平面。傾けて視界の縁をかすめさせる。
+  const pillars = [];
+  for (const side of [-1, 1]) {
+    const pillar = createSilhouette([
+      [-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5],
+    ]);
+    pillar.rotation.z = side * COCKPIT.PILLAR_LEAN * -1;
+    g.add(pillar);
+    pillars.push(pillar);
+  }
+
+  // --- 上辺の枠 ---
+  const topBar = createSilhouette([
+    [-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5],
+  ]);
+  g.add(topBar);
+
+  // --- 機首(ガラスの向こうに見える自機の先端)---
+  // 台形。根元は計器台に隠れ、先端だけが上に出る。
+  const noseTip = COCKPIT.NOSE_TIP * 0.5;
+  const nose = createSilhouette([
+    [-0.5, -0.5], [0.5, -0.5], [noseTip, 0.5], [-noseTip, 0.5],
+  ]);
+  g.add(nose);
+
+  // --- 光像式照準器:土台 ---
+  // 計器台から生えて、ガラス板を目の高さまで持ち上げる箱。
+  const sightBase = createSilhouette([
+    [-0.5, -0.5], [0.5, -0.5], [0.32, 0.5], [-0.32, 0.5],
+  ]);
+  g.add(sightBase);
+
+  // --- 光像式照準器:ガラス板 ---
+  //
+  // sightPlane は「ガラス板の面そのもの」を表す入れ物。
+  // 拡大縮小を縦横同じ倍率で掛けるので、この中に置いたものは形が歪まない。
+  // 将来のロックオンマーカーも、この中に足せば同じ面の上を動く。
+  const sightPlane = new THREE.Group();
+
+  // ガラス。半透明。宇宙が透けて見えることが大事なので、かなり薄くする。
+  // depthWrite: false で、奥のものを消してしまわないようにする。
+  const sightGlass = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({
+      color: 0x8fd8ff,
+      transparent: true,
+      opacity: COCKPIT.SIGHT_GLASS_OPACITY,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  sightGlass.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
+    new THREE.LineBasicMaterial({ color: COCKPIT.EDGE, transparent: true, opacity: 0.8 })
+  ));
+  sightPlane.add(sightGlass);
+
+  // --- レティクル(照準環)---
+  // ガラスに光が投影されているように見せる。円+中心点+左右の目盛り。
+  // depthTest: false で、常に手前に描く(ガラスに埋もれないように)。
+  const reticleMat = new THREE.LineBasicMaterial({
+    color: COCKPIT.RETICLE_COLOR, transparent: true,
+    opacity: COCKPIT.RETICLE_OPACITY, depthTest: false,
+  });
+  const reticle = new THREE.Group();
+  reticle.renderOrder = 10;   // 最後に描く = 何にも隠されない
+
+  // 外側の円
+  const ringPts = [];
+  const RING_SEG = 40;
+  for (let i = 0; i <= RING_SEG; i++) {
+    const th = (i / RING_SEG) * Math.PI * 2;
+    ringPts.push(new THREE.Vector3(Math.cos(th) * 0.5, Math.sin(th) * 0.5, 0));
+  }
+  reticle.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), reticleMat));
+
+  // 中心点(ごく小さな円)
+  const dotPts = [];
+  for (let i = 0; i <= 12; i++) {
+    const th = (i / 12) * Math.PI * 2;
+    dotPts.push(new THREE.Vector3(Math.cos(th) * 0.055, Math.sin(th) * 0.055, 0));
+  }
+  reticle.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(dotPts), reticleMat));
+
+  // 左右と上の短い目盛り
+  const tickPts = [
+    new THREE.Vector3(-0.72, 0, 0), new THREE.Vector3(-0.52, 0, 0),
+    new THREE.Vector3( 0.52, 0, 0), new THREE.Vector3( 0.72, 0, 0),
+    new THREE.Vector3(0,  0.52, 0), new THREE.Vector3(0,  0.72, 0),
+  ];
+  reticle.add(new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(tickPts), reticleMat));
+
+  sightPlane.add(reticle);
+  g.add(sightPlane);
+
+  // --- 計器台の上辺を走る縁取り ---
+  // WebGLの線は太さを変えられない(常に1ピクセル)ため、
+  // 「太い線」が欲しいときは細長い面を1枚置くのが確実。
+  const trim = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ color: COCKPIT.EDGE, side: THREE.DoubleSide })
+  );
+  g.add(trim);
+
+  // 毎コマの配置計算で使うので、部品を覚えておく
+  g.userData = {
+    dash: dash, pillars: pillars, topBar: topBar, trim: trim, nose: nose,
+    sightBase: sightBase, sightPlane: sightPlane, sightGlass: sightGlass,
+    reticle: reticle, reticleMat: reticleMat,
+  };
+  return g;
+}
+
+// ===================================================================
+// 内装を画面の大きさに合わせて配置し直す
+//
+// ウィンドウの縦横比も、速度による視野角の変化も、内装の見え方に影響させたくない。
+// そこで毎コマ「今の視野で、この距離の平面が画面何個ぶんの大きさか」を計算し、
+// 割合指定(画面の下18%など)から実際の大きさを逆算する。
+// ===================================================================
+function layoutCockpitInterior() {
+  if (!cockpitInterior || !cockpitView) return;
+
+  const d = COCKPIT.PANEL_DIST;
+  // この距離での「画面の半分の高さ・半分の幅」が世界の座標で何単位ぶんか
+  const halfH = Math.tan((camera.fov * Math.PI / 180) / 2) * d;
+  const halfW = halfH * camera.aspect;
+
+  const parts = cockpitInterior.userData;
+
+  // --- 計器台:上辺を画面下から DASH_TOP の高さに置く ---
+  const dashTopY = -halfH + COCKPIT.DASH_TOP * (halfH * 2);
+  // 画面外まで十分に伸ばす(下や横に隙間ができないように)
+  const dashH = (dashTopY + halfH) * 2.4;
+  const dashW = halfW * 2 * 1.30;
+  parts.dash.scale.set(dashW, dashH, 1);
+  parts.dash.position.set(0, dashTopY - dashH / 2, -d);
+
+  // --- 機首:計器台の上辺から NOSE_RISE ぶん突き出す ---
+  // 計器台より少し「奥」に置くのがポイント。こうすると根元が計器台に隠れ、
+  // 機体が計器台の向こうへ伸びているように見える。
+  const noseRise = halfH * 2 * COCKPIT.NOSE_RISE;
+  const noseH = noseRise * 2.2;                       // 根元は計器台の裏へ十分に伸ばす
+  const noseW = halfW * 2 * COCKPIT.NOSE_WIDTH;
+  parts.nose.scale.set(noseW, noseH, 1);
+  parts.nose.position.set(0, dashTopY + noseRise - noseH / 2, -d - 0.06);
+
+  // --- 計器台の上辺の縁取り ---
+  const trimH = halfH * 2 * COCKPIT.DASH_TRIM;
+  parts.trim.scale.set(dashW * (COCKPIT.DASH_TAPER + 0.02), trimH, 1);
+  parts.trim.position.set(0, dashTopY - trimH / 2, -d + 0.01);
+
+  // --- 支柱:画面端の少し内側に、画面より高く ---
+  const pillarW = halfW * 2 * COCKPIT.PILLAR_WIDTH;
+  const pillarH = halfH * 2 * 1.5;
+  for (let i = 0; i < parts.pillars.length; i++) {
+    const side = (i === 0) ? -1 : 1;
+    parts.pillars[i].scale.set(pillarW, pillarH, 1);
+    parts.pillars[i].position.set(side * halfW * COCKPIT.PILLAR_EDGE, 0, -d);
+  }
+
+  // --- 光像式照準器 ---
+  // 照準器だけは目に近い距離に置くので、その距離での画面の大きさを別に計算する。
+  const ds = COCKPIT.SIGHT_DIST;
+  const halfHs = Math.tan((camera.fov * Math.PI / 180) / 2) * ds;
+  const halfWs = halfHs * camera.aspect;
+  // 画面の上からの割合(0=上, 1=下)を、その距離での高さに直す
+  const yAt = (f) => (1 - 2 * f) * halfHs;
+
+  const glassW = halfWs * 2 * COCKPIT.SIGHT_GLASS_W;
+  const glassH = halfHs * 2 * COCKPIT.SIGHT_GLASS_H;
+
+  // 面そのものは縦横同じ倍率で拡大する(中に置いたレティクルを歪ませないため)
+  parts.sightPlane.scale.setScalar(glassH);
+  parts.sightPlane.position.set(0, yAt(COCKPIT.SIGHT_GLASS_CY), -ds);
+  parts.sightPlane.rotation.x = COCKPIT.SIGHT_TILT;
+
+  // ガラスだけは横長にしたいので、面の中で横方向に引き伸ばす
+  parts.sightGlass.scale.set(glassW / glassH, 1, 1);
+
+  // レティクルの大きさ(ガラスの高さに対する割合)
+  parts.reticle.scale.setScalar(COCKPIT.RETICLE_SIZE);
+
+  const baseTopY = yAt(COCKPIT.SIGHT_BASE_TOP);
+  const baseH = (baseTopY + halfHs) * 1.6;   // 計器台の裏まで十分に伸ばす
+  parts.sightBase.scale.set(halfWs * 2 * COCKPIT.SIGHT_BASE_W, baseH, 1);
+  parts.sightBase.position.set(0, baseTopY - baseH / 2, -ds);
+
+  // --- 上辺の枠:画面上部を TOP_BAR ぶんだけ覆う ---
+  const topH = halfH * 2 * COCKPIT.TOP_BAR;
+  parts.topBar.scale.set(halfW * 2 * 1.3, topH * 2.5, 1);
+  parts.topBar.position.set(0, halfH - topH + (topH * 2.5) / 2, -d);
+}
+
+// ===================================================================
 // 自機の飛行(仕様:機首方向へ自動前進。速度はエンジンの電力配分に比例)
 //
 // enginePercent … main.js が持っている電力配分の「エンジン」の値(0〜100)
@@ -491,10 +957,41 @@ function createPlayerFighter() {
 function updateFlight(dt, enginePercent) {
   if (!sceneReady) return;
 
+  sceneTime += dt;
+
   // --- 1. 機首の向きを機体に反映する ---
+  //
+  // ここで「ふらつき」を少しだけ足す。
+  // 乱数をそのまま使うとカクカク震えるので、周期の違う波を2つ重ねて
+  // ゆっくり不規則に揺れる値を作る。行き過ぎたら必ず戻るので暴走しない。
+  const speedNow = shipVelocity.length();
+  const speedRatio = Math.max(0, Math.min(
+    (speedNow - PLAYER.MIN_SPEED) / (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED), 1));
+
+  const sway = FEEL.IDLE_SWAY;
+  const a = Math.PI * 2 * sceneTime / sway.PERIOD_A;   // 遅い波
+  const b = Math.PI * 2 * sceneTime / sway.PERIOD_B;   // 速い波
+
+  const swayYaw   = Math.sin(a) * 0.6 + Math.sin(b + 1.7) * 0.4;
+  const swayPitch = Math.sin(a * 1.27 + 1.3) * 0.6 + Math.sin(b * 0.83 + 0.5) * 0.4;
+
+  // 速いほど、そしてドリフト中はさらに、揺れがわずかに増す
+  const swayAmp = sway.ANGLE
+    * (1 + speedRatio * sway.SPEED_GAIN)
+    * (drifting ? 1 + sway.DRIFT_GAIN : 1);
+
   // Euler(上下, 左右, ひねり, 適用順)。ひねり(ロール)は0のままにして、
   // 見た目の傾きは子(playerModel)だけに掛ける = カメラは水平のまま(酔い対策)
-  playerShip.quaternion.setFromEuler(new THREE.Euler(viewPitch, viewYaw, 0, 'YXZ'));
+  playerShip.quaternion.setFromEuler(new THREE.Euler(
+    viewPitch + swayPitch * swayAmp,
+    viewYaw   + swayYaw   * swayAmp,
+    0, 'YXZ'));
+
+  // 操縦士の頭の揺れ。機首とは別の位相で揺らすことで、
+  // 内装(計器台・照準器)が画面の中でわずかに漂う = 機内にいる感覚になる。
+  const headAmp = swayAmp * sway.HEAD_RATIO;
+  const headYaw   = (Math.sin(a * 0.71 + 2.4) * 0.6 + Math.sin(b * 1.13 + 0.9) * 0.4) * headAmp;
+  const headPitch = (Math.sin(a * 0.94 + 0.3) * 0.6 + Math.sin(b * 1.31 + 2.2) * 0.4) * headAmp;
 
   // 機体の「前方」。もとの前方 (0,0,-1) を機体の向きで回して求める
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
@@ -521,27 +1018,73 @@ function updateFlight(dt, enginePercent) {
   // --- 4. 位置を進める ---
   playerShip.position.addScaledVector(shipVelocity, dt);
 
-  // --- 見た目の傾き(旋回している方向へ機体を倒す)---
-  const targetRoll = lastYawDir * PLAYER.ROLL;
-  visualRoll += (targetRoll - visualRoll) * (1 - Math.exp(-6 * dt));
+  // --- 自動バンク(旋回している方向へ機体を倒す)---
+  // キー入力ではなく「今の実際の旋回速度」から傾きを決める。
+  // こうすると、慣性で回り続けている間は傾いたままになり、
+  // 速度が落ちるにつれて自然に水平へ戻る。
+  const rollTarget = (yawRate / FEEL.TURN_SPEED) * FEEL.BANK_ANGLE;
+  visualRoll += (rollTarget - visualRoll) * (1 - Math.exp(-dt / Math.max(FEEL.BANK_SMOOTH, 0.0001)));
   playerModel.rotation.z = visualRoll;
 
-  // --- エンジンの噴射光を速度に合わせて伸ばす ---
+  // --- エンジンの噴射光をエンジン配分に合わせて伸ばす ---
   // ドリフト中は推力を切っているので、噴射光も消す(見ただけで状態が分かる)
-  const speedRatio = drifting
+  const thrustRatio = drifting
     ? 0
     : (targetSpeed - PLAYER.MIN_SPEED) / (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED);
+  // 炎らしく見せるための細かいゆらぎ。周期の違う波を重ねて不規則にする
+  const flicker = 1 + FEEL.GLOW_FLICKER *
+    (Math.sin(sceneTime * 27) * 0.6 + Math.sin(sceneTime * 41 + 2.1) * 0.4);
   for (const glow of engineGlows) {
-    glow.scale.z = 0.05 + speedRatio * 1.8;
-    glow.material.opacity = drifting ? 0 : (0.35 + speedRatio * 0.45);
+    glow.scale.z = (0.05 + thrustRatio * 2.2) * flicker;
+    glow.material.opacity = drifting ? 0 : (0.30 + thrustRatio * 0.55) * flicker;
   }
 
-  // --- 5. カメラを機体の後ろへ ---
-  // 機体から見た「上に CAM_HEIGHT、後ろに CAM_BACK」の位置を、機体の向きで回して求める
-  const camOffset = new THREE.Vector3(0, PLAYER.CAM_HEIGHT, PLAYER.CAM_BACK)
-    .applyQuaternion(playerShip.quaternion);
-  camera.position.copy(playerShip.position).add(camOffset);
-  camera.quaternion.copy(playerShip.quaternion);   // カメラも機首と同じ方向を向く
+  // --- 5. カメラを機体の後ろへ(少し遅れて追いつく)---
+  //
+  // camQuat は「カメラの向き」。機体の向きへ slerp で寄せていくことで、
+  // 機首が先に動き、カメラが少し遅れて追う = 重量感が出る。
+  // 速度に応じた「なめらかな速度の割合」。視野角とカメラの引きに使う
+  camSpeedEase += (speedRatio - camSpeedEase) *
+    (1 - Math.exp(-dt / Math.max(FEEL.CAM_SPEED_SMOOTH, 0.0001)));
+
+  if (cockpitView) {
+    // --- コックピット視点 ---
+    // 自分の機体の中に座っているので、カメラは機首と完全に一体で動く。
+    // ここで遅延を入れると「自分の頭が自機に遅れて付いてくる」不自然さになる。
+    camQuat.copy(playerShip.quaternion);
+
+    const eye = new THREE.Vector3(0, COCKPIT.EYE_UP, -COCKPIT.EYE_FORWARD)
+      .applyQuaternion(camQuat);
+    camera.position.copy(playerShip.position).add(eye);
+    camera.quaternion.copy(camQuat);
+
+    // 頭の揺れを上乗せする。掛ける順を「あとから」にすると、
+    // 機体の向きを基準にした首の振りになる。
+    camera.quaternion.multiply(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(headPitch, headYaw, 0, 'YXZ'))
+    );
+
+    layoutCockpitInterior();   // 内装を今の画面の大きさに合わせる
+
+  } else {
+    // --- 三人称視点 ---
+    // ドリフト中は追従をさらに緩めて「滑っている」感じを出す
+    const lag = drifting ? FEEL.CAM_LAG_DRIFT : FEEL.CAM_LAG;
+    camQuat.slerp(playerShip.quaternion, 1 - Math.exp(-dt / Math.max(lag, 0.0001)));
+
+    // 速度に応じてカメラを後ろへ引く。加速中にじわっと変化する = 速度感
+    const back = PLAYER.CAM_BACK + camSpeedEase * FEEL.CAM_PULL;
+    const camOffset = new THREE.Vector3(0, PLAYER.CAM_HEIGHT, back).applyQuaternion(camQuat);
+    camera.position.copy(playerShip.position).add(camOffset);
+    camera.quaternion.copy(camQuat);
+  }
+
+  // 視野角。変化があったときだけ計算し直す(毎コマ呼ぶと無駄なので)
+  const wantFov = FEEL.FOV_BASE + camSpeedEase * FEEL.FOV_GAIN;
+  if (Math.abs(camera.fov - wantFov) > 0.01) {
+    camera.fov = wantFov;
+    camera.updateProjectionMatrix();
+  }
 
   // 被弾の揺れ。カメラから見た「右」と「上」へずらす(どの向きを向いていても同じ揺れ方になる)
   if (camShakeX !== 0 || camShakeY !== 0) {
@@ -555,12 +1098,37 @@ function updateFlight(dt, enginePercent) {
   // こうすると、どこまで飛んでも星空の外に出てしまうことがない。
   stars.position.copy(playerShip.position);
 
+  // 近い星は空間に置いたまま、箱から出たぶんだけ回り込ませる。
+  // 遠い星は動かないので、この層だけが流れて視差になる。
+  wrapPointsAroundShip(starsNear.geometry, FEEL.STAR_NEAR_FIELD);
+
   updateDust();
 }
 
 // ドリフトの入切。main.js が Shift の押し具合を見て毎コマ呼ぶ
 function setDrift(on) {
   drifting = on;
+}
+
+// ===================================================================
+// 視点の切り替え(三人称 ⇄ コックピット)
+// isCockpit が true でコックピット視点。自機モデルは見えなくする。
+// ===================================================================
+function setViewMode(isCockpit) {
+  cockpitView = !!isCockpit;
+
+  // 機体の外見モデルは三人称だけ。
+  // コックピットで見える「機首の先端」は、内装側の専用シルエットで描いている。
+  // 実機モデルをそのまま使うと、目の位置がキャノピーの内側に入ってしまい、
+  // 裏面が消えて何も見えない(あるいは機内が壁で埋まる)ため。
+  if (playerModel)     playerModel.visible     = !cockpitView;
+  if (cockpitInterior) cockpitInterior.visible = cockpitView;   // 内装はコックピットだけ
+  return cockpitView;
+}
+
+// 今コックピット視点かどうか(main.js が切り替えの判断に使う)
+function isCockpitView() {
+  return cockpitView;
 }
 
 // 被弾時のカメラの揺れ幅を受け取る
@@ -585,8 +1153,13 @@ function resetFlight() {
   shipVelocity.set(0, 0, 0);
   viewPitch = 0;
   viewYaw = 0;
+  yawRate = 0;
+  pitchRate = 0;
   visualRoll = 0;
+  camSpeedEase = 0;
   drifting = false;
+  playerShip.quaternion.identity();
+  camQuat.identity();
 
   // 飛んでいるものをすべて片付ける
   for (const b of bolts)      scene.remove(b.mesh);
@@ -609,6 +1182,110 @@ function speedFromEnginePower(enginePercent) {
 // 今の速度(単位/秒)。計器表示に使う
 function currentSpeed() {
   return shipVelocity ? shipVelocity.length() : 0;
+}
+
+// ===================================================================
+// 照準の状態を更新する(仕様:段階を持つ1つのシステムとして作る)
+//
+// 【考え方】
+// 機首から前方へまっすぐ伸びる線を引き、敵の中心がその線からどれだけ
+// 離れているかを測る。捕捉半径より近ければ「捉えている」。
+//
+// 当たり判定(ENEMY.HIT_RADIUS)とは別に捕捉半径を持たせているのが要点。
+// 捕捉のほうを大きくしておくと、アイドル揺れ程度では捕捉が途切れない。
+//
+// 状態は 'CLEAR' → 'TRACKING' → (将来) 'LOCKED' と段階を上げていく想定。
+// 今回は2段階まで。LOCKED へ上げる条件はここに足せばよい。
+// ===================================================================
+function updateAim(dt) {
+  if (!sceneReady) { aimState = 'CLEAR'; return aimState; }
+
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+
+  let best = null;
+  let bestAhead = Infinity;
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+
+    const toEnemy = e.group.position.clone().sub(playerShip.position);
+
+    // 前方への距離。マイナスなら後ろにいるので対象外
+    const ahead = toEnemy.dot(forward);
+    if (ahead <= 0 || ahead > AIM.CAPTURE_RANGE) continue;
+
+    // 照準線からの横のずれ。
+    // 「敵へのベクトル」から「前方成分」を引くと、横方向のずれだけが残る。
+    const offset = toEnemy.clone().addScaledVector(forward, -ahead).length();
+
+    // 捕捉半径。遠いほど少し広げる(遠距離でも狙えるように)
+    const captureRadius = ENEMY.HIT_RADIUS * AIM.CAPTURE_MULT + ahead * AIM.CAPTURE_SPREAD;
+
+    if (offset < captureRadius && ahead < bestAhead) {
+      best = e;
+      bestAhead = ahead;
+    }
+  }
+
+  // --- 状態遷移 ---
+  if (best) {
+    if (aimState === 'CLEAR') {
+      aimState = 'TRACKING';   // 捉えた瞬間
+      aimHoldTime = 0;
+    }
+    aimTarget = best;
+    aimHoldTime += dt;
+
+    // ここに「一定時間捉え続けたら LOCKED へ」を将来足す。
+    // 例: if (aimHoldTime > AIM.LOCK_SEC) aimState = 'LOCKED';
+
+  } else {
+    aimState = 'CLEAR';        // 外したら即座に戻る
+    aimTarget = null;
+    aimHoldTime = 0;
+  }
+
+  // --- レティクルの見た目に反映 ---
+  const parts = cockpitInterior ? cockpitInterior.userData : null;
+  if (parts && parts.reticleMat) {
+    const capturing = (aimState !== 'CLEAR');
+    parts.reticleMat.color.setHex(
+      capturing ? COCKPIT.RETICLE_LOCK : COCKPIT.RETICLE_COLOR);
+    parts.reticleMat.opacity =
+      capturing ? COCKPIT.RETICLE_OPACITY_LOCK : COCKPIT.RETICLE_OPACITY;
+  }
+
+  return aimState;
+}
+
+// 今の照準状態を外から見るための関数
+function currentAimState() {
+  return aimState;
+}
+
+// 敵を捉え続けている秒数(捕捉音を詰めていくのに使う)
+function currentAimHold() {
+  return aimHoldTime;
+}
+
+// ===================================================================
+// 照準の画面上の位置
+//
+// カメラが機首より遅れて追うようにしたため、画面のど真ん中は
+// もう「弾が飛んでいく方向」ではなくなった。
+// そこで機首の正面のずっと先に点を置き、それを画面へ投影して
+// 照準の位置にする。こうすると照準は常に弾道の先を指す。
+// ===================================================================
+function getAimNdc() {
+  if (!sceneReady) return null;
+
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  const point = playerShip.position.clone().addScaledVector(forward, FEEL.AIM_DISTANCE);
+
+  const inFront = camera.worldToLocal(point.clone()).z < 0;
+  const ndc = point.project(camera);
+
+  return { x: ndc.x, y: ndc.y, visible: inFront };
 }
 
 // ===================================================================
@@ -660,15 +1337,30 @@ function updateDust() {
 function turnView(dt, pitchDir, yawDir) {
   if (!sceneReady) return;
 
-  viewPitch += pitchDir * VIEW.TURN_SPEED * dt;
-  viewYaw   += yawDir   * VIEW.TURN_SPEED * dt;
+  // --- 目標の回転速度 ---
+  // キーを押している間だけ「最大の旋回速度」を目標にする。
+  const targetYawRate   = yawDir   * FEEL.TURN_SPEED;
+  const targetPitchRate = pitchDir * FEEL.TURN_SPEED;
+
+  // --- 今の回転速度を目標へ寄せる ---
+  // ここが慣性の正体。押した瞬間に最高速で回らず、離しても即座には止まらない。
+  // 1 - Math.exp(-dt / 時間) は「その秒数でだいたい追いつく」割合。
+  const k = 1 - Math.exp(-dt / Math.max(FEEL.TURN_SMOOTH, 0.0001));
+  yawRate   += (targetYawRate   - yawRate)   * k;
+  pitchRate += (targetPitchRate - pitchRate) * k;
+
+  // --- 回転速度で角度を動かす ---
+  viewYaw   += yawRate   * dt;
+  viewPitch += pitchRate * dt;
 
   // 上下は限界を設ける。Math.max/min で挟むと「一定の範囲から出さない」ができる
-  viewPitch = Math.max(-VIEW.PITCH_LIMIT, Math.min(VIEW.PITCH_LIMIT, viewPitch));
+  const clamped = Math.max(-VIEW.PITCH_LIMIT, Math.min(VIEW.PITCH_LIMIT, viewPitch));
+  // 限界に当たったら回転速度も止める。そうしないと勢いが溜まり、
+  // 逆に倒したときに引っかかったような操作感になる。
+  if (clamped !== viewPitch) pitchRate = 0;
+  viewPitch = clamped;
 
   // 左右は制限なし(ぐるりと一周できる)
-
-  lastYawDir = yawDir;   // 機体の見た目の傾きに使う
   // ※ 実際に機体とカメラを向けるのは updateFlight()。ここでは角度を決めるだけ。
 }
 
@@ -684,6 +1376,14 @@ function fireBolt() {
     boltGeometry = new THREE.BoxGeometry(0.14, 0.14, 3.0);   // 細長い光の棒
     // MeshBasicMaterial = 光の影響を受けず、いつも同じ色で光って見える材質。ビーム向き
     boltMaterial = new THREE.MeshBasicMaterial({ color: BOLT.COLOR });
+
+    // 残光(トレイル)。弾の後ろへ細く長く伸びる半透明の棒。
+    // 弾はローカル座標の -Z へ進むので、+Z 側が「後ろ」になる。
+    boltTrailGeometry = new THREE.BoxGeometry(0.07, 0.07, FEEL.BOLT_TRAIL);
+    boltTrailGeometry.translate(0, 0, FEEL.BOLT_TRAIL / 2 + 1.5);
+    boltTrailMaterial = new THREE.MeshBasicMaterial({
+      color: BOLT.COLOR, transparent: true, opacity: 0.26,
+    });
   }
 
   volleyCounter += 1;   // この発射の通し番号
@@ -691,6 +1391,7 @@ function fireBolt() {
   // 左右の翼から1条ずつ(合わせて「1発」として数える)
   for (const side of [-1, 1]) {
     const mesh = new THREE.Mesh(boltGeometry, boltMaterial);
+    mesh.add(new THREE.Mesh(boltTrailGeometry, boltTrailMaterial));   // 残光を貼り付ける
 
     // 発射口の位置を「自機から見た座標」で決め、機体の向きに合わせて回す。
     // カメラではなく機体を基準にすることで、翼から弾が出ているように見える。
@@ -781,6 +1482,10 @@ function createEnemy() {
     fireTimer: AI.FIRE_INTERVAL,   // 次の発射までの残り秒
     telegraph: 0,        // 発射予告(光っている)の残り秒。0 なら予告していない
     evadeDir: new THREE.Vector3(1, 0, 0),
+
+    // 熱の痕跡。発射や被弾で跳ね上がり、時間とともに冷める。
+    // 仕様書9.3「敵のHEATが探知手段(撃ちまくる敵ほどよく見える)」の初歩版。
+    heatSig: 0,
   };
 }
 
@@ -797,6 +1502,7 @@ function setEnemyState(e, next) {
 
 function updateEnemyAI(e, dt) {
   e.stateTime += dt;
+  e.heatSig = Math.max(e.heatSig - dt, 0);   // 熱はだんだん冷める
 
   // 自機へのベクトルと距離を求める(すべての判断のもとになる)
   const toPlayer = playerShip.position.clone().sub(e.group.position);
@@ -855,10 +1561,14 @@ function updateEnemyAI(e, dt) {
         e.telegraph = 0;
         fireEnemyBolt(e);
         e.fireTimer = AI.FIRE_INTERVAL;
+        e.heatSig = SENSOR.HEAT_LINGER;   // 撃った直後は熱くて見つかりやすい
       }
     } else {
       e.fireTimer -= dt;
-      if (e.fireTimer <= 0) e.telegraph = AI.TELEGRAPH;   // 予告開始(光り始める)
+      if (e.fireTimer <= 0) {
+        e.telegraph = AI.TELEGRAPH;   // 予告開始(光り始める)
+        onIncomingLock();             // main.js:狙われた警告音
+      }
     }
   }
 }
@@ -977,12 +1687,82 @@ function aliveEnemyCount() {
   return enemies.filter((e) => e.alive).length;
 }
 
+// 敵の総数(レーダーの輝点やマーカーを何個作るかの決定に使う)
+function enemyCount() {
+  return enemies.length;
+}
+
+// ===================================================================
+// センサー精度(仕様書9.3の7つ目)
+// 索敵半径 = センサーの電力配分で決まる。配分0%でも最低限は見える。
+// ===================================================================
+function sensorRange(sensorPercent) {
+  const ratio = Math.max(0, Math.min(100, sensorPercent)) / 100;
+  return SENSOR.MIN_RANGE + ratio * (SENSOR.MAX_RANGE - SENSOR.MIN_RANGE);
+}
+
+// ===================================================================
+// レーダーと敵マーカーのためのデータを作る
+//
+// 索敵半径の外にいる敵は、そもそもこの配列に入らない。
+// = レーダーにも映らず、3D画面にもマーカーが出ない(仕様の4番)
+//
+// 返す値(敵1機ぶん):
+//   localX / localZ … 自機から見た相対位置。localZ がマイナスなら前方
+//   dist            … 距離
+//   hot             … 熱で捕捉している敵か(発射直前・発射直後・被弾直後)
+//   ndcX / ndcY     … 画面上の位置(-1〜+1)。マーカーを置くのに使う
+//   inFront         … 画面の前方にいるか(後ろの敵にマーカーを出さないため)
+// ===================================================================
+function getContacts(sensorPercent) {
+  const result = [];
+  if (!sceneReady) return result;
+
+  const range = sensorRange(sensorPercent);
+
+  // 自機の向きの「逆回転」。これを掛けると、世界の座標が
+  // 「自機から見た前後左右」に変換できる(機首が常に上のレーダーの要)
+  const inverse = playerShip.quaternion.clone().invert();
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+
+    const to = e.group.position.clone().sub(playerShip.position);
+    const dist = to.length();
+
+    // 熱を出している敵は、索敵半径の HEAT_BONUS 倍まで捕捉できる
+    const hot = (e.telegraph > 0 || e.heatSig > 0);
+    const limit = range * (hot ? SENSOR.HEAT_BONUS : 1);
+    if (dist > limit) continue;   // 圏外。映らない
+
+    const local = to.clone().applyQuaternion(inverse);
+
+    // 画面上の位置を求める。project() は3Dの点を画面座標(-1〜+1)に変換する命令
+    const ndc = e.group.position.clone().project(camera);
+    // カメラから見て前方にあるか。z がマイナスならカメラの前
+    const inFront = camera.worldToLocal(e.group.position.clone()).z < 0;
+
+    result.push({
+      localX: local.x,
+      localZ: local.z,
+      dist: dist,
+      hot: hot,
+      ndcX: ndc.x,
+      ndcY: ndc.y,
+      inFront: inFront,
+    });
+  }
+
+  return result;
+}
+
 // ===================================================================
 // 敵機への命中
 // ===================================================================
 // dealDamage が false のときは、見た目(光と破片)だけでHPは減らさない
 function hitEnemy(e, point, dealDamage) {
-  e.hitFlash = ENEMY.FLASH_SEC;   // 白く光らせる
+  e.hitFlash = ENEMY.FLASH_SEC;         // 白く光らせる
+  e.heatSig  = SENSOR.HEAT_LINGER;      // 被弾直後も熱くて見つかりやすい
 
   // 当たった場所から小さな破片を飛ばす
   spawnDebris(point, DEBRIS.HIT_COUNT, DEBRIS.HIT_SIZE, DEBRIS.HIT_SPEED);

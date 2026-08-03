@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-10 mission';
+const BUILD = 'p1-26 voice2';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -101,6 +101,33 @@ const OPTIONS = {
   //           S=手前に引く=機首上げ / W=前に押す=機首下げ
   //   false … 直感式:W=機首上げ / S=機首下げ
   invertPitch: true,
+
+  // 起動時の視点。'third' = 三人称 / 'cockpit' = コックピット
+  // ゲーム中は X キーでいつでも切り替えられる。
+  startView: 'third',
+};
+
+// --- コックピット音声を出す条件 -------------------------------------
+// 「言い終わる前に手遅れになる」警告を防ぐため、熱だけは予測でも出す。
+const VOICE_TRIGGER = {
+  OVERHEAT_PCT:   90,    // 熱がこの値を超えたら警告
+  OVERHEAT_LEAD: 2.6,    // 限界まで残りこの秒数を切っても警告(読み上げの長さぶん)
+  SHIELD_PCT:     50,    // シールドがこの値を下回ったら通知
+  FUEL_PCT:       20,    // 推進剤がこの値を下回ったら通知
+};
+
+// 一度言った警告は、状態が戻るまで言い直さない(そのための記録)
+let saidOverheat = false;
+let saidShieldHalf = false;
+let saidShieldFail = false;
+let saidCritical = false;
+let saidFuelLow = false;
+
+// --- 照準の捕捉フィードバック ---------------------------------------
+const CAPTURE = {
+  BEEP_START: 0.52,   // 捉えた直後の鳴動間隔(秒)
+  BEEP_END:   0.085,  // 捉え続けたときの最短の間隔
+  RAMP_SEC:   2.6,    // この秒数かけて「ビー」から「ビビビ」へ詰まる
 };
 
 // --- 主兵装の設定(仕様書9.6:F=主兵装発射)-------------------------
@@ -135,6 +162,12 @@ let missionTime   = MISSION.DURATION;   // 残り秒数
 let shakeLeft     = 0;       // 画面の揺れの残り秒数
 let shakeStrength = 0;       // 揺れの強さ
 let hitVignette   = 0;       // 被弾した瞬間に強く光る赤の残り時間
+
+// 照準の捕捉音のための状態
+let lastAimState = 'CLEAR';   // 前のコマの照準状態(変わった瞬間を知るため)
+let beepTimer = 0;            // 次の「ビー」までの残り秒
+let overheatTimer = 0;        // 熱の警告音を鳴らす間隔の残り秒
+let lastTimeWarned = false;   // 残り1分の警告をもう鳴らしたか
 
 // ドリフト(Shift長押し)入力の状態。
 // 3D側(scene.js)にも drifting という変数があるが、あちらは「3Dの飛行状態」。
@@ -187,6 +220,13 @@ const speedEl     = document.getElementById('speed');
 const aiStateEl   = document.getElementById('ai-state');
 const hullEl      = document.getElementById('hull');
 const vignetteEl  = document.getElementById('damage-vignette');
+
+const radarEl       = document.getElementById('radar');
+const radarRangeEl  = document.getElementById('radar-range');
+const radarSensorEl = document.getElementById('radar-sensor');
+const markerLayer   = document.getElementById('marker-layer');
+const crosshairEl   = document.querySelector('.crosshair');
+const viewModeEl    = document.getElementById('view-mode');
 
 const timerElMission = document.getElementById('mission-timer');
 const resultPanel    = document.getElementById('result-panel');
@@ -367,6 +407,7 @@ function boost(targetKey, amount = 10) {
   power[targetKey] += taken;
 
   presetEl.textContent = 'MANUAL';   // 手動で動かしたのでプリセット表示を解除
+  playPowerClick();
   render();
 }
 
@@ -383,6 +424,7 @@ function applyPreset(presetKey) {
   }
 
   presetEl.textContent = preset.name;
+  playPresetConfirm();
   render();
 }
 
@@ -395,12 +437,14 @@ function burst() {
   // 残量が足りなければ発動しない。ここが「燃料切れなら動けない」の実装
   if (propellant < PROP.BURST_COST) {
     console.log('PROPELLANT EMPTY ― バースト不能');
+    playDenied();
     return;
   }
 
   propellant -= PROP.BURST_COST;
   heat = Math.min(heat + PROP.BURST_HEAT, HEAT.MAX);   // 高出力機動なので熱も跳ねる
   burstFlash = 0.22;                                   // 演出:一瞬光らせる
+  playBurst();
 }
 
 // ===================================================================
@@ -434,6 +478,15 @@ const KEY_TO_SYSTEM = {
 // addEventListener = 「キーが押されたら、この関数を呼んでくれ」という予約
 window.addEventListener('keydown', (event) => {
   keysHeld.add(event.key.toLowerCase());   // 押しっぱなし判定用に記録
+  resumeAudio();   // ブラウザの規則で、最初のキー入力があるまで音は鳴らせない
+
+  // X キー … 三人称 ⇄ コックピット の切り替え
+  // 視点は「今どちらか」を scene.js だけが持っている。
+  // 同じ状態を2か所で持つとズレる原因になるので、ここでは尋ねて反転させるだけ。
+  if (event.key.toLowerCase() === 'x') {
+    applyViewMode(!isCockpitView());
+    return;
+  }
 
   // R キー … リザルト表示中のみ、再出撃
   // (仕様書9.6ではRは武器切替だが、そちらは未実装。実装時にキーを見直す)
@@ -477,6 +530,7 @@ window.addEventListener('keydown', (event) => {
   // toLowerCase() で、Shiftを押していても大文字/小文字どちらでも反応するようにする
   if (event.key.toLowerCase() === 'v') {
     radiatorOpen = !radiatorOpen;   // ! は「逆にする」。true↔false が入れ替わる
+    playRadiator(radiatorOpen);
     return;
   }
 
@@ -506,6 +560,224 @@ window.addEventListener('keyup', (event) => {
 window.addEventListener('blur', () => keysHeld.clear());
 
 // ===================================================================
+// 視点の切り替えを、3D側とHTML側の両方に反映する
+//
+// 3D側 … カメラ位置と内装の表示(scene.js の setViewMode)
+// HTML側 … 計器の配置。コックピットでは計器台に組み込まれた並びに変える
+// ===================================================================
+function applyViewMode(isCockpit) {
+  const nowCockpit = setViewMode(isCockpit);
+  playViewClick();
+  viewModeEl.textContent = nowCockpit ? 'COCKPIT' : '3RD';
+  consoleEl.classList.toggle('cockpit', nowCockpit);
+  return nowCockpit;
+}
+
+// 敵が発射予告に入った(＝こちらが狙われた)。scene.js から呼ばれる
+function onIncomingLock() {
+  if (missionState !== 'active') return;
+  playLockWarning();
+  speakVoice('INCOMING');
+}
+
+// ===================================================================
+// コックピット音声の監視
+//
+// 「状態が境目をまたいだ瞬間」にだけ言わせる。毎コマ条件を見て
+// 言い続けると、うるさいうえに言葉が重なって聞き取れない。
+// 一度言ったら、状態が戻るまでフラグで止める。
+// ===================================================================
+function updateVoiceAlerts(dt) {
+  voiceTick(dt);
+  if (missionState !== 'active') return;
+
+  // --- 熱 ---
+  // 「90%を超えた」か「このままだと数秒で限界」のどちらかで警告する。
+  // 予測を入れないと、武器配分が高いときに言い終わる前に落ちてしまう。
+  const rate = currentHeatRate();
+  const secondsToMax = (rate > 0) ? (HEAT.MAX - heat) / rate : Infinity;
+  const overheatNear = (heat >= VOICE_TRIGGER.OVERHEAT_PCT) ||
+                       (secondsToMax <= VOICE_TRIGGER.OVERHEAT_LEAD);
+
+  if (overheatNear && !saidOverheat && shutdownLeft <= 0) {
+    speakVoice('OVERHEAT');
+    saidOverheat = true;
+  } else if (heat < HEAT.WARN) {
+    saidOverheat = false;   // 危険域を抜けたら、また言えるようにする
+  }
+
+  // --- シールド ---
+  if (shieldHp <= 0 && !saidShieldFail) {
+    speakVoice('SHIELD_FAILURE');
+    saidShieldFail = true;
+  } else if (shieldHp > 0) {
+    saidShieldFail = false;
+  }
+
+  if (shieldHp > 0 && shieldHp <= VOICE_TRIGGER.SHIELD_PCT && !saidShieldHalf) {
+    speakVoice('SHIELD_FIFTY');
+    saidShieldHalf = true;
+  } else if (shieldHp > VOICE_TRIGGER.SHIELD_PCT) {
+    saidShieldHalf = false;
+  }
+
+  // --- HULL 残り1 ---
+  const hullLeft = HULL.MAX_DAMAGE - hullDamage;
+  if (hullLeft === 1 && !saidCritical) {
+    speakVoice('CRITICAL_DAMAGE');
+    saidCritical = true;
+  } else if (hullLeft > 1) {
+    saidCritical = false;
+  }
+
+  // --- 推進剤 ---
+  if (propellant <= VOICE_TRIGGER.FUEL_PCT && !saidFuelLow) {
+    speakVoice('FUEL_LOW');
+    saidFuelLow = true;
+  } else if (propellant > VOICE_TRIGGER.FUEL_PCT) {
+    saidFuelLow = false;
+  }
+}
+
+// ===================================================================
+// 照準の捕捉フィードバック
+//
+// 判定そのものは3D側(scene.js の updateAim)。ここは音の担当。
+// 捉えた瞬間に1回鳴らし、捉えている間は一定間隔で鳴らし続ける。
+// ===================================================================
+function updateAimFeedback(dt) {
+  const state = updateAim(dt);
+
+  if (state !== 'CLEAR') {
+    // 捉え続けた時間に応じて 0→1 へ。1に近いほど間隔が詰まる
+    const progress = Math.min(currentAimHold() / CAPTURE.RAMP_SEC, 1);
+    const interval = CAPTURE.BEEP_START +
+                     (CAPTURE.BEEP_END - CAPTURE.BEEP_START) * progress;
+
+    if (lastAimState === 'CLEAR') {
+      speakVoice('TARGET_ACQUIRED');
+      playCaptureBeep(progress);   // 捉えた瞬間にすぐ1回
+      beepTimer = interval;
+    } else {
+      beepTimer -= dt;
+      if (beepTimer <= 0) {
+        playCaptureBeep(progress);
+        beepTimer = interval;
+      }
+    }
+  } else {
+    beepTimer = 0;   // 外したら次に捉えたとき即座に鳴るようにしておく
+  }
+
+  lastAimState = state;
+}
+
+// ===================================================================
+// レーダースコープと敵マーカー(仕様書9.6の下段左 + 中央HUD)
+//
+// 輝点とマーカーは敵の数だけ必要なので、起動時にまとめて作っておき、
+// 毎コマ「使う/使わない」を切り替える。毎回作り直すと重くなる。
+// ===================================================================
+const radarBlips   = [];   // レーダーの輝点
+const enemyMarkers = [];   // 3D画面に重ねる敵マーカー
+
+function setupRadar() {
+  const count = (typeof enemyCount === 'function') ? enemyCount() : 0;
+
+  for (let i = 0; i < count; i++) {
+    const blip = document.createElement('div');
+    blip.className = 'radar-blip';
+    radarEl.appendChild(blip);
+    radarBlips.push(blip);
+
+    const marker = document.createElement('div');
+    marker.className = 'enemy-marker';
+    // 四隅の括弧4つ + 距離の文字
+    marker.innerHTML = '<span></span><span></span><span></span><span></span>' +
+                       '<span class="dist"></span>';
+    markerLayer.appendChild(marker);
+    enemyMarkers.push(marker);
+  }
+}
+
+// カメラが機首より遅れて追うようになったため、照準は画面中央に固定できない。
+// 機首の正面(=弾が飛ぶ方向)を画面へ投影した位置へ毎コマ動かす。
+function renderCrosshair() {
+  // コックピットでは光像式照準器のレティクルが照準の役目を果たすので、
+  // HTMLの十字は消す(仕様:視点で照準の方式が変わる)
+  if (isCockpitView()) {
+    crosshairEl.style.display = 'none';
+    return;
+  }
+
+  const aim = getAimNdc();
+  if (!aim || !aim.visible) {
+    crosshairEl.style.display = 'none';
+    return;
+  }
+  crosshairEl.style.display = '';
+  crosshairEl.style.left = ((aim.x * 0.5 + 0.5) * 100) + '%';
+  crosshairEl.style.top  = ((-aim.y * 0.5 + 0.5) * 100) + '%';
+}
+
+function renderRadar() {
+  const range = sensorRange(power.sensor);
+  radarRangeEl.textContent = Math.round(range);
+  radarSensorEl.textContent = power.sensor;
+
+  // 索敵範囲内の敵だけが返ってくる。範囲外の敵はここに含まれない
+  const contacts = getContacts(power.sensor);
+
+  for (let i = 0; i < radarBlips.length; i++) {
+    const blip = radarBlips[i];
+    const marker = enemyMarkers[i];
+    const c = contacts[i];
+
+    if (!c) {
+      // 捕捉できていないので、輝点もマーカーも消す
+      blip.style.display = 'none';
+      marker.style.display = 'none';
+      continue;
+    }
+
+    // --- レーダーの輝点 ---
+    // 自機から見た左右(localX)と前後(localZ)を、そのまま画面の横と縦に使う。
+    // localZ がマイナス=前方 → 画面の上、になるので座標の向きがそのまま合う。
+    let nx = c.localX / range;
+    let ny = c.localZ / range;
+
+    // 熱ボーナスで範囲外の敵が映るときは、円からはみ出すので縁に貼り付ける
+    const r = Math.hypot(nx, ny);
+    if (r > 0.94) { nx = (nx / r) * 0.94; ny = (ny / r) * 0.94; }
+
+    blip.style.display = 'block';
+    blip.style.left = (50 + nx * 50) + '%';
+    blip.style.top  = (50 + ny * 50) + '%';
+    blip.classList.toggle('hot', c.hot);
+
+    // --- 3D画面の敵マーカー ---
+    // 画面の後ろにいる敵にはマーカーを出さない(出すと変な位置に現れる)
+    if (c.inFront) {
+      marker.style.display = 'block';
+      // ndc(-1〜+1)を画面の割合(0〜100%)に直す。縦は上下が逆なので符号を反転
+      marker.style.left = ((c.ndcX * 0.5 + 0.5) * 100) + '%';
+      marker.style.top  = ((-c.ndcY * 0.5 + 0.5) * 100) + '%';
+
+      // 枠の大きさを距離に合わせる。近いほど敵が大きく映るので、枠も大きくする。
+      // そうしないと近距離で枠が機体に埋もれて見えなくなる。
+      const size = Math.max(26, Math.min(3600 / Math.max(c.dist, 1), 150));
+      marker.style.width  = size + 'px';
+      marker.style.height = size + 'px';
+
+      marker.classList.toggle('hot', c.hot);
+      marker.querySelector('.dist').textContent = Math.round(c.dist);
+    } else {
+      marker.style.display = 'none';
+    }
+  }
+}
+
+// ===================================================================
 // 戦果の表示 ― scene.js の命中判定から呼ばれる
 //
 // 3D側は「当たった」ことだけを知らせ、画面にどう出すかは main.js が決める。
@@ -515,12 +787,15 @@ let killCount = 0;   // 撃墜数
 
 // 命中したとき。remainingHp = 敵機の残りHP
 function onHit(remainingHp) {
+  playEnemyHit();
   addCombatLog('HIT', 'hit');
   console.log('HIT ― 敵機の残りHP: ' + remainingHp);
 }
 
 // 撃墜したとき
 function onKill() {
+  playExplosion();
+  speakVoice('TARGET_DESTROYED');
   killCount += 1;
   killCountEl.textContent = killCount;
   addCombatLog('★ KILL', 'kill');
@@ -566,14 +841,16 @@ function onPlayerHit() {
     damageFlash = 0.3;         // シールドゲージが赤く光る(既存の演出を流用)
     startShake(INCOMING.SHAKE_STRENGTH);
     addCombatLog('SHIELD −' + INCOMING.SHIELD_DAMAGE, 'warn');
+    playShieldHit();
 
-    if (shieldHp <= 0) addCombatLog('SHIELD DOWN', 'hull');
+    if (shieldHp <= 0) { addCombatLog('SHIELD DOWN', 'hull'); playShieldDown(); }
 
   } else {
     // --- シールドが割れている:HULL損傷 ---
     hullDamage += 1;
     startShake(INCOMING.SHAKE_HULL);
 
+    playHullDamage();
     const brokenName = breakRandomInstrument();
     addCombatLog('HULL DAMAGE ' + hullDamage + '/' + HULL.MAX_DAMAGE, 'hull');
     if (brokenName) addCombatLog(brokenName + ' 損傷', 'hull');
@@ -652,11 +929,14 @@ function endMission(result) {
     resultPanel.classList.add('win');
     resultTitleEl.textContent = 'MISSION COMPLETE';
     resultReasonEl.textContent = '規定数撃墜 ― 任務達成';
+    playMissionComplete();
   } else if (result === 'timeup') {
+    playTimeUp();
     resultPanel.classList.add('timeup');
     resultTitleEl.textContent = 'TIME UP';
     resultReasonEl.textContent = '制限時間到達 ― 任務失敗';
   } else {
+    playMissionFailed();
     resultTitleEl.textContent = 'MISSION FAILED';
     resultReasonEl.textContent = '機体構造 崩壊';
   }
@@ -675,6 +955,10 @@ function restartMission() {
   missionState = 'active';
   missionTime = MISSION.DURATION;
   hitsTaken = 0;
+  lastTimeWarned = false;
+  saidOverheat = false; saidShieldHalf = false; saidShieldFail = false;
+  saidCritical = false; saidFuelLow = false;
+  resetVoice();
   consoleEl.classList.remove('failed');
   resultPanel.classList.remove('win', 'timeup');
   timerElMission.classList.remove('warn');
@@ -705,6 +989,7 @@ function restartMission() {
   resetFlight();   // 3D側:自機の位置・速度・敵をやり直す
   render();
   addCombatLog('SORTIE', 'warn');
+  playSortie();
   console.log('RESTART ― 再出撃');
 }
 
@@ -714,11 +999,17 @@ function restartMission() {
 function fire() {
   heat = Math.min(heat + WEAPON.HEAT_PER_SHOT, HEAT.MAX);
   fireBolt();   // scene.js:見た目のビームを飛ばす
+  playFireSound();
+
+  // 撃った手応え。被弾(0.55)よりずっと弱い、ごく小さな振動
+  startShake(FEEL.SHAKE_FIRE);
 
   // 発射で限界を超えたら、その場でシャットダウン
   if (heat >= HEAT.MAX) {
     heat = HEAT.MAX;
     shutdownLeft = HEAT.SHUTDOWN_SEC;
+    playShutdown();
+    speakVoice('POWER_FAILURE');
     console.log('OVERHEAT ― 強制シャットダウン(発射熱)');
   }
 }
@@ -756,6 +1047,12 @@ function tick(now) {
   timerElMission.textContent = formatTime(missionTime);
   // 残り1分を切ったら赤く点滅させる(音の代わりの警告)
   timerElMission.classList.toggle('warn', missionTime <= MISSION.WARN_SEC);
+  // 残り1分を切った瞬間に1回だけ警告を鳴らす
+  if (missionTime <= MISSION.WARN_SEC && !lastTimeWarned) {
+    playTimeWarning();
+    speakVoice('ONE_MINUTE');
+    lastTimeWarned = true;
+  }
   if (missionTime <= 0) {
     missionTime = 0;
     endMission('timeup');
@@ -766,9 +1063,13 @@ function tick(now) {
   updateView(dt);                   // W/A/S/D による機首操作
   updateShake(dt);                  // 被弾の揺れ(カメラを置く前に決めておく)
   updateFlight(dt, power.engine);   // 自機の前進(速度はエンジンの電力配分に比例)
+  updateAimFeedback(dt);            // 照準の捕捉判定と、捕捉音
+  updateVoiceAlerts(dt);            // コックピット音声
   updateScene(dt, elapsed);         // 敵機・弾・破片の更新と描画(scene.js)
   renderHeat();        // 計器の描画
   renderStatus();
+  renderRadar();       // レーダーと敵マーカー
+  renderCrosshair();   // 照準(弾道の向きに合わせる)
 
   requestAnimationFrame(tick);   // 次のコマを予約(これで無限に回り続ける)
 }
@@ -786,7 +1087,12 @@ function tick(now) {
 // ===================================================================
 function updateDrift() {
   // シャットダウン中は自分では推力を制御できない
+  const wasDrifting = driftInput;
   driftInput = (shutdownLeft <= 0) && keysHeld.has('shift');
+  if (driftInput !== wasDrifting) playDriftToggle(driftInput);
+
+  // エンジンの駆動音。配分が高いほど高く大きく、ドリフト中は静かになる
+  setEngineLevel(power.engine / 100, driftInput || shutdownLeft > 0);
 
   // 3D側へ「推力を止めるか」を伝える。
   // シャットダウン中は電力が落ちているのでエンジンも吹かない = 慣性で流される。
@@ -832,6 +1138,7 @@ function update(dt) {
     heat = Math.max(heat - HEAT.VENT_SHUTDOWN * dt, 0);
     if (shutdownLeft <= 0) {
       shutdownLeft = 0;
+      playReboot();
       console.log('SYSTEM REBOOT ― 復帰');
     }
     return;   // 停止中は通常の発熱・回復処理をしない
@@ -850,7 +1157,20 @@ function update(dt) {
   if (heat >= HEAT.MAX) {
     heat = HEAT.MAX;
     shutdownLeft = HEAT.SHUTDOWN_SEC;
+    playShutdown();
+    speakVoice('POWER_FAILURE');
     console.log('OVERHEAT ― 強制シャットダウン');
+  }
+
+  // --- 熱が危険域のあいだ、一定間隔で警告音を鳴らす ---
+  if (heat >= HEAT.WARN && shutdownLeft <= 0) {
+    overheatTimer -= dt;
+    if (overheatTimer <= 0) {
+      playOverheatWarn();
+      overheatTimer = AUDIO.OVERHEAT_INTERVAL;
+    }
+  } else {
+    overheatTimer = 0;
   }
 }
 
@@ -858,7 +1178,13 @@ function update(dt) {
 document.getElementById('build').textContent = BUILD;   // 画面に版数を出す
 console.log('STEEL CRADLE build: ' + BUILD);
 
+initAudio();                     // 音の準備(audio.js)。最初のキー入力で鳴り始める
+initVoice();                     // コックピット音声の準備(voice.js)
 initScene();                     // 3D空間の準備(scene.js)。失敗しても計器は動く
+setupRadar();                    // 敵の数だけ輝点とマーカーを用意する(initScene のあと)
+
+// 起動時の視点をオプションから決める
+applyViewMode(OPTIONS.startView === 'cockpit');
 render();                        // 電力ゲージの初期表示
 requestAnimationFrame((t) => {   // ループ開始。1回目は dt=0 になるよう時刻を合わせる
   lastTime = t;

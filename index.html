@@ -60,8 +60,9 @@
       inset: 0;
       z-index: 1;
       pointer-events: none;    /* クリックを透過させる */
-      background: radial-gradient(ellipse 75% 65% at 50% 42%,
-                  rgba(0,0,0,0) 55%, rgba(2,4,8,0.75) 100%);
+      /* 四隅をほんの少し落とすだけ。ここを濃くすると視界が「箱」に見えるので控えめに */
+      background: radial-gradient(ellipse 88% 80% at 50% 45%,
+                  rgba(0,0,0,0) 70%, rgba(2,4,8,0.34) 100%);
     }
 
     /* ===================================================================
@@ -82,6 +83,47 @@
 
     .header { letter-spacing: 0.35em; font-size: 11px; color: var(--dim); }
     .header .title { color: var(--text); font-size: 14px; }
+
+    /* =================================================================
+       コックピット視点のときの計器配置
+       三人称では計器は「画面に浮いたオーバーレイ」でよいが、
+       コックピットでは計器台に組み込まれて見えないと没入感が出ない。
+       そこで熱・推進剤・シールドの各パネルも下段へ降ろし、
+       電力パネルと横一列に並べて「1枚の計器盤」に見せる。
+       ================================================================= */
+    .hud.cockpit .hud-left {
+      left: 196px;
+      top: auto;
+      bottom: 14px;
+      transform: none;
+    }
+    .hud.cockpit .hud-right {
+      right: 30px;
+      top: auto;
+      bottom: 14px;
+      transform: none;
+    }
+    .hud.cockpit .hud-bottom { bottom: 10px; }
+
+    /* 計器台に載る高さに収めるため、縦ゲージを短くする */
+    .hud.cockpit .panel-heat .gauge-tube,
+    .hud.cockpit .panel-status .gauge-tube { height: 74px; }
+    .hud.cockpit .panel .gauge-tube { height: 74px; }
+    .hud.cockpit .panel { padding: 8px 16px; gap: 16px; }
+    .hud.cockpit .gauge { gap: 3px; }
+    .hud.cockpit .gauge-value { font-size: 15px; }
+
+    /* 計器台に彫り込まれたように見せる。浮いた箱に見せない */
+    .hud.cockpit .panel {
+      background: rgba(4, 7, 10, 0.92);
+      border-color: #243b44;
+      border-radius: 2px;
+      box-shadow: inset 0 1px 0 rgba(159, 225, 203, 0.10),
+                  inset 0 0 26px rgba(0, 0, 0, 0.9);
+    }
+
+    /* 戦闘ログは右下の計器と重なるので上へ逃がす */
+    .hud.cockpit .combat-log { bottom: 168px; }
 
     /* =================================================================
        被弾ダメージ表示(仕様書9.3「被弾表現=計器の破損」)
@@ -259,20 +301,20 @@
     }
 
     /* ---- 戦闘ログ(HIT / KILL)----
-       画面中央は戦闘が起きる場所なので、ログは左下に置いて視界を塞がないようにする。
-       (仕様書9.6で左下はレーダースコープの位置。実装時にここは移動する) */
+       左下は仕様書9.6でレーダースコープの位置なので、ログは右下へ移した。
+       (右下は将来の兵装パネルの位置。そちらの実装時に再配置する) */
     .combat-log {
       position: absolute;
-      left: 22px;
-      bottom: 18px;
+      right: 22px;
+      bottom: 16px;
       display: flex;
       flex-direction: column;
-      align-items: flex-start;   /* 左そろえ */
+      align-items: flex-end;     /* 右そろえ */
       justify-content: flex-end;
-      gap: 3px;
-      height: 70px;              /* 高さを固定し、行が増えても他がずれないようにする */
-      font-size: 11px;
-      letter-spacing: 0.22em;
+      gap: 2px;
+      height: 60px;              /* 高さを固定し、行が増えても他がずれないようにする */
+      font-size: 10px;
+      letter-spacing: 0.18em;
     }
     /* 1行ぶん。出たあとゆっくり消える */
     .log-line {
@@ -288,6 +330,126 @@
     .log-line.kill { color: #ffcf6a; font-size: 14px; letter-spacing: 0.3em; }
     .log-line.warn { color: #8fd8ff; }                      /* シールドで受けた */
     .log-line.hull { color: #ff5a3c; font-size: 13px; }     /* HULL損傷 */
+
+    /* =================================================================
+       レーダースコープ(仕様書9.6「下段左:自機中心・精度は電力依存」)
+       ================================================================= */
+    .radar-wrap {
+      position: absolute;
+      left: 22px;
+      bottom: 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .radar {
+      position: relative;
+      width: 152px;
+      height: 152px;
+      border-radius: 50%;                 /* 円形にする */
+      border: 1px solid var(--line);
+      background: radial-gradient(circle, rgba(12, 30, 24, 0.55), rgba(4, 8, 12, 0.88));
+      overflow: hidden;                   /* はみ出した輝点を隠す */
+    }
+
+    /* 中間の同心円 */
+    .radar::before {
+      content: "";
+      position: absolute;
+      inset: 25%;
+      border: 1px solid rgba(159, 225, 203, 0.13);
+      border-radius: 50%;
+    }
+    /* 十字線。線1本ぶんだけ色を付けたグラデーションを縦横2枚重ねる */
+    .radar::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(to right,
+          transparent calc(50% - 0.5px), rgba(159,225,203,0.11) calc(50% - 0.5px),
+          rgba(159,225,203,0.11) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+        linear-gradient(to bottom,
+          transparent calc(50% - 0.5px), rgba(159,225,203,0.11) calc(50% - 0.5px),
+          rgba(159,225,203,0.11) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+    }
+
+    /* 自機。常に中心で上(機首方向)を向く三角 */
+    .radar-self {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 0; height: 0;
+      margin: -6px 0 0 -4px;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-bottom: 9px solid var(--text);
+      z-index: 2;
+    }
+
+    /* 敵の輝点 */
+    .radar-blip {
+      position: absolute;
+      width: 7px; height: 7px;
+      margin: -3.5px 0 0 -3.5px;
+      border-radius: 50%;
+      background: #ff6a4d;
+      box-shadow: 0 0 6px rgba(255, 90, 60, 0.85);
+      display: none;
+      z-index: 3;
+    }
+    /* 熱で捕捉している敵(発射直前・被弾直後)は色を変えて目立たせる */
+    .radar-blip.hot {
+      background: #ffcf6a;
+      box-shadow: 0 0 11px rgba(255, 205, 100, 1);
+    }
+
+    .radar-label {
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      color: var(--dim);
+    }
+    .radar-label b { color: var(--text); font-weight: normal; }
+
+    /* =================================================================
+       敵マーカー(仕様書9.6「中央HUD:敵マーカー」)
+       索敵範囲内で、かつ画面の前方にいる敵にだけ出す
+       ================================================================= */
+    /* 大きさは距離に応じて main.js が変える。中心をその位置に合わせるため
+       transform で半分だけ戻す(width/height が変わっても中心がずれない) */
+    .enemy-marker {
+      position: absolute;
+      width: 30px; height: 30px;
+      transform: translate(-50%, -50%);
+      display: none;
+      pointer-events: none;
+    }
+    /* 四隅だけの括弧型。中央を空けて敵の機体が見えるようにする */
+    .enemy-marker span {
+      position: absolute;
+      width: 8px; height: 8px;
+      border: 1px solid #ff6a4d;
+    }
+    .enemy-marker span:nth-child(1) { left: 0;  top: 0;    border-right: 0; border-bottom: 0; }
+    .enemy-marker span:nth-child(2) { right: 0; top: 0;    border-left: 0;  border-bottom: 0; }
+    .enemy-marker span:nth-child(3) { left: 0;  bottom: 0; border-right: 0; border-top: 0; }
+    .enemy-marker span:nth-child(4) { right: 0; bottom: 0; border-left: 0;  border-top: 0; }
+
+    .enemy-marker .dist {
+      position: absolute;
+      top: calc(100% + 3px);   /* 枠の大きさが変わっても、常に枠の真下に付く */
+      left: 50%;
+      transform: translateX(-50%);
+      width: auto; height: auto;
+      border: 0;
+      font-size: 9px;
+      color: #ff8f7a;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    .enemy-marker.hot span  { border-color: #ffcf6a; }
+    .enemy-marker.hot .dist { color: #ffcf6a; }
 
     /* ---- 照準(仕様書9.6「中央:キャノピー+HUD(照準…)」)---- */
     .crosshair {
@@ -466,6 +628,18 @@
     <!-- 戦闘ログ(HIT / KILL) -->
     <div class="combat-log" id="combat-log"></div>
 
+    <!-- レーダースコープ(自機中心・機首方向が常に上) -->
+    <div class="radar-wrap">
+      <div class="radar" id="radar">
+        <div class="radar-self"></div>
+        <!-- 敵の輝点は main.js が敵の数だけ作る -->
+      </div>
+      <div class="radar-label">RANGE <b id="radar-range">0</b> &nbsp; SENSOR <b id="radar-sensor">25</b>%</div>
+    </div>
+
+    <!-- 敵マーカーの置き場。中身は main.js が敵の数だけ作る -->
+    <div id="marker-layer" style="position:absolute; inset:0; pointer-events:none;"></div>
+
     <div class="hud-top">
       <!-- 残り時間(仕様書9.1:1ゲーム最長10分) -->
       <div class="mission-timer" id="mission-timer">10:00</div>
@@ -542,11 +716,12 @@
         <div>SPEED <b id="speed">0</b></div>
         <div>TARGET <b id="ai-state">―</b></div>
         <div>HULL <b id="hull">5</b>/5</div>
+        <div>VIEW <b id="view-mode">3RD</b></div>
         <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
       </div>
 
       <div class="help">
-        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; F 発射(熱+8) &nbsp; Space 回避バースト &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span><br>
+        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; F 発射(熱+8) &nbsp; Space 回避バースト &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
         <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
         &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト</span>
       </div>
@@ -575,6 +750,12 @@
        0.150.1 は「普通の<script>タグで読める」最後の系列。
        ダブルクリックで index.html を開く運用を保つために、この版を選んでいる。 -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+
+  <!-- 音(Web Audio API で合成。素材ファイルは使わない) -->
+  <script src="src/audio.js"></script>
+
+  <!-- コックピット音声(ブラウザ内蔵の読み上げ機能) -->
+  <script src="src/voice.js"></script>
 
   <!-- 3D空間(星空・敵機)。main.js より先に読む必要がある -->
   <script src="src/scene.js"></script>
