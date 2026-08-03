@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-33 flare-side';
+const BUILD = 'p1-34 pyro';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -165,6 +165,18 @@ const WEAPONS = [
     boltColor: 0xffcf6a,
   },
   {
+    key: 'PYRO',
+    label: 'PYRO',        // パイロフォリック弾
+    jp: 'パイロ弾',
+    heat: 1.5,            // 自分の熱はほとんど出ない
+    ammo: 40,             // 機関砲より少ない
+    minPower: 0,
+    auto: true,
+    interval: 0.22,       // 機関砲より遅い
+    pyro: true,           // ★ 着弾で敵の熱を上げる
+    boltColor: 0xff7a2a,
+  },
+  {
     key: 'MISSILE',
     label: 'MISSILE',     // 誘導弾
     jp: 'ミサイル',
@@ -179,7 +191,7 @@ const WEAPONS = [
 ];
 
 let weaponIndex = 0;                  // 今選んでいる兵装
-let ammo = [Infinity, WEAPONS[1].ammo, WEAPONS[2].ammo];   // 兵装ごとの残弾
+let ammo = WEAPONS.map((w) => w.ammo);   // 兵装ごとの残弾
 let fireCooldown = 0;                 // 次に撃てるようになるまでの残り秒
 let flareCount = 8;                   // フレアの残数(scene.js の FLARE.COUNT と揃える)
 let saidAmmoOut = false;              // 弾切れ音声を言ったか(1回だけ)
@@ -294,6 +306,7 @@ const combatLogEl = document.getElementById('combat-log');
 const speedEl     = document.getElementById('speed');
 const aiStateEl   = document.getElementById('ai-state');
 const hullEl      = document.getElementById('hull');
+const enemyHeatEl = document.getElementById('enemy-heat');
 const vignetteEl  = document.getElementById('damage-vignette');
 
 const radarEl       = document.getElementById('radar');
@@ -391,6 +404,11 @@ function renderHeat() {
   const baseRed = (hullDamage / HULL.MAX_DAMAGE) * 0.55;
   const flashRed = hitVignette / 0.45;
   vignetteEl.style.opacity = Math.min(baseRed + flashRed * 0.75, 1);
+
+  // いちばん近い敵の熱。パイロ弾がどれだけ効いているかを見せる
+  const eHeat = nearestEnemyHeat();
+  enemyHeatEl.textContent = eHeat;
+  enemyHeatEl.style.color = eHeat >= 70 ? '#ff5a3c' : (eHeat >= 35 ? '#ffcf6a' : '');
 
   // 敵AIの状態(接近/攻撃/発射/回避)。動作確認しやすいよう計器に出しておく
   const aiState = currentEnemyState();
@@ -723,6 +741,14 @@ function onPlayerMissileHit() {
     if (brokenName) addCombatLog(brokenName, 'hull');
     if (hullDamage >= HULL.MAX_DAMAGE) endMission('failed');
   }
+}
+
+// パイロ弾で敵が熱暴走した。武器仕様書「シャットダウン誘発」の成果
+function onEnemyOverheat() {
+  if (missionState !== 'active') return;
+  playShutdown();
+  addCombatLog('TARGET OVERHEAT', 'kill');
+  speakVoice('TARGET_OVERHEAT');
 }
 
 // 敵がフレアを撒いた
@@ -1209,7 +1235,7 @@ function restartMission() {
   propellant = PROP.MAX;
   shieldHp = SHIELD.MAX;
   weaponIndex = 0;
-  ammo = [Infinity, WEAPONS[1].ammo, WEAPONS[2].ammo];   // 弾を積み直す
+  ammo = WEAPONS.map((w) => w.ammo);   // 弾を積み直す
   fireCooldown = 0;
   saidAmmoOut = false;
 
@@ -1281,7 +1307,7 @@ function fire() {
   if (ammo[weaponIndex] !== Infinity) ammo[weaponIndex] -= 1;
 
   heat = Math.min(heat + w.heat, HEAT.MAX);
-  fireBolt(w.boltColor);   // scene.js:見た目のビームを飛ばす
+  fireBolt(w.boltColor, w.pyro);   // scene.js:弾を飛ばす
   playFireSound();
 
   fireCooldown = w.interval;

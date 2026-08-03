@@ -357,6 +357,28 @@ const FLARE = {
 let flares = [];
 let flareGeometry = null;
 
+// --- パイロフォリック弾(武器仕様書3章)-----------------------------
+// 攻撃対象は敵の「熱」。ダメージ自体は低いが、着弾で燃焼片が付着して
+// 敵のHEATを強制的に上げる。狙いは2つ:
+//   1. 敵のシャットダウンを誘発する
+//   2. 熱放射は隠せない = クロークを炙り出すマーキング(神器9への対策)
+// 真空でも燃えるよう「酸化剤入りの燃焼体を付着させる弾」という理屈。
+const PYRO = {
+  DAMAGE:        1,   // HPを削る力は弱い
+  HEAT_ADD:     34,   // 着弾で敵のHEATに加える量
+  BURN_SEC:    5.0,   // 燃え続ける秒数(この間ずっと熱が入り続ける)
+  BURN_RATE:     7,   // 燃焼中に毎秒加わる熱
+  MARK_SEC:    6.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
+  COLOR: 0xff7a2a,
+};
+
+// 敵のHEAT。100を超えると自機と同じく強制シャットダウンする。
+const ENEMY_HEAT = {
+  MAX:          100,
+  VENT:         9.0,  // 敵の自然放熱(毎秒)
+  SHUTDOWN_SEC: 3.5,  // 停止している秒数。この間は無防備で動かない
+};
+
 // --- 敵のミサイルとフレア -------------------------------------------
 // 自機と同じ仕組みを敵にも持たせる。これでフレアの本来用途
 //「飛んできたミサイルを逸らす」が初めて機能する。
@@ -1515,7 +1537,7 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
 // 射撃(仕様書9.6:F=主兵装発射)
 // 命中判定はまだ入れない。まずは「撃った」ことが見て分かる状態にする。
 // ===================================================================
-function fireBolt(color) {
+function fireBolt(color, isPyro) {
   if (!sceneReady) return;
   const boltColor = (color === undefined) ? BOLT.COLOR : color;
 
@@ -1552,7 +1574,10 @@ function fireBolt(color) {
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
 
     scene.add(mesh);
-    bolts.push({ mesh: mesh, direction: direction, life: BOLT.LIFE, volleyId: volleyCounter });
+    bolts.push({
+      mesh: mesh, direction: direction, life: BOLT.LIFE,
+      volleyId: volleyCounter, pyro: !!isPyro,
+    });
   }
 }
 
@@ -1795,6 +1820,14 @@ function updateBolts(dt) {
       if (isFirstOfVolley) lastDamagedVolley = bolt.volleyId;
 
       hitEnemy(struck, bolt.mesh.position, isFirstOfVolley);
+
+      // パイロ弾は着弾で燃焼片が付着し、敵の熱を跳ね上げる
+      if (bolt.pyro && isFirstOfVolley) {
+        struck.heat += PYRO.HEAT_ADD;
+        struck.burnLeft = PYRO.BURN_SEC;
+        struck.heatSig = Math.max(struck.heatSig, PYRO.MARK_SEC);
+        spawnDebris(bolt.mesh.position, 9, 0.2, 8);
+      }
       scene.remove(bolt.mesh);
       bolts.splice(i, 1);
       continue;   // この弾はもう無いので、次の弾へ
@@ -1847,6 +1880,11 @@ function createEnemy() {
     // 仕様書9.3「敵のHEATが探知手段(撃ちまくる敵ほどよく見える)」の初歩版。
     heatSig: 0,
 
+    // 熱(パイロ弾で上がる)。100超えで強制シャットダウン
+    heat: 0,
+    burnLeft: 0,       // パイロ弾で燃えている残り秒数
+    heatDown: 0,       // 熱で停止している残り秒数
+
     // ミサイルとフレア
     missileAmmo:  ENEMY_MISSILE.AMMO,
     missileTimer: ENEMY_MISSILE.INTERVAL * (0.4 + Math.random() * 0.6),
@@ -1870,6 +1908,31 @@ function setEnemyState(e, next) {
 function updateEnemyAI(e, dt) {
   e.stateTime += dt;
   e.heatSig = Math.max(e.heatSig - dt, 0);   // 熱はだんだん冷める
+
+  // --- 熱(パイロ弾)の処理 ---
+  if (e.burnLeft > 0) {
+    e.burnLeft -= dt;
+    e.heat += PYRO.BURN_RATE * dt;           // 燃えている間ずっと熱が入る
+    e.heatSig = Math.max(e.heatSig, 0.3);    // 燃えていると熱で丸見えになる
+  }
+  e.heat = Math.max(e.heat - ENEMY_HEAT.VENT * dt, 0);
+
+  // 強制シャットダウン中は何もできない(自機と同じ)
+  if (e.heatDown > 0) {
+    e.heatDown -= dt;
+    e.telegraph = 0;
+    e.missileTele = 0;
+    return;
+  }
+
+  if (e.heat >= ENEMY_HEAT.MAX) {
+    e.heat = ENEMY_HEAT.MAX;
+    e.heatDown = ENEMY_HEAT.SHUTDOWN_SEC;
+    e.telegraph = 0;
+    e.missileTele = 0;
+    onEnemyOverheat();                       // main.js:ログと音
+    return;
+  }
 
   // 自機へのベクトルと距離を求める(すべての判断のもとになる)
   const toPlayer = playerShip.position.clone().sub(e.group.position);
@@ -2065,6 +2128,20 @@ function updateEnemyGlow(e, dt) {
     b = Math.max(b, t * 0.15);
   }
 
+  // パイロ弾で燃えている間は赤熱する。熱で目立っていることが目で分かる
+  if (e.burnLeft > 0) {
+    const t = 0.35 + 0.25 * Math.sin(sceneTime * 9);   // ゆらめき
+    r = Math.max(r, t);
+    g = Math.max(g, t * 0.30);
+    b = Math.max(b, t * 0.05);
+  }
+
+  // 熱で停止している間は暗く点滅させる
+  if (e.heatDown > 0) {
+    const t = (Math.sin(sceneTime * 14) > 0) ? 0.30 : 0.05;
+    r = Math.max(r, t * 0.6); g = Math.max(g, t * 0.6); b = Math.max(b, t);
+  }
+
   // ミサイルの予告は白紫。銃の予告(オレンジ)と色で区別できるようにする
   if (e.missileTele > 0) {
     const t = 1 - e.missileTele / ENEMY_MISSILE.TELEGRAPH;
@@ -2151,6 +2228,7 @@ function currentEnemyState() {
 
   for (const e of enemies) {
     if (!e.alive) continue;
+    if (e.heatDown > 0) return 'OVERHEAT';     // 敵が熱で停止中 = 好機
     if (e.missileTele > 0) return 'MISSILE';   // いちばん危ない
     if (e.telegraph > 0) return 'FIRING';   // 撃たれる直前は最優先で知らせる
     const d = e.group.position.distanceTo(playerShip.position);
@@ -2159,6 +2237,17 @@ function currentEnemyState() {
 
   if (!nearest) return 'DOWN';
   return { approach: 'APPROACH', attack: 'ATTACK', evade: 'EVADE' }[nearest.state];
+}
+
+// いちばん近い敵の熱(0〜100)。計器に出して、パイロ弾の効きを見せる
+function nearestEnemyHeat() {
+  let best = null, bestD = Infinity;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const d = e.group.position.distanceTo(playerShip.position);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  return best ? Math.round(best.heat) : 0;
 }
 
 // 生きている敵の数(計器表示用)
@@ -2295,6 +2384,9 @@ function respawnEnemy(e) {
   setEnemyState(e, 'approach');
   e.fireTimer = AI.FIRE_INTERVAL;
   e.telegraph = 0;
+  e.heat = 0;
+  e.burnLeft = 0;
+  e.heatDown = 0;
   e.missileAmmo = ENEMY_MISSILE.AMMO;
   e.missileTimer = ENEMY_MISSILE.INTERVAL * (0.5 + Math.random() * 0.5);
   e.missileTele = 0;

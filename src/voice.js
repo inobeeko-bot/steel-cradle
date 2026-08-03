@@ -48,6 +48,7 @@ const VOICE = {
     MISSILE_AWAY:     { text: 'MISSILE AWAY.',   priority: 1, cooldown: 2 },
     NO_LOCK:          { text: 'NO LOCK.',        priority: 1, cooldown: 4 },
     FLARES_OUT:       { text: 'FLARES OUT.',     priority: 1, cooldown: 6 },
+    TARGET_OVERHEAT:  { text: 'TARGET OVERHEAT.', priority: 1, cooldown: 5 },
     FLARE_INEFFECTIVE:{ text: 'HEAT TOO HIGH.',  priority: 1, cooldown: 6 },
   },
 };
