@@ -389,10 +389,44 @@ const MISSILE = {
   OFFSET_Y: -0.5,
 };
 
+// ===================================================================
+// シーカー(ミサイルの目)の設定
+//
+// ミサイルは「ロックした相手を追いかける」のではなく、
+// 「シーカーの視野に入っている熱源のうち、いちばん強く見えるものへ向かう」。
+// 発射時のロックは、その相手を少しひいきする(LOCK_BIAS)だけの意味しか持たない。
+//
+// 見え方の強さは 熱量 ÷ 距離² で決める。実際の赤外線と同じ逆二乗の法則。
+// この1本の式から、狙って作らなくても次のことが全部出てくる:
+//   ・撒いたばかりのフレアは目の前にあるので、遠くの機体より強く見える
+//   ・自機の熱が高いと、フレアより本体のほうが強く見えて騙せない
+//   ・パイロ弾で燃えている機体は、狙っていなくてもミサイルを吸い寄せる
+//   ・味方の後ろに隠れると、味方のほうへ逸れることがある
+// ===================================================================
+const SEEKER = {
+  CONE:      1.05,   // シーカーの視野(進行方向からの半角・ラジアン)。約60度
+  RANGE:      160,   // 熱源を見つけられる距離
+  MIN_DIST:     7,   // 距離の下限。近すぎる熱源で信号が跳ね上がるのを防ぐ
+  BASE_HEAT:   26,   // 機体の基礎熱源。HEATが0でもエンジンはこれだけ熱い
+  HEAT_SCALE: 3.4,   // 機体のHEAT(0〜100)を熱源にどれだけ足すか
+  // フレア1個ぶんの熱源(燃え尽きるにつれて減る)。
+  // ここが「自機の熱がどこまでならフレアが効くか」を決める。
+  // 逆二乗なので終盤は自機のほうが近くなる ― その不利を覆せるだけの熱量が要る。
+  // 800 で、自機の熱75%あたりまで効き、80%を超えると本体のほうが強く見える。
+  FLARE_HEAT: 800,
+  LOCK_BIAS:  1.5,   // 発射時にロックした相手へのひいき。
+                     // これが無いと、少し熱い物が視野をよぎるたびに乗り換えてしまう
+};
+
 let missiles = [];
 let missileGeometry = null;        // 自機のミサイルの見本(これを複製して撃つ)
 let enemyMissileTemplate = null;   // 敵のミサイルの見本(色だけ違う)
 let missileFlameMaterial = null;
+
+// 自機の今の熱。main.js が毎コマ setPlayerHeat() で渡してくる。
+// シーカーが自機を熱源として評価するのに使う。
+let playerHeatNow = 0;
+function setPlayerHeat(h) { playerHeatNow = h; }
 
 // --- フレア(武器仕様書4章:回避装備はこれ一本)------------------------
 // 熱源のデコイ。
@@ -406,11 +440,19 @@ const FLARE = {
   // 射出の勢い。ここが弱いと自機のすぐ後ろに留まってしまい、
   // ミサイルがフレアへ向かう途中で自機に当たってしまう。
   // 実際のフレアも「勢いよく撃ち出す」もので、その理屈とも合う。
-  SPEED:       38,    // 撒かれたあと後方へ飛ぶ速さ
+  // 射出速度と減速。ここが弱いとフレアが自機から十分に離れず、
+  // ミサイルがフレアへ向かう途中で自機の当たり判定(5.2)に触れてしまう。
+  // 迎撃までの約0.7秒で、当たり判定より十分に大きく離れる必要がある。
+  SPEED:       58,    // 撒かれたあと飛ぶ速さ
   SPREAD:      16,    // 左右上下にばらける量
-  DRAG:       0.25,   // 減速の強さ。小さいほど遠くまで離れる
-  DECOY_RANGE: 75,    // この距離内の敵をだませる
-  HEAT_LIMIT:  70,    // 自機の熱がこれを超えると、もうだませない
+  DRAG:       0.10,   // 減速の強さ。小さいほど遠くまで離れる
+  DECOY_RANGE: 75,    // この距離内の敵パイロットの狙いを外せる
+  // 自機の熱がこれを超えると、敵パイロットの目はもうごまかせない。
+  // ※ ミサイルのほうは、この線引きを使わない。
+  //    熱源としての見え方(SEEKER)で決まる ― 結果として実測で
+  //    熱65%までは逸らせ、75%を超えると本体のほうが強く見えて効かなくなる。
+  //    計器の警告表示にはこの値を目安として使っている。
+  HEAT_LIMIT:  70,
   CONFUSE_SEC: 3.5,   // だませた敵が狙いを外している秒数
   COLOR:  0xfff0b0,
 };
@@ -502,7 +544,7 @@ const ENEMY_MISSILE = {
   TELEGRAPH:   1.1,    // 発射前に光って知らせる時間。銃(0.5)より長い
   RANGE:        95,    // この距離内でだけ撃ってくる
   MIN_RANGE:    22,    // 近すぎると撃たない
-  SHIELD_DAMAGE: 40,   // 命中時にシールドを削る量(銃の15より重い)
+  SHIELD_DAMAGE: 60,   // 命中時にシールドを削る量(銃の15よりはるかに重い)
 
   // 敵がフレアを撒く条件
   FLARE_AMMO:    3,    // 1機あたりの搭載数
@@ -2008,32 +2050,102 @@ function fireMissile() {
   missiles.push({
     mesh: mesh,
     direction: direction,
-    target: aimTarget,     // 発射時にロックしていた敵を覚えておく
+    target: aimTarget,     // 発射時にロックしていた敵。シーカーが少しひいきする
+    owner: 'player',       // 撃った本人。自分の発射母機には吸い付かない
     life: MISSILE.LIFE,
   });
   return true;
 }
 
-// ミサイルを進め、目標へ向きを曲げ、当たったら爆発させる
+// 機体の熱量を熱源の強さに直す。HEATが0でもエンジンぶんは必ず出ている
+function shipHeatValue(heatPct) {
+  return SEEKER.BASE_HEAT + Math.max(heatPct || 0, 0) * SEEKER.HEAT_SCALE;
+}
+
+// ===================================================================
+// シーカーが今いちばん強く見ている熱源を選ぶ
+//
+// 返す値:{ pos, isFlare } … 向かうべき位置と、それがフレアかどうか
+// 見つからなければ null(そのまま真っすぐ飛ぶ)
+// ===================================================================
+function seekerAim(m) {
+  let bestPos = null;
+  let bestSignal = 0;
+  let bestIsFlare = false;
+
+  // 熱源を1つ評価する。
+  // locked = 発射時にロックしていた相手か(ひいきの対象)
+  const consider = (pos, heatValue, locked, isFlare) => {
+    const to = pos.clone().sub(m.mesh.position);
+    const dist = to.length();
+    if (dist > SEEKER.RANGE) return;
+
+    // シーカーの視野の内側か。進行方向との角度で判定する。
+    // 「軌道上にある熱源だけが見える」という条件はここが担っている。
+    const cos = to.dot(m.direction) / Math.max(dist, 1e-6);
+    if (cos < Math.cos(SEEKER.CONE)) return;
+
+    // 逆二乗。近いほど強く見える
+    const d = Math.max(dist, SEEKER.MIN_DIST);
+    let signal = heatValue / (d * d);
+    if (locked) signal *= SEEKER.LOCK_BIAS;
+
+    if (signal > bestSignal) { bestSignal = signal; bestPos = pos; bestIsFlare = isFlare; }
+  };
+
+  // --- フレア。燃え尽きるにつれて熱が落ちていく ---
+  for (const f of flares) {
+    const left = Math.max(f.life / f.maxLife, 0);
+    consider(f.mesh.position, SEEKER.FLARE_HEAT * left, false, true);
+  }
+
+  // --- 機体 ---
+  //
+  // ここに1つだけ規則を置く:
+  //   「狙っている相手より熱い機体」でなければ、乗り換えの候補にならない。
+  //
+  // これが無いと、同じ熱さでも近いというだけで別の機体に吸い寄せられてしまう
+  // (逆二乗なので、近いほうが必ず強く見えるため)。
+  // 狙いを外させるのは「熱さ」であって「近さ」ではない、という筋を通している。
+  // フレアはこの規則の外 ― もともと機体より桁違いに熱いので、常に候補になる。
+  const lockedHeat = lockedHeatValue(m);
+
+  // 撃った本人だけは対象から外す。実物のシーカーも発射母機には反応しない。
+  if (m.owner !== 'player') {
+    const v = shipHeatValue(playerHeatNow);
+    if (m.fromEnemy || v > lockedHeat) consider(playerShip.position, v, !!m.fromEnemy, false);
+  }
+  for (const e of enemies) {
+    if (!e.alive || e === m.owner) continue;
+    const v = shipHeatValue(e.heat);
+    if (e === m.target || v > lockedHeat) consider(e.group.position, v, e === m.target, false);
+  }
+
+  return bestPos ? { pos: bestPos, isFlare: bestIsFlare } : null;
+}
+
+// このミサイルが今狙っている相手の熱量。乗り換えの基準になる
+function lockedHeatValue(m) {
+  if (m.fromEnemy) return shipHeatValue(playerHeatNow);
+  if (m.target && m.target.alive) return shipHeatValue(m.target.heat);
+  return 0;   // 目標を失っている = どんな熱源でも乗り換えてよい
+}
+
+// ミサイルを進め、熱源へ向きを曲げ、当たったら爆発させる
 function updateMissiles(dt) {
   for (let i = missiles.length - 1; i >= 0; i--) {
     const m = missiles[i];
 
     // --- 誘導 ---
-    // 目標へのまっすぐな向きへ、一定の速さでしか曲がれない。
-    // 曲がる速さに上限があるから、急旋回で振り切る余地が生まれる。
-    // フレアに引っかかっていれば、そちらへ向かう。
-    let aimPos = null;
-    if (m.decoy) {
-      aimPos = m.decoy.position;
-    } else if (m.fromEnemy) {
-      aimPos = playerShip.position;                       // 敵のミサイルは自機を狙う
-    } else if (m.target && m.target.alive) {
-      aimPos = m.target.group.position;
-    }
+    // 毎コマ、シーカーがいちばん強く見えている熱源を選び直す。
+    // 曲がる速さには上限があるので、急に乗り換えても即座には向き直れない。
+    // 「フレアに引っかかる」も「別の機体に吸い寄せられる」も、
+    // すべてこの1つの仕組みから出てくる。
+    const seek = seekerAim(m);
+    m.decoyed = !!(seek && seek.isFlare);   // レーダー表示用
 
-    if (aimPos) {
-      const want = aimPos.clone().sub(m.mesh.position).normalize();
+    if (seek) {
+      const want = seek.pos.clone().sub(m.mesh.position).normalize();
       // lerp で少しずつ向きを寄せ、正規化して長さを戻す
       m.direction.lerp(want, Math.min(MISSILE.TURN_RATE * dt, 1)).normalize();
     }
@@ -2121,15 +2233,20 @@ function spawnFlareAt(position, quaternion) {
     const mesh = new THREE.Mesh(flareGeometry, mat);
     mesh.position.copy(position);
 
-    // ★ 真後ろではなく「横下」へ撃ち出すのが肝。
-    // 真後ろへ流すと、追ってくるミサイルから見て
-    // 「自機 → フレア」が一直線に並んでしまい、
-    // フレアへ向かう途中で自機に当たってしまう。
-    // 横へ飛ばせば、ミサイルは自機から逸れた方向へ曲がっていく。
+    // ★ 撒く向きがこの装備の成否を決める。
+    //
+    // 現実のフレアは後方へ落ちるが、それをそのまま真似すると効かない。
+    // ミサイルは前から来るので、後ろへ落としたフレアへ向かわせると
+    // 「ミサイル → 自機 → フレア」の順に並び、フレアへ着く前に自機に当たる。
+    // 自機の当たり判定(5.2)より内側をかすめてしまうのでは意味がない。
+    //
+    // そこで「横へ大きく、やや前へ」撃ち出す。こうするとフレアが
+    // ミサイルと自機の間の斜め前に置かれ、ミサイルは自機に届く前に
+    // そちらへ食いつく ― 迎え撃つように撒く、という形になる。
     const sideSign = (i % 2 === 0) ? 1 : -1;
-    const dir = right.clone().multiplyScalar(sideSign * (0.7 + Math.random() * 0.5))
-      .addScaledVector(down, 0.35 + Math.random() * 0.4)
-      .addScaledVector(back, 0.30)
+    const dir = right.clone().multiplyScalar(sideSign * (0.95 + Math.random() * 0.5))
+      .addScaledVector(down, 0.20 + Math.random() * 0.35)
+      .addScaledVector(back, -0.40)      // マイナス = 前方へ
       .normalize();
 
     const vel = dir.multiplyScalar(FLARE.SPEED * (0.85 + Math.random() * 0.3));
@@ -2144,26 +2261,32 @@ function spawnFlareAt(position, quaternion) {
 function dropFlare(playerHeat) {
   if (!sceneReady) return { ok: false, fooled: 0 };
 
-  const dropped = spawnFlareAt(playerShip.position, playerShip.quaternion);
+  spawnFlareAt(playerShip.position, playerShip.quaternion);
 
-  // --- 効果:自機が熱すぎると誰もだませない ---
-  if (playerHeat >= FLARE.HEAT_LIMIT) return { ok: true, fooled: 0 };
-
+  // --- ミサイルを逸らせたか ---
+  // ここで「このミサイルをだます」と決めるのではない。
+  // フレアは熱源として空間に置かれるだけで、乗り換えるかどうかは
+  // 各ミサイルのシーカーが毎コマ自分で判断する。
+  // ここでは撒いた直後の結果を数えて、ログに出すためだけに調べている。
   let fooled = 0;
-
-  // 飛んできている敵のミサイルの目標をフレアへ移す(本来用途)
   for (const m of missiles) {
-    if (m.fromEnemy && !m.decoy) { m.decoy = dropped.mesh; fooled++; }
+    if (!m.fromEnemy) continue;
+    const seek = seekerAim(m);
+    if (seek && seek.isFlare) fooled++;
   }
 
-  // 狙いをつけている敵の照準を外す
-  for (const e of enemies) {
-    if (!e.alive) continue;
-    if (e.group.position.distanceTo(playerShip.position) > FLARE.DECOY_RANGE) continue;
-    e.telegraph = 0;                       // 発射予告を中断させる
-    e.fireTimer = FLARE.CONFUSE_SEC;       // しばらく撃てなくなる
-    setEnemyState(e, 'approach');          // 攻撃態勢を解く
-    fooled++;
+  // --- 敵パイロットの目もくらませる ---
+  // こちらはミサイルではなく人(AI)への効果なので、従来どおり距離と熱で判定する。
+  // 自機が熱すぎると、偽の熱源として通用しない。
+  if (playerHeat < FLARE.HEAT_LIMIT) {
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (e.group.position.distanceTo(playerShip.position) > FLARE.DECOY_RANGE) continue;
+      e.telegraph = 0;                       // 発射予告を中断させる
+      e.fireTimer = FLARE.CONFUSE_SEC;       // しばらく撃てなくなる
+      setEnemyState(e, 'approach');          // 攻撃態勢を解く
+      fooled++;
+    }
   }
 
   return { ok: true, fooled: fooled };
@@ -2736,7 +2859,8 @@ function fireEnemyMissile(e) {
     mesh: mesh,
     direction: direction,
     target: null,
-    fromEnemy: true,     // ★ 自機を狙うミサイル
+    fromEnemy: true,     // ★ 自機を狙うミサイル(シーカーが自機をひいきする)
+    owner: e,            // 撃った敵機。自分自身には吸い付かない
     life: MISSILE.LIFE,
   });
 }
@@ -2744,8 +2868,9 @@ function fireEnemyMissile(e) {
 // ===================================================================
 // 敵のフレア:自機のミサイルが迫ってきたら撒く
 //
-// 自機のフレアと同じ理屈で、敵も「熱いと騙せない」。
-// 撃った直後(heatSig が高い)の敵は自分の熱で見つかってしまう。
+// 自機と同じで、敵も「熱源を空間に置く」だけ。
+// 逸れるかどうかを決めるのはミサイルのシーカーであって、こちらではない。
+// パイロ弾で燃えている敵は自分の熱が強すぎて、撒いても騙せない。
 // ===================================================================
 function updateEnemyFlareLogic(e, dt) {
   if (e.flareCool > 0) e.flareCool -= dt;
@@ -2753,18 +2878,18 @@ function updateEnemyFlareLogic(e, dt) {
 
   // 自分を狙っている自機のミサイルを探す
   for (const m of missiles) {
-    if (m.fromEnemy || m.decoy) continue;
+    if (m.fromEnemy || m.decoyed) continue;
     if (m.target !== e) continue;
     if (m.mesh.position.distanceTo(e.group.position) > ENEMY_MISSILE.FLARE_RANGE) continue;
 
     e.flareAmmo -= 1;
     e.flareCool = ENEMY_MISSILE.FLARE_COOL;
 
-    // 撃った直後で熱い敵は、自分の熱のほうが強くて騙せない
-    const tooHot = (e.heatSig > SENSOR.HEAT_LINGER * 0.8);
+    spawnFlareAt(e.group.position, e.group.quaternion);
 
-    const decoy = spawnFlareAt(e.group.position, e.group.quaternion);
-    if (!tooHot && decoy) m.decoy = decoy.mesh;
+    // 撒いた直後にミサイルが乗り換えたかどうかを、そのまま結果として使う
+    const seek = seekerAim(m);
+    const tooHot = !(seek && seek.isFlare);
 
     onEnemyFlare(tooHot);   // main.js:ログと音
     break;
@@ -3038,7 +3163,7 @@ function missileContacts(sensorPercent) {
       localY: local.y,
       localZ: local.z,
       dist: dist,
-      decoyed: !!m.decoy,            // フレアに引っかかっているか
+      decoyed: !!m.decoyed,          // 今フレアのほうを見ているか
     });
   }
 

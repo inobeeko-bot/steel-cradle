@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-42 missile/boom';
+const BUILD = 'p1-43 ir seeker';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -1760,6 +1760,7 @@ function tick(now) {
   updateShake(dt);                  // 被弾の揺れ(カメラを置く前に決めておく)
   // エンジン系が壊れていると推力を制御できず、最低出力に張り付く
   updateFlight(dt, isBroken('engine') ? 0 : power.engine);
+  setPlayerHeat(heat);              // 自機の熱をミサイルのシーカーへ伝える
   updateAimFeedback(dt);            // 照準の捕捉判定と、捕捉音
   updateVoiceAlerts(dt);            // コックピット音声
   updateScene(dt, elapsed);         // 敵機・弾・破片の更新と描画(scene.js)
