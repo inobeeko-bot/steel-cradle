@@ -15,7 +15,6 @@ let scene    = null;   // 空間(物を置く箱)
 let camera   = null;   // カメラ(＝自機のコックピットからの視点)
 
 let stars = null;      // 星空
-let enemy = null;      // 敵機1機
 
 let sceneReady = false;   // 3Dの準備ができたか
 
@@ -111,9 +110,6 @@ const ENEMY = {
   EDGE_COLOR: 0xff9d84,   // 輪郭線の色(黒背景で線が見えるよう本体より明るく)
   DISTANCE:       -24,    // 自機からの距離(マイナス=画面の奥)
   SCALE:          1.4,    // 機体全体の大きさ
-  SWING_RANGE:      7,    // 左右に振れる幅
-  SWING_SPEED:   0.35,    // 左右移動の速さ
-  BANK:          0.18,    // 旋回時に機体を傾ける量(大きすぎると真横を向いて形が潰れる)
 
   MAX_HP:           5,    // 何発で撃墜されるか
   HIT_RADIUS:     2.8,    // 当たり判定の半径。機体を包む球の大きさ
@@ -121,19 +117,58 @@ const ENEMY = {
   RESPAWN_SEC:    3.0,    // 撃墜されてから次の機体が現れるまでの秒数
 };
 
-// --- 敵機の状態 -----------------------------------------------------
-let enemyHp        = ENEMY.MAX_HP;
-let enemyAlive     = true;
-let respawnLeft    = 0;      // リスポーンまでの残り秒数
-let hitFlash       = 0;      // 被弾時に白く光る残り時間
-let enemyMaterials = [];     // 点滅させるために材質だけ集めておく
+// --- 敵AIの設定(3状態:接近 / 攻撃 / 回避)-------------------------
+const AI = {
+  APPROACH_SPEED: 15,    // 接近しているときの移動速度
+  ATTACK_SPEED:   11,    // 攻撃中の移動速度(横へ回り込む)
+  EVADE_SPEED:    24,    // 逃げるときの移動速度(いちばん速い)
 
-// リスポーンのたびに変える位置の情報。
-// 敵機は空間に固定された点のまわりを往復する(自機を追いかけては来ない)。
-let enemySwingPhase = 0;                 // 左右往復の位相(ずらすと違う位置から現れる)
-let enemyBaseX      = 0;                 // 往復の中心(左右)
-let enemyBaseY      = 0;                 // 高さ
-let enemyBaseZ      = ENEMY.DISTANCE;    // 奥行き
+  ATTACK_RANGE:   60,    // この距離まで詰めたら「攻撃」へ
+  BREAK_RANGE:    95,    // これより離されたら「接近」へ戻る
+  TOO_CLOSE:      22,    // これより近いと下がる(自機をすり抜けないため)
+
+  TURN_RATE:     2.2,    // 機首を自機へ向ける速さ
+  FIRE_INTERVAL: 2.4,    // 攻撃中に何秒おきに撃つか
+  TELEGRAPH:     0.5,    // 発射の何秒前から光り始めるか(避ける余地)
+  EVADE_SEC:     3.0,    // 被弾後に逃げ回る秒数
+};
+
+// --- 敵の弾の設定 ---------------------------------------------------
+const ENEMY_BOLT = {
+  SPEED:      60,        // 自機の弾(90)の2/3。見てから避けられるが、ぬるくない速さ
+  LIFE:      3.0,        // 射程 = 60 × 3.0 = 180(速くしたぶん寿命を縮めて射程は据え置き)
+  COLOR: 0xff6a4d,       // 敵の兵装色(赤)。自機の緑と混ざらないようにする
+  OFFSET_X:  1.2,        // 発射口の左右位置
+  OFFSET_Z: -2.0,        // 発射口の前後位置(機首側)
+  HIT_RADIUS: 2.2,       // 自機の当たり判定の半径
+};
+
+// --- 敵機の管理 -----------------------------------------------------
+// 常に2機を保つ(仕様:撃墜されるたびリスポーンして1〜2機いる状態を維持)。
+// 機体を作り直すと重いので、2機ぶんを最初に作って「生きている/死んでいる」を
+// 切り替えて使い回す。
+const ENEMY_COUNT = 2;
+
+// 1機ぶんの情報をまとめたオブジェクトの配列。
+// 敵が1機だけのときは変数を並べれば足りたが、複数になると
+// 「1機ぶんの情報のかたまり」を作って配列で持つほうがはるかに見通しがよい。
+let enemies = [];
+
+let enemyBolts = [];             // 敵が撃った弾のリスト
+let enemyBoltGeometry = null;
+let enemyBoltMaterial = null;
+
+// 敵も左右2条で撃つので、自機の武器と同じく「1回の発射=1発ぶん」として数える。
+// 2本目は火花だけ出してダメージにはしない。
+let enemyVolleyCounter = 0;
+let lastPlayerHitVolley = -1;
+
+// 被弾時のカメラの揺れ。main.js が毎コマ setCameraShake() で渡してくる
+let camShakeX = 0;
+let camShakeY = 0;
+
+// ミッション失敗中は戦闘を止める(敵AIと敵弾の判定を休ませる)
+let combatFrozen = false;
 
 // --- 破片(デブリ)の設定 -------------------------------------------
 const DEBRIS = {
@@ -210,17 +245,13 @@ function initScene() {
 
   shipVelocity = new THREE.Vector3(0, 0, 0);
 
-  // --- 敵機 ---
-  enemy = createEnemyFighter();
-  enemy.position.set(0, 0, ENEMY.DISTANCE);
-  scene.add(enemy);
-
-  // 被弾時に白く光らせるため、機体を構成する材質だけを集めておく。
-  // traverse = そのグループの中身を隅々まで1つずつ見て回る命令。
-  // isMesh で立体だけを選ぶ(輪郭線は LineSegments なので対象外)。
-  enemy.traverse((obj) => {
-    if (obj.isMesh) enemyMaterials.push(obj.material);
-  });
+  // --- 敵機(2機)---
+  for (let i = 0; i < ENEMY_COUNT; i++) {
+    const e = createEnemy();
+    // 最初は自機の前方に少しずらして配置する
+    e.group.position.set((i - 0.5) * 26, 0, ENEMY.DISTANCE - i * 14);
+    enemies.push(e);
+  }
 
   // 画面サイズが変わったときの対応
   window.addEventListener('resize', onResize);
@@ -331,11 +362,15 @@ function createFlatPart(geometry, color, edgeColor) {
 function createEnemyFighter() {
   const ship = new THREE.Group();
 
+  // ※ 機首は自機と同じ「-Z が前」に揃えてある。
+  //    こうしておくと Three.js の lookAt(相手の位置) がそのまま
+  //    「相手の方へ機首を向ける」になり、AIの向き制御が素直に書ける。
+
   // --- 胴体 ---
   // ConeGeometry(底面の半径, 高さ, 何角形にするか)。4 = 四角錐 = かなり角ばる
   const bodyGeo = new THREE.ConeGeometry(0.75, 3.0, 4);
-  // 円錐は初期状態で上(+Y)を向いているので、90度倒して手前(+Z=自機の方)へ向ける
-  bodyGeo.rotateX(Math.PI / 2);
+  // 円錐は初期状態で上(+Y)を向いているので、90度倒して前(-Z)へ向ける
+  bodyGeo.rotateX(-Math.PI / 2);
   ship.add(createFlatPart(bodyGeo, ENEMY.BODY_COLOR, ENEMY.EDGE_COLOR));
 
   // --- 主翼(左右)---
@@ -344,16 +379,16 @@ function createEnemyFighter() {
   for (const side of [-1, 1]) {          // -1=左 / +1=右 をまとめて作る
     const wingGeo = new THREE.BoxGeometry(1.8, 0.16, 1.7);
     const wing = createFlatPart(wingGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
-    wing.position.set(side * 1.3, -0.1, -0.5);
+    wing.position.set(side * 1.3, -0.1, 0.5);
     wing.rotation.z = side * 0.20;       // 少し上に反らせて「への字」の翼にする
-    wing.rotation.y = side * -0.16;      // 後退角(翼を後ろへ倒す)
+    wing.rotation.y = side * 0.16;       // 後退角(翼を後ろへ倒す)
     ship.add(wing);
   }
 
   // --- 垂直尾翼 ---
   const finGeo = new THREE.BoxGeometry(0.14, 1.1, 1.0);
   const fin = createFlatPart(finGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
-  fin.position.set(0, 0.6, -1.1);
+  fin.position.set(0, 0.6, 1.1);
   ship.add(fin);
 
   // --- エンジンノズル(左右)---
@@ -362,14 +397,14 @@ function createEnemyFighter() {
     const nozzleGeo = new THREE.CylinderGeometry(0.3, 0.36, 1.0, 5);
     nozzleGeo.rotateX(Math.PI / 2);      // 円柱を寝かせて前後方向にする
     const nozzle = createFlatPart(nozzleGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
-    nozzle.position.set(side * 0.62, -0.05, -1.3);
+    nozzle.position.set(side * 0.62, -0.05, 1.3);
     ship.add(nozzle);
   }
 
   // --- コックピット(八面体。角ばったキャノピー)---
   const canopyGeo = new THREE.OctahedronGeometry(0.42);
   const canopy = createFlatPart(canopyGeo, ENEMY.CANOPY_COLOR, ENEMY.EDGE_COLOR);
-  canopy.position.set(0, 0.36, 0.15);
+  canopy.position.set(0, 0.36, -0.15);
   canopy.scale.set(1, 0.7, 1.6);        // 前後に伸ばして流線形っぽく
   ship.add(canopy);
 
@@ -508,6 +543,13 @@ function updateFlight(dt, enginePercent) {
   camera.position.copy(playerShip.position).add(camOffset);
   camera.quaternion.copy(playerShip.quaternion);   // カメラも機首と同じ方向を向く
 
+  // 被弾の揺れ。カメラから見た「右」と「上」へずらす(どの向きを向いていても同じ揺れ方になる)
+  if (camShakeX !== 0 || camShakeY !== 0) {
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    camera.position.addScaledVector(right, camShakeX).addScaledVector(up, camShakeY);
+  }
+
   // --- 星空を自機について来させる ---
   // 星は「遠くの背景」なので、置き去りにせず常に自機を中心に置く。
   // こうすると、どこまで飛んでも星空の外に出てしまうことがない。
@@ -519,6 +561,43 @@ function updateFlight(dt, enginePercent) {
 // ドリフトの入切。main.js が Shift の押し具合を見て毎コマ呼ぶ
 function setDrift(on) {
   drifting = on;
+}
+
+// 被弾時のカメラの揺れ幅を受け取る
+function setCameraShake(x, y) {
+  camShakeX = x;
+  camShakeY = y;
+}
+
+// ミッション失敗中の戦闘停止
+function setCombatFrozen(on) {
+  combatFrozen = on;
+}
+
+// ===================================================================
+// 再出撃:自機と敵を初期状態に戻す
+// ===================================================================
+function resetFlight() {
+  if (!sceneReady) return;
+
+  // 自機を原点・静止・正面向きへ
+  playerShip.position.set(0, 0, 0);
+  shipVelocity.set(0, 0, 0);
+  viewPitch = 0;
+  viewYaw = 0;
+  visualRoll = 0;
+  drifting = false;
+
+  // 飛んでいるものをすべて片付ける
+  for (const b of bolts)      scene.remove(b.mesh);
+  for (const b of enemyBolts) scene.remove(b.mesh);
+  for (const d of debris)   { scene.remove(d.mesh); d.mesh.material.dispose(); }
+  bolts.length = 0;
+  enemyBolts.length = 0;
+  debris.length = 0;
+
+  // 敵を全機復活させて前方に置き直す
+  for (const e of enemies) respawnEnemy(e);
 }
 
 // エンジンの電力配分(0〜100%)から速度を決める
@@ -642,12 +721,19 @@ function updateBolts(dt) {
     // 「敵機の中心から一定の距離より近づいたら当たり」という球の判定。
     // 面と面で正確に判定する方法もあるが、高速な弾には重すぎるうえ、
     // この距離感のゲームでは球で十分に自然に見える。
-    if (enemyAlive && bolt.mesh.position.distanceTo(enemy.position) < ENEMY.HIT_RADIUS) {
+    // 敵が複数いるので、生きている全機と突き合わせる。
+    let struck = null;
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (bolt.mesh.position.distanceTo(e.group.position) < ENEMY.HIT_RADIUS) { struck = e; break; }
+    }
+
+    if (struck) {
       // 同じ発射の2本目なら、光と破片だけ出してHPは減らさない
       const isFirstOfVolley = (bolt.volleyId !== lastDamagedVolley);
       if (isFirstOfVolley) lastDamagedVolley = bolt.volleyId;
 
-      hitEnemy(bolt.mesh.position, isFirstOfVolley);
+      hitEnemy(struck, bolt.mesh.position, isFirstOfVolley);
       scene.remove(bolt.mesh);
       bolts.splice(i, 1);
       continue;   // この弾はもう無いので、次の弾へ
@@ -661,62 +747,299 @@ function updateBolts(dt) {
 }
 
 // ===================================================================
+// 敵AI ― 3つの状態を行き来する
+//
+//   接近(approach) … 自機との距離を詰める
+//   攻撃(attack)   … 一定距離を保ちつつ、予告→発射をくり返す
+//   回避(evade)    … 被弾したら数秒ランダムな向きへ逃げ、また接近へ戻る
+//
+// 「状態」を1つの文字列で持ち、状態ごとに「何をするか」を分けて書くのが
+// いちばん素直なAIの作り方。状態が増えても同じ形で足していける。
+// ===================================================================
+// 敵機を1機ぶん作る。見た目・材質・AIの状態をひとまとめにして返す
+function createEnemy() {
+  const group = createEnemyFighter();
+  scene.add(group);
+
+  // 被弾時に白く光らせるため、機体を構成する材質だけを集めておく。
+  // traverse = そのグループの中身を隅々まで1つずつ見て回る命令。
+  // isMesh で立体だけを選ぶ(輪郭線は LineSegments なので対象外)。
+  const materials = [];
+  group.traverse((obj) => { if (obj.isMesh) materials.push(obj.material); });
+
+  return {
+    group: group,
+    materials: materials,
+    hp: ENEMY.MAX_HP,
+    alive: true,
+    respawnLeft: 0,      // リスポーンまでの残り秒数
+    hitFlash: 0,         // 被弾時に白く光る残り時間
+
+    // AIの状態。'approach'(接近) / 'attack'(攻撃) / 'evade'(回避)の3つ
+    state: 'approach',
+    stateTime: 0,        // その状態になってからの経過秒
+    fireTimer: AI.FIRE_INTERVAL,   // 次の発射までの残り秒
+    telegraph: 0,        // 発射予告(光っている)の残り秒。0 なら予告していない
+    evadeDir: new THREE.Vector3(1, 0, 0),
+  };
+}
+
+function setEnemyState(e, next) {
+  e.state = next;
+  e.stateTime = 0;
+
+  if (next === 'evade') {
+    // 逃げる向きをランダムに決める(毎回違う方向へ散る)
+    e.evadeDir.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1).normalize();
+    e.telegraph = 0;   // 逃げる間は撃たない。予告も消す
+  }
+}
+
+function updateEnemyAI(e, dt) {
+  e.stateTime += dt;
+
+  // 自機へのベクトルと距離を求める(すべての判断のもとになる)
+  const toPlayer = playerShip.position.clone().sub(e.group.position);
+  const distance = toPlayer.length();
+  const toPlayerDir = toPlayer.clone().normalize();
+
+  // --- 状態の切り替え ---
+  if (e.state === 'approach' && distance < AI.ATTACK_RANGE) {
+    setEnemyState(e, 'attack');
+  } else if (e.state === 'attack' && distance > AI.BREAK_RANGE) {
+    setEnemyState(e, 'approach');
+  } else if (e.state === 'evade' && e.stateTime > AI.EVADE_SEC) {
+    setEnemyState(e, 'approach');
+  }
+
+  // --- 状態ごとの移動 ---
+  const move = new THREE.Vector3();
+  let speed = 0;
+
+  if (e.state === 'evade') {
+    move.copy(e.evadeDir);
+    speed = AI.EVADE_SPEED;
+
+  } else if (e.state === 'attack') {
+    if (distance < AI.TOO_CLOSE) {
+      move.copy(toPlayerDir).negate();     // 近すぎるので下がる
+    } else {
+      // 自機の周りを横へ回り込む。
+      // cross(外積)= 2つの向きの両方に直角な向き。これで「横」が求まる。
+      move.copy(toPlayerDir).cross(new THREE.Vector3(0, 1, 0)).normalize();
+    }
+    speed = AI.ATTACK_SPEED;
+
+  } else {   // approach
+    move.copy(toPlayerDir);
+    speed = AI.APPROACH_SPEED;
+  }
+
+  e.group.position.addScaledVector(move, speed * dt);
+
+  // --- 機首を自機へ向ける ---
+  // Matrix4.lookAt は「-Z が相手を向く」向きを作る。敵機の機首も -Z なのでそのまま使える。
+  // slerp = 回転をなめらかにつなぐ命令。いきなり向くとロボットのようになる。
+  const lookMatrix = new THREE.Matrix4().lookAt(
+    e.group.position, playerShip.position, new THREE.Vector3(0, 1, 0)
+  );
+  const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
+  e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-AI.TURN_RATE * dt));
+
+  // --- 攻撃状態のときだけ、予告 → 発射をくり返す ---
+  if (e.state === 'attack') {
+    if (e.telegraph > 0) {
+      // 予告中。時間が来たら撃つ
+      e.telegraph -= dt;
+      if (e.telegraph <= 0) {
+        e.telegraph = 0;
+        fireEnemyBolt(e);
+        e.fireTimer = AI.FIRE_INTERVAL;
+      }
+    } else {
+      e.fireTimer -= dt;
+      if (e.fireTimer <= 0) e.telegraph = AI.TELEGRAPH;   // 予告開始(光り始める)
+    }
+  }
+}
+
+// ===================================================================
+// 敵の発光をまとめて更新する
+// 「被弾の白い点滅」と「発射予告のオレンジの光」の2つがあるので、
+// 強いほうを採用して1回で塗る(別々に書くと上書きし合って消える)
+// ===================================================================
+function updateEnemyGlow(e, dt) {
+  let r = 0, g = 0, b = 0;
+
+  if (e.hitFlash > 0) {
+    e.hitFlash = Math.max(e.hitFlash - dt, 0);
+    const w = e.hitFlash / ENEMY.FLASH_SEC;   // 1 → 0。白
+    r = w; g = w; b = w;
+  }
+
+  if (e.telegraph > 0) {
+    // 予告は「発射が近づくほど明るくなる」ようにする = 溜めている感じが出る
+    const t = 1 - e.telegraph / AI.TELEGRAPH;   // 0 → 1
+    r = Math.max(r, t);
+    g = Math.max(g, t * 0.45);   // オレンジ寄りの色
+    b = Math.max(b, t * 0.15);
+  }
+
+  for (const material of e.materials) material.emissive.setRGB(r, g, b);
+}
+
+// ===================================================================
+// 敵の発射
+// 自機の「今いる位置」を狙う(先読みしない)。
+// 先読みさせると当たりすぎて避けられなくなるため、あえて素直に撃たせる。
+// ===================================================================
+function fireEnemyBolt(e) {
+  if (!enemyBoltGeometry) {
+    enemyBoltGeometry = new THREE.BoxGeometry(0.2, 0.2, 2.4);
+    enemyBoltMaterial = new THREE.MeshBasicMaterial({ color: ENEMY_BOLT.COLOR });
+  }
+
+  enemyVolleyCounter += 1;   // この発射の通し番号
+
+  for (const side of [-1, 1]) {
+    const mesh = new THREE.Mesh(enemyBoltGeometry, enemyBoltMaterial);
+
+    // 発射口(敵機の翼)の位置
+    const offset = new THREE.Vector3(side * ENEMY_BOLT.OFFSET_X, 0, ENEMY_BOLT.OFFSET_Z);
+    offset.applyQuaternion(e.group.quaternion);
+    mesh.position.copy(e.group.position).add(offset);
+
+    // 発射口から自機へ向かう向き
+    const direction = playerShip.position.clone().sub(mesh.position).normalize();
+    // 弾の見た目も進行方向に合わせて倒す
+    mesh.quaternion.setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), direction.clone().negate(), new THREE.Vector3(0, 1, 0))
+    );
+
+    scene.add(mesh);
+    enemyBolts.push({
+      mesh: mesh, direction: direction, life: ENEMY_BOLT.LIFE,
+      volleyId: enemyVolleyCounter,
+    });
+  }
+}
+
+// 敵の弾を進め、自機に当たったかを見る
+function updateEnemyBolts(dt) {
+  for (let i = enemyBolts.length - 1; i >= 0; i--) {
+    const bolt = enemyBolts[i];
+
+    bolt.mesh.position.addScaledVector(bolt.direction, ENEMY_BOLT.SPEED * dt);
+    bolt.life -= dt;
+
+    // --- 自機への命中判定 ---
+    if (bolt.mesh.position.distanceTo(playerShip.position) < ENEMY_BOLT.HIT_RADIUS) {
+      // 当たった場所に赤い火花を散らす
+      spawnDebris(bolt.mesh.position, 5, 0.14, 7);
+      scene.remove(bolt.mesh);
+      enemyBolts.splice(i, 1);
+
+      // 同じ発射の2本目なら火花だけ。ダメージは1回ぶんに数える
+      if (bolt.volleyId !== lastPlayerHitVolley) {
+        lastPlayerHitVolley = bolt.volleyId;
+        onPlayerHit();   // main.js:シールド/HULLの処理と画面演出
+      }
+      continue;
+    }
+
+    if (bolt.life <= 0) {
+      scene.remove(bolt.mesh);
+      enemyBolts.splice(i, 1);
+    }
+  }
+}
+
+// 今のAI状態を外(計器表示)から見るための関数。
+// 敵が複数いるので「いちばん近い敵」の状態を出す。
+// ただし1機でも予告中なら、そちらを優先して危険を知らせる。
+function currentEnemyState() {
+  let nearest = null;
+  let nearestDist = Infinity;
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.telegraph > 0) return 'FIRING';   // 撃たれる直前は最優先で知らせる
+    const d = e.group.position.distanceTo(playerShip.position);
+    if (d < nearestDist) { nearestDist = d; nearest = e; }
+  }
+
+  if (!nearest) return 'DOWN';
+  return { approach: 'APPROACH', attack: 'ATTACK', evade: 'EVADE' }[nearest.state];
+}
+
+// 生きている敵の数(計器表示用)
+function aliveEnemyCount() {
+  return enemies.filter((e) => e.alive).length;
+}
+
+// ===================================================================
 // 敵機への命中
 // ===================================================================
 // dealDamage が false のときは、見た目(光と破片)だけでHPは減らさない
-function hitEnemy(point, dealDamage) {
-  hitFlash = ENEMY.FLASH_SEC;   // 白く光らせる
+function hitEnemy(e, point, dealDamage) {
+  e.hitFlash = ENEMY.FLASH_SEC;   // 白く光らせる
 
   // 当たった場所から小さな破片を飛ばす
   spawnDebris(point, DEBRIS.HIT_COUNT, DEBRIS.HIT_SIZE, DEBRIS.HIT_SPEED);
 
   if (!dealDamage) return;
 
-  enemyHp -= 1;
+  e.hp -= 1;
 
-  if (enemyHp <= 0) {
-    killEnemy();
+  if (e.hp <= 0) {
+    killEnemy(e);
   } else {
+    setEnemyState(e, 'evade');   // 撃たれたら数秒逃げる(仕様の3状態目)
     // main.js 側のログ表示を呼ぶ(3Dは見た目、UIは main.js、と役割を分けている)
-    onHit(enemyHp);
+    onHit(e.hp);
   }
 }
 
 // ===================================================================
 // 撃墜:機体を消し、破片をまき散らし、数秒後に別の位置へリスポーンさせる
 // ===================================================================
-function killEnemy() {
-  enemyAlive = false;
-  enemy.visible = false;        // 空間からは消さず、見えなくするだけ(使い回すため)
-  respawnLeft = ENEMY.RESPAWN_SEC;
+function killEnemy(e) {
+  e.alive = false;
+  e.group.visible = false;      // 空間からは消さず、見えなくするだけ(使い回すため)
+  e.respawnLeft = ENEMY.RESPAWN_SEC;
 
-  spawnDebris(enemy.position, DEBRIS.KILL_COUNT, DEBRIS.KILL_SIZE, DEBRIS.KILL_SPEED);
+  spawnDebris(e.group.position, DEBRIS.KILL_COUNT, DEBRIS.KILL_SIZE, DEBRIS.KILL_SPEED);
   onKill();
 }
 
 // ===================================================================
 // リスポーン:HPを戻し、前とは違う位置に出現させる
 // ===================================================================
-function respawnEnemy() {
-  enemyHp = ENEMY.MAX_HP;
-  enemyAlive = true;
-  enemy.visible = true;
+function respawnEnemy(e) {
+  e.hp = ENEMY.MAX_HP;
+  e.alive = true;
+  e.group.visible = true;
+  e.respawnLeft = 0;
 
   // 自機は空間を移動していくので、リスポーン地点は「今の自機の前方」に取る。
   // そうしないと、飛び去ったあと遠い原点付近に湧いて見つけられなくなる。
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
-  const spawn = playerShip.position.clone().addScaledVector(forward, 55);
+  e.group.position.copy(playerShip.position)
+    .addScaledVector(forward, 90)
+    .add(new THREE.Vector3(
+      (Math.random() - 0.5) * 40,
+      (Math.random() - 0.5) * 24,
+      (Math.random() - 0.5) * 40
+    ));
 
-  enemyBaseX = spawn.x + (Math.random() - 0.5) * 10;
-  enemyBaseY = spawn.y + (Math.random() - 0.5) * 8;
-  enemyBaseZ = spawn.z + (Math.random() - 0.5) * 10;
-
-  // 位相をずらすと左右往復の「今どこにいるか」が変わる = 違う場所から現れる
-  enemySwingPhase = Math.random() * Math.PI * 2;
+  // AIを初期状態に戻す
+  setEnemyState(e, 'approach');
+  e.fireTimer = AI.FIRE_INTERVAL;
+  e.telegraph = 0;
 
   // 点滅の消し忘れがないよう、光をゼロに戻しておく
-  hitFlash = 0;
-  for (const material of enemyMaterials) material.emissive.setScalar(0);
+  e.hitFlash = 0;
+  for (const material of e.materials) material.emissive.setRGB(0, 0, 0);
 }
 
 // ===================================================================
@@ -793,38 +1116,27 @@ function updateScene(dt, elapsed) {
   if (!sceneReady) return;
 
   updateBolts(dt);
+  updateEnemyBolts(dt);   // 敵の弾は敵が死んでいても飛び続ける
   updateDebris(dt);
 
-  // --- 被弾時の白い点滅 ---
-  // emissive = その物体自身が発する光。1に近いほど白く飛ぶ。
-  // 時間とともに0へ戻すことで「一瞬光って元に戻る」を表現する。
-  if (hitFlash > 0) {
-    hitFlash = Math.max(hitFlash - dt, 0);
-    const brightness = hitFlash / ENEMY.FLASH_SEC;   // 1 → 0
-    for (const material of enemyMaterials) material.emissive.setScalar(brightness);
-  }
+  // 発光(被弾の白い点滅 と 発射予告の光)は、止まっていても消えていくよう常に更新する
+  for (const e of enemies) updateEnemyGlow(e, dt);
 
-  // --- 撃墜中はリスポーンを待つ ---
-  if (!enemyAlive) {
-    respawnLeft -= dt;
-    if (respawnLeft <= 0) respawnEnemy();
+  // --- ミッション終了中は戦闘を止める(破片だけ動かす)---
+  if (combatFrozen) {
     renderer.render(scene, camera);
-    return;   // 機体がいないので、以下の移動処理はしない
+    return;
   }
 
-  // --- 敵機をゆっくり左右に往復させる ---
-  // Math.sin() は -1〜+1 を行ったり来たりする関数。これに幅を掛けると往復運動になる。
-  // (AIはフェーズ1の後半で入れる。今は「動いている」ことの確認が目的)
-  const angle = elapsed * ENEMY.SWING_SPEED + enemySwingPhase;
-  enemy.position.x = enemyBaseX + Math.sin(angle) * ENEMY.SWING_RANGE;
-  enemy.position.y = enemyBaseY;
-  enemy.position.z = enemyBaseZ;
-
-  // 進行方向へ少し機体を傾ける(バンク)。これだけで「飛んでいる」感じが出る。
-  // 傾けすぎると真横を向いて機体の形が潰れるので控えめにする
-  const bank = -Math.cos(angle);
-  enemy.rotation.z = bank * ENEMY.BANK;
-  enemy.rotation.y = bank * ENEMY.BANK * 0.6;
+  // --- 敵1機ずつ:死んでいればリスポーンを待ち、生きていればAIを動かす ---
+  for (const e of enemies) {
+    if (!e.alive) {
+      e.respawnLeft -= dt;
+      if (e.respawnLeft <= 0) respawnEnemy(e);
+      continue;
+    }
+    updateEnemyAI(e, dt);
+  }
 
   renderer.render(scene, camera);
 }

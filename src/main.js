@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-06 drift';
+const BUILD = 'p1-10 mission';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -67,6 +67,27 @@ const SHIELD = {
   LOW:               30,   // この値を下回ると数値が赤くなる
 };
 
+// --- 機体構造(HULL)の設定値(仕様書9.3の防御2段目)-----------------
+// 「戦闘中回復不可。計器破損で表現──『どこを壊されたか』が数字より重い」
+const HULL = {
+  MAX_DAMAGE:        5,   // これだけ食らうとミッション失敗
+};
+
+// --- ミッションの枠組み(仕様書9.1「1ゲーム最長10分の短期決戦」)-------
+const MISSION = {
+  DURATION:   600,   // 制限時間(秒)= 10分
+  KILL_GOAL:   10,   // 勝利条件:この数だけ撃墜する
+  WARN_SEC:    60,   // 残りこの秒数を切ったら、タイマーを赤く点滅させる
+};
+
+// --- 敵の攻撃を受けたときの設定 -------------------------------------
+const INCOMING = {
+  SHIELD_DAMAGE:    15,   // 敵弾1発でシールドが減る量
+  SHAKE_STRENGTH: 0.55,   // 画面の揺れの強さ
+  SHAKE_HULL:     1.30,   // HULL損傷時はもっと大きく揺らす
+  SHAKE_SEC:      0.35,   // 揺れが収まるまでの秒数
+};
+
 // ===================================================================
 // オプション設定
 //
@@ -98,6 +119,22 @@ let shieldHp   = SHIELD.MAX;// シールド強度の残量
 // 演出用:一瞬だけゲージを光らせるための残り秒数(0.2秒ほどで消える)
 let burstFlash  = 0;   // 回避バーストを撃った瞬間
 let damageFlash = 0;   // 被弾した瞬間
+
+// --- 被弾・ミッション状態 -------------------------------------------
+let hullDamage    = 0;       // これまでに受けたHULL損傷の回数
+let hitsTaken     = 0;       // 被弾した回数(リザルト用)
+
+// ミッションの進行状態。
+//   'active'   … 戦闘中
+//   'complete' … 勝利(規定数を撃墜した)
+//   'failed'   … 敗北(HULL損傷が限界)
+//   'timeup'   … 敗北(時間切れ)
+let missionState  = 'active';
+let missionTime   = MISSION.DURATION;   // 残り秒数
+
+let shakeLeft     = 0;       // 画面の揺れの残り秒数
+let shakeStrength = 0;       // 揺れの強さ
+let hitVignette   = 0;       // 被弾した瞬間に強く光る赤の残り時間
 
 // ドリフト(Shift長押し)入力の状態。
 // 3D側(scene.js)にも drifting という変数があるが、あちらは「3Dの飛行状態」。
@@ -147,6 +184,17 @@ const shieldRegenEl = document.getElementById('shield-regen');
 const killCountEl = document.getElementById('kill-count');
 const combatLogEl = document.getElementById('combat-log');
 const speedEl     = document.getElementById('speed');
+const aiStateEl   = document.getElementById('ai-state');
+const hullEl      = document.getElementById('hull');
+const vignetteEl  = document.getElementById('damage-vignette');
+
+const timerElMission = document.getElementById('mission-timer');
+const resultPanel    = document.getElementById('result-panel');
+const resultTitleEl  = document.getElementById('result-title');
+const resultReasonEl = document.getElementById('result-reason');
+const rKillsEl       = document.getElementById('r-kills');
+const rHitsEl        = document.getElementById('r-hits');
+const rTimeEl        = document.getElementById('r-time');
 
 // ===================================================================
 // 描画:今の power の中身を、そのまま画面に書き出す
@@ -211,6 +259,22 @@ function renderHeat() {
 
   // 速度計。3D側が持っている今の速さを表示する
   speedEl.textContent = Math.round(currentSpeed());
+
+  // --- HULL残量と赤いビネット ---
+  const hullLeft = HULL.MAX_DAMAGE - hullDamage;
+  hullEl.textContent = hullLeft;
+  hullEl.style.color = hullLeft <= 2 ? '#ff5a3c' : '';
+
+  // 損傷が進むほど常時うっすら赤くなり、被弾の瞬間だけ強く光る
+  const baseRed = (hullDamage / HULL.MAX_DAMAGE) * 0.55;
+  const flashRed = hitVignette / 0.45;
+  vignetteEl.style.opacity = Math.min(baseRed + flashRed * 0.75, 1);
+
+  // 敵AIの状態(接近/攻撃/発射/回避)。動作確認しやすいよう計器に出しておく
+  const aiState = currentEnemyState();
+  aiStateEl.textContent = aiState;
+  aiStateEl.style.color = (aiState === 'FIRING') ? '#ff6a4d'
+                        : (aiState === 'EVADE')  ? '#ffcf6a' : '';
 
   // 今この瞬間、熱が毎秒いくつ増減しているか(プラスなら増加中)
   const rate = currentHeatRate();
@@ -371,6 +435,16 @@ const KEY_TO_SYSTEM = {
 window.addEventListener('keydown', (event) => {
   keysHeld.add(event.key.toLowerCase());   // 押しっぱなし判定用に記録
 
+  // R キー … リザルト表示中のみ、再出撃
+  // (仕様書9.6ではRは武器切替だが、そちらは未実装。実装時にキーを見直す)
+  if (event.key.toLowerCase() === 'r') {
+    if (missionState !== 'active') restartMission();
+    return;
+  }
+
+  // ミッションが終わっている間は、以下の操作を受け付けない
+  if (missionState !== 'active') return;
+
   // H キー … 被弾テスト(テスト用。フェーズ1で敵の攻撃に置き換える)
   // これは「自分の操作」ではなく「敵にやられること」なので、
   // シャットダウン判定より前に置く ― 停止中こそ被弾するのが「無防備」の意味。
@@ -451,6 +525,9 @@ function onKill() {
   killCountEl.textContent = killCount;
   addCombatLog('★ KILL', 'kill');
   console.log('KILL ― 累計撃墜数: ' + killCount);
+
+  // 勝利条件:制限時間内に規定数を撃墜する
+  if (killCount >= MISSION.KILL_GOAL) endMission('complete');
 }
 
 // 画面下のログに1行足す。時間が経つとCSSのアニメーションで自然に消える
@@ -468,6 +545,167 @@ function addCombatLog(text, kind) {
   while (combatLogEl.children.length > 4) {
     combatLogEl.removeChild(combatLogEl.firstChild);
   }
+}
+
+// ===================================================================
+// 自機が敵弾を受けた ― scene.js の命中判定から呼ばれる
+//
+// 仕様書9.3の2段構えの防御をそのまま実装する。
+//   1段目:シールド強度が肩代わりする(電力配分で回復するので立て直せる)
+//   2段目:シールドが割れていたらHULL(機体構造)が削れる。こちらは戦闘中回復しない
+// ===================================================================
+function onPlayerHit() {
+  if (missionState !== 'active') return;   // リザルト表示中はもう減らさない
+
+  hitsTaken += 1;              // リザルトに出す被弾回数
+  hitVignette = 0.45;          // 画面端が一瞬強く赤く光る
+
+  if (shieldHp > 0) {
+    // --- シールドで受けた ---
+    shieldHp = Math.max(shieldHp - INCOMING.SHIELD_DAMAGE, 0);
+    damageFlash = 0.3;         // シールドゲージが赤く光る(既存の演出を流用)
+    startShake(INCOMING.SHAKE_STRENGTH);
+    addCombatLog('SHIELD −' + INCOMING.SHIELD_DAMAGE, 'warn');
+
+    if (shieldHp <= 0) addCombatLog('SHIELD DOWN', 'hull');
+
+  } else {
+    // --- シールドが割れている:HULL損傷 ---
+    hullDamage += 1;
+    startShake(INCOMING.SHAKE_HULL);
+
+    const brokenName = breakRandomInstrument();
+    addCombatLog('HULL DAMAGE ' + hullDamage + '/' + HULL.MAX_DAMAGE, 'hull');
+    if (brokenName) addCombatLog(brokenName + ' 損傷', 'hull');
+
+    if (hullDamage >= HULL.MAX_DAMAGE) endMission('failed');
+  }
+}
+
+// ===================================================================
+// 計器の破損(仕様書9.3「被弾表現=計器の破損」)
+// まだ壊れていない計器の中からランダムに1つ選び、ノイズと明滅を出す。
+// 機能そのものは止めない(見た目だけ)。壊した計器の名前を返す。
+// ===================================================================
+function breakRandomInstrument() {
+  // 画面上のゲージをすべて集め、まだ無事なものだけを残す
+  const all = Array.from(document.querySelectorAll('.gauge'));
+  const intact = all.filter((g) => !g.classList.contains('broken'));
+  if (intact.length === 0) return null;   // もう全部壊れている
+
+  const picked = intact[Math.floor(Math.random() * intact.length)];
+  picked.classList.add('broken');
+
+  // ラベルの1行目(日本語名)を取り出す。<br>より前の文字がそれにあたる
+  const label = picked.querySelector('.gauge-label');
+  return label && label.firstChild ? label.firstChild.textContent.trim() : null;
+}
+
+// ===================================================================
+// 画面の揺れ
+// 強さを指定して呼ぶと、そこから SHAKE_SEC 秒かけて収まる。
+// ===================================================================
+function startShake(strength) {
+  shakeStrength = Math.max(shakeStrength, strength);   // 連続被弾では強いほうを採用
+  shakeLeft = INCOMING.SHAKE_SEC;
+}
+
+function updateShake(dt) {
+  if (shakeLeft > 0) {
+    shakeLeft -= dt;
+    // 残り時間の割合を掛けて、だんだん小さくする
+    const amp = shakeStrength * Math.max(shakeLeft / INCOMING.SHAKE_SEC, 0);
+    const x = (Math.random() - 0.5) * amp;
+    const y = (Math.random() - 0.5) * amp;
+
+    setCameraShake(x, y);                 // 3D側のカメラを揺らす
+    consoleEl.style.transform = `translate(${x * 7}px, ${y * 7}px)`;   // 計器も揺らす
+
+    if (shakeLeft <= 0) shakeStrength = 0;
+  } else {
+    setCameraShake(0, 0);
+    consoleEl.style.transform = '';
+  }
+}
+
+// ===================================================================
+// ミッション失敗と再出撃
+// ===================================================================
+// 秒数を「MM:SS」の形に整える。padStart(2,'0') は「2桁になるまで0で埋める」
+function formatTime(seconds) {
+  const s = Math.max(Math.ceil(seconds), 0);
+  const m = Math.floor(s / 60);
+  return String(m).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+
+// ミッション終了。result は 'complete' / 'failed' / 'timeup'
+function endMission(result) {
+  if (missionState !== 'active') return;   // 二重に終わらせない
+
+  missionState = result;
+  setCombatFrozen(true);          // 敵AIと敵弾を止める
+  consoleEl.classList.add('failed');   // リザルト画面を表示するクラス
+
+  // 見出しと理由。同じ枠を色違いで使い回す
+  resultPanel.classList.remove('win', 'timeup');
+  if (result === 'complete') {
+    resultPanel.classList.add('win');
+    resultTitleEl.textContent = 'MISSION COMPLETE';
+    resultReasonEl.textContent = '規定数撃墜 ― 任務達成';
+  } else if (result === 'timeup') {
+    resultPanel.classList.add('timeup');
+    resultTitleEl.textContent = 'TIME UP';
+    resultReasonEl.textContent = '制限時間到達 ― 任務失敗';
+  } else {
+    resultTitleEl.textContent = 'MISSION FAILED';
+    resultReasonEl.textContent = '機体構造 崩壊';
+  }
+
+  // 戦果
+  rKillsEl.textContent = killCount;
+  rHitsEl.textContent  = hitsTaken;
+  rTimeEl.textContent  = formatTime(missionTime);
+
+  console.log('MISSION ' + result.toUpperCase() +
+              ' ― 撃墜' + killCount + ' / 被弾' + hitsTaken +
+              ' / 残り' + formatTime(missionTime));
+}
+
+function restartMission() {
+  missionState = 'active';
+  missionTime = MISSION.DURATION;
+  hitsTaken = 0;
+  consoleEl.classList.remove('failed');
+  resultPanel.classList.remove('win', 'timeup');
+  timerElMission.classList.remove('warn');
+  timerElMission.textContent = formatTime(missionTime);   // 表示も即座に戻す
+  setCombatFrozen(false);
+
+  // --- 7パラメーターを初期状態へ ---
+  power.weapon = 25; power.shield = 25; power.engine = 25; power.sensor = 25;
+  presetEl.textContent = 'MANUAL';
+  heat = 0;
+  radiatorOpen = false;
+  shutdownLeft = 0;
+  propellant = PROP.MAX;
+  shieldHp = SHIELD.MAX;
+
+  // --- 損傷を消す ---
+  hullDamage = 0;
+  hitVignette = 0;
+  for (const gauge of document.querySelectorAll('.gauge.broken')) {
+    gauge.classList.remove('broken');
+  }
+
+  // --- 戦果とログを消す ---
+  killCount = 0;
+  killCountEl.textContent = '0';
+  combatLogEl.innerHTML = '';
+
+  resetFlight();   // 3D側:自機の位置・速度・敵をやり直す
+  render();
+  addCombatLog('SORTIE', 'warn');
+  console.log('RESTART ― 再出撃');
 }
 
 // ===================================================================
@@ -503,9 +741,30 @@ function tick(now) {
 
   elapsed += dt;
 
+  if (missionState !== 'active') {
+    // --- リザルト表示中:操作も戦闘も止める。R キー待ち ---
+    updateShake(dt);
+    updateScene(dt, elapsed);   // 破片などは動き続ける
+    renderHeat();
+    renderStatus();
+    requestAnimationFrame(tick);
+    return;
+  }
+
+  // --- 制限時間のカウントダウン(仕様書9.1)---
+  missionTime -= dt;
+  timerElMission.textContent = formatTime(missionTime);
+  // 残り1分を切ったら赤く点滅させる(音の代わりの警告)
+  timerElMission.classList.toggle('warn', missionTime <= MISSION.WARN_SEC);
+  if (missionTime <= 0) {
+    missionTime = 0;
+    endMission('timeup');
+  }
+
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
   updateView(dt);                   // W/A/S/D による機首操作
+  updateShake(dt);                  // 被弾の揺れ(カメラを置く前に決めておく)
   updateFlight(dt, power.engine);   // 自機の前進(速度はエンジンの電力配分に比例)
   updateScene(dt, elapsed);         // 敵機・弾・破片の更新と描画(scene.js)
   renderHeat();        // 計器の描画
@@ -565,6 +824,7 @@ function update(dt) {
   // 演出用の光を時間とともに消していく(0未満にはしない)
   burstFlash  = Math.max(burstFlash  - dt, 0);
   damageFlash = Math.max(damageFlash - dt, 0);
+  hitVignette = Math.max(hitVignette - dt, 0);
 
   if (shutdownLeft > 0) {
     // --- 停止中:強制冷却しながらカウントダウン。シールドは回復しない ---

@@ -84,6 +84,124 @@
     .header .title { color: var(--text); font-size: 14px; }
 
     /* =================================================================
+       被弾ダメージ表示(仕様書9.3「被弾表現=計器の破損」)
+       ================================================================= */
+
+    /* --- 画面端の赤いビネット。HULL損傷が増えるほど濃くなる --- */
+    .damage-vignette {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;                      /* 濃さは main.js が毎コマ設定する */
+      box-shadow:
+        inset 0 0 170px rgba(255, 40, 20, 0.60),
+        inset 0 0  55px rgba(255, 90, 45, 0.40);
+    }
+
+    /* --- 計器の破損(ノイズ+明滅)---
+       仕様書9.3:「センサー被弾→レーダーにノイズ、武器系被弾で発射不可等、
+       『どこを壊されたか』が数字より重い」。今は見た目だけ。 */
+    .gauge.broken { animation: brokenFlicker 1.1s steps(2) infinite; }
+    @keyframes brokenFlicker {
+      0%, 100% { opacity: 1; }
+      38%      { opacity: 0.40; }
+      52%      { opacity: 0.95; }
+      68%      { opacity: 0.25; }
+    }
+
+    /* 筒の上に走査線ノイズを重ねる。::before は未使用なのでここに使う
+       (::after は熱ゲージの危険域ラインで使用済み) */
+    .gauge-tube::before {
+      content: "";
+      position: absolute;
+      inset: -4px 0;
+      z-index: 3;
+      opacity: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255, 255, 255, 0.18) 0px, rgba(255, 255, 255, 0.18) 1px,
+        transparent 1px, transparent 4px
+      );
+    }
+    .gauge.broken .gauge-tube::before {
+      opacity: 1;
+      animation: noiseScroll 0.28s steps(4) infinite;
+    }
+    @keyframes noiseScroll {
+      from { transform: translateY(0); }
+      to   { transform: translateY(-4px); }
+    }
+
+    .gauge.broken .gauge-label { color: #ff5a3c; }
+    .gauge.broken .gauge-tube  { border-color: #7a2a1c; }
+
+    /* --- MISSION FAILED --- */
+    .mission-failed {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: rgba(14, 2, 2, 0.72);
+      z-index: 10;
+      pointer-events: none;
+    }
+    .hud.failed .mission-failed { display: flex; }
+    .mission-failed .mf-title {
+      font-size: 30px;
+      letter-spacing: 0.42em;
+      text-indent: 0.42em;
+      color: #ff4b2b;
+      animation: warnBlink 0.6s steps(2) infinite;
+    }
+    .mission-failed .mf-sub { font-size: 12px; letter-spacing: 0.22em; color: #b8563f; }
+
+    /* 勝利のときは色を変える(同じ枠を使い回す) */
+    .mission-failed.win .mf-title { color: #9fe1cb; }
+    .mission-failed.win .mf-sub   { color: #5f8b7a; }
+    .mission-failed.timeup .mf-title { color: #ffcf6a; }
+    .mission-failed.timeup .mf-sub   { color: #9a7c42; }
+
+    .result-rows {
+      display: flex;
+      gap: 30px;
+      margin-top: 10px;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      color: #7f95a3;
+    }
+    .result-rows b { color: var(--text); font-weight: normal; font-size: 17px; }
+    .result-hint {
+      margin-top: 14px;
+      font-size: 11px;
+      letter-spacing: 0.3em;
+      color: #5c6e7a;
+    }
+
+    /* =================================================================
+       ミッションタイマー(仕様書9.1「1ゲーム最長10分の短期決戦」)
+       ================================================================= */
+    .mission-timer {
+      font-size: 26px;
+      letter-spacing: 0.14em;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;   /* 数字の幅を揃えてガタつかせない */
+      line-height: 1.1;
+    }
+    /* 残り1分。赤くして点滅させる(音の代わりの警告) */
+    .mission-timer.warn {
+      color: #ff4b2b;
+      animation: timerBlink 0.7s steps(2) infinite;
+    }
+    @keyframes timerBlink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.25; }
+    }
+
+    /* =================================================================
        ドリフト表示(Shift長押し中)
        画面端を青く光らせる = 機体の状態が視界の隅で分かるようにする
        ================================================================= */
@@ -168,6 +286,8 @@
     }
     .log-line.hit  { color: #9fe1cb; }
     .log-line.kill { color: #ffcf6a; font-size: 14px; letter-spacing: 0.3em; }
+    .log-line.warn { color: #8fd8ff; }                      /* シールドで受けた */
+    .log-line.hull { color: #ff5a3c; font-size: 13px; }     /* HULL損傷 */
 
     /* ---- 照準(仕様書9.6「中央:キャノピー+HUD(照準…)」)---- */
     .crosshair {
@@ -330,6 +450,9 @@
   <!-- 計器オーバーレイ。id="console" は main.js がシャットダウン表示に使う -->
   <div class="hud" id="console">
 
+    <!-- 被弾ダメージのビネット(画面端の赤い光) -->
+    <div class="damage-vignette" id="damage-vignette"></div>
+
     <!-- ドリフト中の青い枠と表示 -->
     <div class="drift-frame"></div>
     <div class="drift-label">D R I F T</div>
@@ -338,14 +461,15 @@
     <div class="crosshair"><span class="crosshair-gap"></span></div>
 
     <!-- 撃墜数 -->
-    <div class="kill-counter">KILLS <b id="kill-count">0</b></div>
+    <div class="kill-counter">KILLS <b id="kill-count">0</b><span style="font-size:11px">/<span id="kill-goal">10</span></span></div>
 
     <!-- 戦闘ログ(HIT / KILL) -->
     <div class="combat-log" id="combat-log"></div>
 
     <div class="hud-top">
+      <!-- 残り時間(仕様書9.1:1ゲーム最長10分) -->
+      <div class="mission-timer" id="mission-timer">10:00</div>
       <div class="header">
-        <div class="title">STEEL CRADLE</div>
         <div>PHASE 1 ― COMBAT CORE &nbsp;<span id="build" style="color:#33424d"></span></div>
       </div>
     </div>
@@ -416,6 +540,8 @@
         <div>TOTAL <b id="total">100</b>%</div>
         <div>PRESET <b id="preset">MANUAL</b></div>
         <div>SPEED <b id="speed">0</b></div>
+        <div>TARGET <b id="ai-state">―</b></div>
+        <div>HULL <b id="hull">5</b>/5</div>
         <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
       </div>
 
@@ -424,6 +550,18 @@
         <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
         &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト</span>
       </div>
+    </div>
+
+    <!-- ミッション終了時のリザルト -->
+    <div class="mission-failed" id="result-panel">
+      <div class="mf-title" id="result-title">MISSION FAILED</div>
+      <div class="mf-sub" id="result-reason">機体構造 崩壊</div>
+      <div class="result-rows">
+        <div>撃墜 <b id="r-kills">0</b> / <span id="r-goal">10</span></div>
+        <div>被弾 <b id="r-hits">0</b></div>
+        <div>残り時間 <b id="r-time">00:00</b></div>
+      </div>
+      <div class="result-hint">R キーで再出撃</div>
     </div>
 
     <div class="shutdown-overlay">
