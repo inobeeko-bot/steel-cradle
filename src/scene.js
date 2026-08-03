@@ -186,6 +186,21 @@ const PLAYER = {
 };
 // ※ 旋回時の機体の傾き(バンク)は FEEL.BANK_ANGLE に移した
 
+// --- 回避バースト(Space)の設定 -----------------------------------
+// 推進剤を焚いて、機首方向へ瞬間的に速度を足す。
+// 通常飛行は「速度を目標へ寄せ続ける」ので、そのままだと足した速度が
+// すぐ引き戻されて何も起きないように感じる。そこで噴射後しばらくは
+// 引き戻しを止め(COAST_SEC)、慣性で伸びる時間を作っている。
+//
+// ドリフト(Shift)と組み合わせると、機首を横へ向けて噴射 = 横滑りの回避になる。
+// これが「回避バースト」という名前の中身。
+const BURST = {
+  IMPULSE:    52,    // 一度の噴射で足す速度(最高速度50とほぼ同じ = 体感で倍近く出る)
+  COAST_SEC:  2.0,   // 噴射の勢いが残っている秒数
+  SHAKE:    0.34,    // 噴射時の画面の揺れ
+};
+let burstCoast = 0;   // 引き戻しを止めている残り秒数
+
 // --- 自機の状態 -----------------------------------------------------
 let playerShip  = null;   // 位置と向きを持つ入れ物(カメラはこれを基準に置く)
 let playerModel = null;   // 見た目だけを傾けるための子。物理には影響しない
@@ -1276,12 +1291,22 @@ function updateFlight(dt, enginePercent) {
   //   ドリフト … 何もしない = 慣性のまま。機首をどこへ向けても進路は変わらない
   //
   // Shift を離すと再びこの処理が働き、進路が機首方向へ曲がり始める。
+  // 回避バーストの直後は、この引き戻しを弱めて勢いを残す。
+  // いきなり切って いきなり戻す のではなく、
+  // 「噴射直後は引き戻しゼロ → COAST_SEC かけて通常へ戻る」と連続的に変える。
+  // こうすると2秒かけて速度がなだらかに落ち着き、その間も舵が少しずつ効く。
+  let accelScale = 1;
+  if (burstCoast > 0) {
+    burstCoast -= dt;
+    accelScale = 1 - Math.min(Math.max(burstCoast, 0) / BURST.COAST_SEC, 1);
+  }
+
   if (!drifting) {
     const targetVelocity = forward.clone().multiplyScalar(targetSpeed);
 
     // 1 - Math.exp(-k*dt) は「毎秒 k の勢いで近づく」割合。
     // dt(コマの長さ)が変わっても同じ速さで寄るので、環境によって挙動が変わらない。
-    const blend = 1 - Math.exp(-PLAYER.ACCEL * dt);
+    const blend = 1 - Math.exp(-PLAYER.ACCEL * accelScale * dt);
     shipVelocity.lerp(targetVelocity, blend);   // lerp = 2つの値の間を指定の割合だけ進む
   }
 
@@ -1376,6 +1401,26 @@ function updateFlight(dt, enginePercent) {
 }
 
 // ドリフトの入切。main.js が Shift の押し具合を見て毎コマ呼ぶ
+// ===================================================================
+// 回避バースト:機首方向へ瞬間的に速度を足す
+//
+// main.js の burst() から呼ぶ。推進剤を減らすのはあちらの仕事で、
+// ここは「実際に機体を押し出す」ことだけを受け持つ。
+// 戻り値は噴射後の速度(ログや確認に使う)。
+// ===================================================================
+function burstShip() {
+  if (!sceneReady) return 0;
+
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  shipVelocity.addScaledVector(dir, BURST.IMPULSE);
+  burstCoast = BURST.COAST_SEC;
+
+  // 噴射光を一瞬伸ばす(見た目の手応え)
+  for (const glow of engineGlows) glow.scale.z = Math.max(glow.scale.z, 3.2);
+
+  return shipVelocity.length();
+}
+
 function setDrift(on) {
   drifting = on;
 }
@@ -1428,6 +1473,7 @@ function resetFlight() {
   visualRoll = 0;
   camSpeedEase = 0;
   drifting = false;
+  burstCoast = 0;
   playerShip.quaternion.identity();
   camQuat.identity();
 
