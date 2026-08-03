@@ -316,9 +316,9 @@ const AIM = {
   // 捕捉を続けるとロックが進み、満ちると LOCKED になる。
   // かかる時間はセンサーの電力配分で変わる。
   // 「センサー厚め → ミサイル型」という配分スタイルの対応を、この数字が作る。
-  LOCK_SEC_MIN:   0.8,   // センサー100%のときのロック所要時間(秒)
-  LOCK_SEC_MAX:   2.8,   // センサー0%のときの所要時間
-  LOCK_KEEP:      0.4,   // 照準から外れてもロックを保つ猶予(秒)
+  LOCK_SEC_MIN:  0.45,   // センサー100%のときのロック所要時間(秒)
+  LOCK_SEC_MAX:   1.6,   // センサー0%のときの所要時間
+  LOCK_KEEP:      0.6,   // 照準から外れてもロックを保つ猶予(秒)
 };
 
 // --- 照準の微追尾(ソフトエイムアシスト)-----------------------------
@@ -346,11 +346,11 @@ let lockGrace = 0;         // 照準から外れてからロックが切れる�
 
 // --- ミサイル(武器仕様書:切り札枠。発射にセンサーロック必須)---------
 const MISSILE = {
-  SPEED:       58,   // 弾速。ビーム(90)より遅いが、曲がって追いかける
-  TURN_RATE:  2.4,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
+  SPEED:       66,   // 弾速。ビーム(90)より遅いが、曲がって追いかける
+  TURN_RATE:  3.6,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
   LIFE:       9.0,   // 燃焼時間(秒)。切れると失速して消える
   DAMAGE:       5,   // 敵HPを減らす量。敵の最大HPと同じ = 当たれば1発で撃墜
-  HIT_RADIUS: 3.6,   // 当たり判定。ビームより甘い
+  HIT_RADIUS: 5.2,   // 当たり判定。ビームよりずっと甘い(近接信管のつもり)
   COLOR:  0xff9d4d,
   OFFSET_X:  1.0,    // 発射口の左右
   OFFSET_Y: -0.5,
@@ -376,9 +376,9 @@ const FLARE = {
   SPEED:       38,    // 撒かれたあと後方へ飛ぶ速さ
   SPREAD:      16,    // 左右上下にばらける量
   DRAG:       0.25,   // 減速の強さ。小さいほど遠くまで離れる
-  DECOY_RANGE: 55,    // この距離内の敵をだませる
-  HEAT_LIMIT:  55,    // 自機の熱がこれを超えると、もうだませない
-  CONFUSE_SEC: 3.0,   // だませた敵が狙いを外している秒数
+  DECOY_RANGE: 75,    // この距離内の敵をだませる
+  HEAT_LIMIT:  70,    // 自機の熱がこれを超えると、もうだませない
+  CONFUSE_SEC: 3.5,   // だませた敵が狙いを外している秒数
   COLOR:  0xfff0b0,
 };
 
@@ -397,7 +397,8 @@ let flareGeometry = null;
 const PYRO = {
   SPEED:        72,   // 弾として撃つので速い。ビーム(90)よりわずかに遅い
   ARM_DIST:     60,   // これだけ飛ぶと自分から炸裂する(時限ではなく距離の信管)
-  PROX_RADIUS:   7,   // 敵にこれだけ近づいても炸裂する(近接信管)
+  PROX_RADIUS:  13,   // 敵にこれだけ近づいたら炸裂する(近接信管)。
+                      // 範囲弾なので直撃は要らない。かすめれば作動する
   RADIUS:       22,   // 炸裂して燃焼片が届く範囲
   DAMAGE:        1,   // HPを削る力は弱い。狙いはあくまで熱
   HEAT_ADD:     34,   // 炸裂の中心で敵のHEATに加える量
@@ -472,7 +473,7 @@ const ENEMY_MISSILE = {
 
   // 敵がフレアを撒く条件
   FLARE_AMMO:    3,    // 1機あたりの搭載数
-  FLARE_RANGE:  34,    // 自機のミサイルがこの距離まで迫ったら撒く
+  FLARE_RANGE:  46,    // 自機のミサイルがこの距離まで迫ったら撒く
   FLARE_COOL:  2.5,    // 連続で撒かないための間隔(秒)
 };
 
@@ -787,11 +788,44 @@ function createEnemyFighter() {
     ship.add(wing);
   }
 
-  // --- 垂直尾翼 ---
-  const finGeo = new THREE.BoxGeometry(0.14, 1.1, 1.0);
-  const fin = createFlatPart(finGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
-  fin.position.set(0, 0.6, 1.1);
-  ship.add(fin);
+  // --- 前翼(カナード)---
+  // 機首寄りに小さな翼を付けると、一気に「兵器らしい」シルエットになる。
+  // 自機は前翼を持たないので、遠目でも敵味方を形で見分けられる。
+  for (const side of [-1, 1]) {
+    const canardGeo = new THREE.BoxGeometry(0.85, 0.10, 0.55);
+    const canard = createFlatPart(canardGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    canard.position.set(side * 0.72, 0.05, -0.85);
+    canard.rotation.z = side * 0.34;     // 大きく上へ跳ね上げる
+    canard.rotation.y = side * -0.10;    // 前進翼(自機の後退翼と逆)
+    ship.add(canard);
+  }
+
+  // --- 双垂直尾翼(外側へ倒す)---
+  // 1枚の尾翼より、外へ開いた2枚のほうが機械的に見える。
+  for (const side of [-1, 1]) {
+    const finGeo = new THREE.BoxGeometry(0.12, 0.95, 0.9);
+    const fin = createFlatPart(finGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    fin.position.set(side * 0.5, 0.5, 1.15);
+    fin.rotation.z = side * -0.36;       // ハの字に開く
+    ship.add(fin);
+  }
+
+  // --- 側面の装甲板 ---
+  // 胴体(円錐)の丸みを角で隠す。平たい板を1枚貼るだけで見た目の情報量が増える。
+  for (const side of [-1, 1]) {
+    const plateGeo = new THREE.BoxGeometry(0.16, 0.52, 1.9);
+    const plate = createFlatPart(plateGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    plate.position.set(side * 0.55, -0.02, 0.15);
+    plate.rotation.z = side * -0.22;
+    ship.add(plate);
+  }
+
+  // --- 機首のセンサーポッド ---
+  const podGeo = new THREE.OctahedronGeometry(0.22);
+  const pod = createFlatPart(podGeo, ENEMY.CANOPY_COLOR, ENEMY.EDGE_COLOR);
+  pod.position.set(0, -0.18, -1.25);
+  pod.scale.set(0.8, 0.8, 1.8);
+  ship.add(pod);
 
   // --- エンジンノズル(左右)---
   // 5角柱。少ない面数のまま「機械的な塊」を足して、機体の後ろを重く見せる
@@ -839,11 +873,52 @@ function createPlayerFighter() {
     ship.add(wing);
   }
 
-  // --- 垂直尾翼 ---
-  const finGeo = new THREE.BoxGeometry(0.12, 0.95, 0.9);
-  const fin = createFlatPart(finGeo, PLAYER.WING_COLOR, PLAYER.EDGE_COLOR);
-  fin.position.set(0, 0.5, 1.1);
-  ship.add(fin);
+  // --- 機関砲ポッドと砲身(左右)---
+  // BOLT.OFFSET_* が指す発射口を、目に見える部品として置いてある。
+  // モデル座標 = 世界座標 ÷ PLAYER.SCALE(0.85) なので、
+  //   世界 (±1.62, -0.15, -1.20) → モデル (±1.91, -0.18, -1.41)
+  // 砲身の先がちょうどそこに来るよう寸法を決めている。
+  // 「弾がどこから出ているか」が機体の形として説明される。
+  for (const side of [-1, 1]) {
+    const podGeo = new THREE.BoxGeometry(0.26, 0.24, 1.5);
+    const pod = createFlatPart(podGeo, PLAYER.WING_COLOR, PLAYER.EDGE_COLOR);
+    pod.position.set(side * 1.88, -0.20, -0.30);   // 主翼の外寄りに載せる
+    pod.rotation.z = side * -0.18;                 // 翼の反りに合わせる
+    ship.add(pod);
+
+    const barrelGeo = new THREE.BoxGeometry(0.11, 0.11, 0.55);
+    const barrel = createFlatPart(barrelGeo, PLAYER.BODY_COLOR, PLAYER.EDGE_COLOR);
+    barrel.position.set(side * 1.90, -0.19, -1.25);
+    ship.add(barrel);
+  }
+
+  // --- 機首のストレーキ(左右の張り出し)---
+  // 円錐のままだと丸い鉛筆に見えるので、平たい板で角を作って
+  // 「削り出した機首」に見せる。板1枚ぶんの面数で印象が大きく変わる。
+  for (const side of [-1, 1]) {
+    const strakeGeo = new THREE.BoxGeometry(0.55, 0.07, 1.5);
+    const strake = createFlatPart(strakeGeo, PLAYER.WING_COLOR, PLAYER.EDGE_COLOR);
+    strake.position.set(side * 0.45, -0.06, -0.60);
+    strake.rotation.y = side * 0.10;
+    ship.add(strake);
+  }
+
+  // --- 背骨(ドーサルスパイン)---
+  // 胴体の上に稜線を1本通すと、後ろから見たときに真ん中が締まって見える。
+  const spineGeo = new THREE.BoxGeometry(0.24, 0.26, 1.7);
+  const spine = createFlatPart(spineGeo, PLAYER.WING_COLOR, PLAYER.EDGE_COLOR);
+  spine.position.set(0, 0.30, 0.60);
+  ship.add(spine);
+
+  // --- 双垂直尾翼(内側へ倒す)---
+  // 敵機は外へ開いた双尾翼にしてあるので、こちらは内へ倒して形を対にする。
+  for (const side of [-1, 1]) {
+    const finGeo = new THREE.BoxGeometry(0.11, 0.85, 0.85);
+    const fin = createFlatPart(finGeo, PLAYER.WING_COLOR, PLAYER.EDGE_COLOR);
+    fin.position.set(side * 0.46, 0.48, 1.10);
+    fin.rotation.z = side * 0.30;
+    ship.add(fin);
+  }
 
   // --- エンジンノズルと噴射光(左右)---
   for (const side of [-1, 1]) {
@@ -1983,6 +2058,9 @@ function launchOrdnance(kind) {
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
 
+  // 射出する向き。既定は機首の正面
+  const launchDir = forward.clone();
+
   // パイロ弾は主兵装なので、機関砲と同じく翼から撃つ。
   // ボム/EMPは機体の下から前へ放り出す。
   if (isPyro) {
@@ -1991,6 +2069,13 @@ function launchOrdnance(kind) {
     mesh.position.copy(playerShip.position)
       .addScaledVector(forward, 1.5)
       .addScaledVector(side, sign * BOLT.OFFSET_X);
+
+    // 機関砲と同じく、照準の先へ収束させる。
+    // 翼から真っすぐ前へ撃つと弾道が照準から左右にずれたままになり、
+    // 「照準を合わせたのに当たらない」ことが起きる。
+    launchDir.copy(playerShip.position)
+      .addScaledVector(forward, FEEL.AIM_DISTANCE)
+      .sub(mesh.position).normalize();
   } else {
     mesh.position.copy(playerShip.position).addScaledVector(forward, 2.2);
   }
@@ -1998,8 +2083,8 @@ function launchOrdnance(kind) {
 
   ordnance.push({
     mesh: mesh,
-    // 自機の速度 + 前方への射出速度。ドリフト中に撒くと真横へ流れていく
-    velocity: shipVelocity.clone().addScaledVector(forward, cfg.SPEED),
+    // 自機の速度 + 射出速度。ドリフト中に撒くと真横へ流れていく
+    velocity: shipVelocity.clone().addScaledVector(launchDir, cfg.SPEED),
     kind: kind,
     // ボム/EMPは「何秒後」、パイロ弾は「何メートル飛んだら」で炸裂する
     fuse: isPyro ? Infinity : cfg.FUSE,

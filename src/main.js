@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-36 pyro-shell';
+const BUILD = 'p1-37 bombs slot';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -168,18 +168,6 @@ const WEAPONS = [
     boltColor: 0xffcf6a,
   },
   {
-    key: 'PYRO',
-    label: 'PYRO',        // パイロフォリック弾
-    jp: 'パイロ弾',
-    heat: 1.5,            // 自分の熱はほとんど出ない
-    ammo: 24,             // 1発が範囲攻撃なので、機関砲よりずっと少ない
-    minPower: 0,
-    auto: true,
-    interval: 0.30,       // 機関砲より遅い
-    shell: 'pyro',        // ★ 弾ではなく「一定距離で炸裂する砲弾」として撃つ
-    boltColor: 0xff7a2a,
-  },
-  {
     key: 'MISSILE',
     label: 'MISSILE',     // 誘導弾
     jp: 'ミサイル',
@@ -196,7 +184,7 @@ const WEAPONS = [
 let weaponIndex = 0;                  // 今選んでいる兵装
 let ammo = WEAPONS.map((w) => w.ammo);   // 兵装ごとの残弾
 let fireCooldown = 0;                 // 次に撃てるようになるまでの残り秒
-let flareCount = 8;                   // フレアの残数(scene.js の FLARE.COUNT と揃える)
+let flareCount = FLARE.COUNT;         // フレアの残数(scene.js の FLARE と同じ数を使う)
 let saidAmmoOut = false;              // 弾切れ音声を言ったか(1回だけ)
 
 // --- 3点バーストの途中経過 ---
@@ -206,22 +194,37 @@ let burstLeft  = 0;   // 撃ち残している条の数
 let burstTimer = 0;   // 次の1条までの残り秒
 
 // ===================================================================
-// 範囲攻撃(武器仕様書3章)
+// 投下兵装 BOMBS(武器仕様書3章の「範囲攻撃」3種)
 //
-// 主武器とは別の枠にしてある。仕様書でも「主武器3系統」と「範囲攻撃3種」は
-// 別の層として書かれているため、切替キーも発射キーも分けた。
-//   B … 発射 / N … ボム⇄EMP の切替
+// 主武器とは完全に別の枠にしてある。仕様書でも「主武器3系統」と
+// 「範囲攻撃3種」は別の層として書かれている。
+// 分けている実利のほうが大きい ― パイロ弾で敵を熱で止めたその瞬間に、
+// 武器を切り替えずそのまま F で撃ち込める。切替の待ち時間で好機を逃さない。
 //
-// ボム … HULL/シールドを削る素直な物理範囲ダメージ
-// EMP  … 電力を攻める。キルは取れないが、範囲内の敵を数秒黙らせる
+//   B … 投下(パイロ弾は押しっぱなしで連射)
+//   N … BOMBS の切替(パイロ ⇄ ボム ⇄ EMP)
+//
+// パイロ弾 … 熱を攻める。放熱を止めて、敵を自分の発熱で追い詰める
+// ボム    … HULL/シールドを削る素直な物理範囲ダメージ
+// EMP     … 電力を攻める。キルは取れないが、範囲内の敵を数秒黙らせる
 // ===================================================================
-const AREA_WEAPONS = [
+const BOMBS = [
+  {
+    key: 'PYRO', label: 'PYRO', jp: 'パイロ弾',
+    kind: 'pyro',
+    ammo: 24,         // 1発が範囲攻撃なので、機関砲よりずっと少ない
+    heat: 1.5,        // 自分の熱はほとんど出ない
+    minPower: 0,
+    auto: true,       // ★ Bを押しっぱなしで撒き続けられる
+    interval: 0.30,
+  },
   {
     key: 'BOMB', label: 'BOMB', jp: 'ボム',
     kind: 'bomb',
     ammo: 4,          // 少ない。ここぞで使う
     heat: 2,          // 投げるだけなので熱はほとんど出ない
     minPower: 0,      // 電力もいらない
+    auto: false,
     interval: 1.2,
   },
   {
@@ -230,17 +233,18 @@ const AREA_WEAPONS = [
     ammo: 3,
     heat: 6,          // 強い電磁パルスを作るので、自分もそれなりに発熱する
     minPower: 20,     // ★ 電力を食う装備。武器へ配ってないと撃てない
+    auto: false,
     interval: 1.2,
   },
 ];
 
-let areaIndex = 0;
-let areaAmmo = AREA_WEAPONS.map((w) => w.ammo);
-let areaCooldown = 0;
+let bombIndex = 0;
+let bombAmmo = BOMBS.map((w) => w.ammo);
+let bombCooldown = 0;
 
 // 今の兵装を取り出す短縮形
 const currentWeapon = () => WEAPONS[weaponIndex];
-const currentArea   = () => AREA_WEAPONS[areaIndex];
+const currentBomb   = () => BOMBS[bombIndex];
 
 // --- 各リソースの現在値 ---------------------------------------------
 let heat = 0;               // 現在の熱量(0〜100)
@@ -375,9 +379,9 @@ const weaponHeatEl  = document.getElementById('wp-heat');
 const weaponJpEl    = document.getElementById('wp-jp');
 const flareCountEl  = document.getElementById('wp-flare');
 const flareRowEl    = document.getElementById('wp-flare-row');
-const areaNameEl    = document.getElementById('wp-area-name');
-const areaAmmoEl    = document.getElementById('wp-area-ammo');
-const areaRowEl     = document.getElementById('wp-area-row');
+const bombNameEl    = document.getElementById('wp-bomb-name');
+const bombAmmoEl    = document.getElementById('wp-bomb-ammo');
+const bombRowEl     = document.getElementById('wp-bomb-row');
 const empBadgeEl    = document.getElementById('emp-badge');
 
 const timerElMission = document.getElementById('mission-timer');
@@ -742,15 +746,15 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  // B キー … 範囲攻撃の投下(ボム / EMP)
+  // B キー … BOMBS の投下。押しっぱなしの連射は updateAutoFire が続ける
   if (event.key.toLowerCase() === 'b' && !event.repeat) {
-    fireArea();
+    if (bombCooldown <= 0) fireBomb();
     return;
   }
 
-  // N キー … 範囲攻撃の切替(ボム ⇄ EMP)
+  // N キー … BOMBS の切替(パイロ ⇄ ボム ⇄ EMP)
   if (event.key.toLowerCase() === 'n') {
-    switchArea();
+    switchBomb();
     return;
   }
 
@@ -1114,7 +1118,7 @@ function useFlare() {
   playFlare();
   renderWeapon();
 
-  if (heat >= 55) {
+  if (heat >= FLARE.HEAT_LIMIT) {
     // 本体のほうが熱いので、偽の熱源として通用しない
     addCombatLog('FLARE ― 熱すぎる', 'hull');
     speakVoice('FLARE_INEFFECTIVE');
@@ -1129,8 +1133,8 @@ function useFlare() {
 function switchWeapon() {
   weaponIndex = (weaponIndex + 1) % WEAPONS.length;
   fireCooldown = 0;
-  saidAmmoOut = false;
-  flareCount = 8;   // 別の武器に替えたので、また弾切れを知らせてよい
+  burstLeft = 0;      // 前の武器のバーストが残っていたら捨てる
+  saidAmmoOut = false;   // 武器が変わったので、また弾切れを知らせてよい
   playPresetConfirm();
   addCombatLog(currentWeapon().jp, 'warn');
   renderWeapon();
@@ -1149,11 +1153,11 @@ function renderWeapon() {
                                      : ('+' + w.heat);
 
   // --- 範囲攻撃(ボム/EMP)---
-  const a = currentArea();
-  areaNameEl.textContent = a.label;
-  areaAmmoEl.textContent = areaAmmo[areaIndex];
-  areaRowEl.classList.toggle('low',
-    areaAmmo[areaIndex] <= 0 || power.weapon < a.minPower);
+  const a = currentBomb();
+  bombNameEl.textContent = a.label;
+  bombAmmoEl.textContent = bombAmmo[bombIndex];
+  bombRowEl.classList.toggle('low',
+    bombAmmo[bombIndex] <= 0 || power.weapon < a.minPower);
 
   // 残りが少ない、または電力不足で撃てないときは赤くする。
   // 「残り10発」で固定にすると、最大6発のミサイルが常に赤くなってしまうので、
@@ -1165,7 +1169,7 @@ function renderWeapon() {
 
   // フレアの残数。熱が高いと効かないので、そのときは赤くする
   flareCountEl.textContent = flareCount;
-  flareRowEl.classList.toggle('low', flareCount <= 2 || heat >= 55);
+  flareRowEl.classList.toggle('low', flareCount <= 2 || heat >= FLARE.HEAT_LIMIT);
 }
 
 // ===================================================================
@@ -1375,9 +1379,10 @@ function restartMission() {
   fireCooldown = 0;
   burstLeft = 0;
   saidAmmoOut = false;
-  areaIndex = 0;
-  areaAmmo = AREA_WEAPONS.map((w) => w.ammo);   // 範囲攻撃も積み直す
-  areaCooldown = 0;
+  bombIndex = 0;
+  bombAmmo = BOMBS.map((w) => w.ammo);   // BOMBS も積み直す
+  bombCooldown = 0;
+  flareCount = FLARE.COUNT;              // フレアも積み直す
 
   // --- 損傷を消す ---
   hullDamage = 0;
@@ -1466,15 +1471,8 @@ function fireOnce(w) {
   if (ammo[index] !== Infinity) ammo[index] -= 1;
 
   heat = Math.min(heat + w.heat, HEAT.MAX);
-
-  if (w.shell) {
-    // 一定距離を飛んでから炸裂する砲弾(パイロ弾)
-    launchOrdnance(w.shell);
-    playOrdnanceLaunch(false);
-  } else {
-    fireBolt(w.boltColor);   // scene.js:弾を飛ばす
-    playFireSound();
-  }
+  fireBolt(w.boltColor);   // scene.js:弾を飛ばす
+  playFireSound();
 
   // 撃った手応え。被弾(0.55)よりずっと弱い、ごく小さな振動
   startShake(FEEL.SHAKE_FIRE);
@@ -1515,11 +1513,11 @@ function updateBurst(dt) {
 // 主武器と違い「当てる」のではなく「置く」。数秒後にその場で炸裂する。
 // 自分も巻き込まれるので、撃ったら離れる操作とセットになる。
 // ===================================================================
-function fireArea() {
-  const a = currentArea();
+function fireBomb() {
+  const a = currentBomb();
 
   if (isBroken('weapon')) { addCombatLog('武器系 損傷', 'hull'); playDenied(); return; }
-  if (areaCooldown > 0) return;
+  if (bombCooldown > 0) return;
 
   // EMPは電力を食う装備。武器へ配っていないと撃てない
   if (power.weapon < a.minPower) {
@@ -1527,7 +1525,7 @@ function fireArea() {
     playDenied();
     return;
   }
-  if (areaAmmo[areaIndex] <= 0) {
+  if (bombAmmo[bombIndex] <= 0) {
     addCombatLog(a.label + ' OUT', 'hull');
     playDryFire();
     speakVoice('AMMO_DEPLETED');
@@ -1536,20 +1534,22 @@ function fireArea() {
 
   if (!launchOrdnance(a.kind)) { playDenied(); return; }
 
-  areaAmmo[areaIndex] -= 1;
-  areaCooldown = a.interval;
+  bombAmmo[bombIndex] -= 1;
+  bombCooldown = a.interval;
   heat = Math.min(heat + a.heat, HEAT.MAX);
   playOrdnanceLaunch(a.kind === 'emp');
-  addCombatLog(a.jp + ' 投下', 'warn');
-  startShake(FEEL.SHAKE_FIRE * 1.5);
+  // パイロ弾は連射するので、1発ごとにログを出すとログが埋まってしまう
+  if (!a.auto) addCombatLog(a.jp + ' 投下', 'warn');
+  startShake(FEEL.SHAKE_FIRE * (a.auto ? 1.0 : 1.5));
   renderWeapon();
 }
 
-// 範囲攻撃の切替(Nキー)
-function switchArea() {
-  areaIndex = (areaIndex + 1) % AREA_WEAPONS.length;
+// BOMBS の切替(Nキー)
+function switchBomb() {
+  bombIndex = (bombIndex + 1) % BOMBS.length;
+  bombCooldown = 0;
   playPresetConfirm();
-  addCombatLog(currentArea().jp, 'warn');
+  addCombatLog(currentBomb().jp, 'warn');
   renderWeapon();
 }
 
@@ -1696,12 +1696,13 @@ function updateAutoFire(dt) {
   if (fireCooldown > 0) fireCooldown -= dt;
   if (missionState !== 'active' || shutdownLeft > 0) return;
 
+  // --- 主兵装(Fキー)---
   const w = currentWeapon();
-  if (!w.auto) return;
-  if (!keysHeld.has('f')) return;
-  if (fireCooldown > 0) return;
+  if (w.auto && keysHeld.has('f') && fireCooldown <= 0) fire();
 
-  fire();
+  // --- BOMBS(Bキー)。パイロ弾だけが連射に対応している ---
+  const b = currentBomb();
+  if (b.auto && keysHeld.has('b') && bombCooldown <= 0) fireBomb();
 }
 
 function updateDrift() {
@@ -1757,7 +1758,7 @@ function update(dt) {
   hitVignette = Math.max(hitVignette - dt, 0);
 
   // 範囲攻撃の間隔と、EMPを浴びている残り時間を数える
-  areaCooldown = Math.max(areaCooldown - dt, 0);
+  bombCooldown = Math.max(bombCooldown - dt, 0);
   if (empLeft > 0) {
     empLeft = Math.max(empLeft - dt, 0);
     if (empLeft === 0) playReboot();   // 系統が戻った合図
