@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-26 voice2';
+const BUILD = 'p1-28 weapons';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -130,10 +130,49 @@ const CAPTURE = {
   RAMP_SEC:   2.6,    // この秒数かけて「ビー」から「ビビビ」へ詰まる
 };
 
-// --- 主兵装の設定(仕様書9.6:F=主兵装発射)-------------------------
-const WEAPON = {
-  HEAT_PER_SHOT: 8,   // 1発ごとに上がる熱。仕様書9.3「武器発射で熱が蓄積」
-};
+// ===================================================================
+// 兵装(仕様書9.3の7パラメーター最後のひとつ「弾数/チャージ」)
+//
+// 「実体弾系=弾数制でリロード不可、ビーム系=無限だが電力と熱を大食い。
+//   『無限だが管理が重い』vs『軽いが有限』の武器哲学の対立」
+//
+// この対立を数字にすると:
+//   ビーム … 弾は無限。ただし熱が重く、武器へ電力を回していないと撃てない
+//   実体弾 … 熱は軽く電力もいらない。ただし弾は有限で、戦闘中は補充できない
+// ===================================================================
+const WEAPONS = [
+  {
+    key: 'BEAM',
+    label: 'BEAM',        // ビーム砲
+    jp: 'ビーム砲',
+    heat: 8,              // 1発ごとに上がる熱(重い)
+    ammo: Infinity,       // 弾数無限。撃ち放題
+    minPower: 15,         // 武器への電力配分がこれ未満だと撃てない
+    auto: false,          // 押しっぱなしでは連射しない
+    interval: 0,
+    boltColor: 0x9fe1cb,
+  },
+  {
+    key: 'CANNON',
+    label: 'CANNON',      // 機関砲
+    jp: '機関砲',
+    heat: 0.5,            // ほぼ熱を出さない。ビームの16分の1
+                          //   = 撃ってもレーダーに映りにくい隠密武器の下地
+    ammo: 120,            // 有限。戦闘中は補充できない(リロード不可)
+    minPower: 0,          // 電力を必要としない
+    auto: true,           // Fを押しっぱなしで連射できる
+    interval: 0.09,       // 連射の間隔(秒)。毎秒約11発
+    boltColor: 0xffcf6a,
+  },
+];
+
+let weaponIndex = 0;                  // 今選んでいる兵装
+let ammo = [Infinity, WEAPONS[1].ammo];   // 兵装ごとの残弾
+let fireCooldown = 0;                 // 次に撃てるようになるまでの残り秒
+let saidAmmoOut = false;              // 弾切れ音声を言ったか(1回だけ)
+
+// 今の兵装を取り出す短縮形
+const currentWeapon = () => WEAPONS[weaponIndex];
 
 // --- 各リソースの現在値 ---------------------------------------------
 let heat = 0;               // 現在の熱量(0〜100)
@@ -146,6 +185,29 @@ let shieldHp   = SHIELD.MAX;// シールド強度の残量
 // 演出用:一瞬だけゲージを光らせるための残り秒数(0.2秒ほどで消える)
 let burstFlash  = 0;   // 回避バーストを撃った瞬間
 let damageFlash = 0;   // 被弾した瞬間
+
+// ===================================================================
+// 計器の破損と機能喪失(仕様書9.3)
+//
+// 「被弾表現は数値バーではなく計器の破損。センサー被弾でレーダーにノイズ、
+//   武器系被弾で発射不可等、『どこを壊されたか』が数字より重い」
+//
+// 壊れた計器は見た目が乱れるだけでなく、その計器が司る機能を失う。
+// どこを壊されたかで、その後の戦い方を変えざるを得なくなるのが狙い。
+// ===================================================================
+const BREAKAGE = {
+  weapon:     { label: '武器',     lost: '発射不能' },
+  shield:     { label: 'シールド', lost: '再生停止' },
+  engine:     { label: 'エンジン', lost: '推力固定' },
+  sensor:     { label: 'センサー', lost: '索敵半減' },
+  heat:       { label: '熱',       lost: '冷却不能' },
+  propellant: { label: '推進剤',   lost: 'バースト不能' },
+  shieldhp:   { label: 'シールド強度', lost: '表示不正確' },
+};
+
+// 壊れた系統の名前を入れておく集合。has() で「壊れているか」を調べる
+const brokenSystems = new Set();
+const isBroken = (key) => brokenSystems.has(key);
 
 // --- 被弾・ミッション状態 -------------------------------------------
 let hullDamage    = 0;       // これまでに受けたHULL損傷の回数
@@ -227,6 +289,11 @@ const radarSensorEl = document.getElementById('radar-sensor');
 const markerLayer   = document.getElementById('marker-layer');
 const crosshairEl   = document.querySelector('.crosshair');
 const viewModeEl    = document.getElementById('view-mode');
+const weaponPanelEl = document.getElementById('weapon-panel');
+const weaponNameEl  = document.getElementById('wp-name');
+const weaponAmmoEl  = document.getElementById('wp-ammo');
+const weaponHeatEl  = document.getElementById('wp-heat');
+const weaponJpEl    = document.getElementById('wp-jp');
 
 const timerElMission = document.getElementById('mission-timer');
 const resultPanel    = document.getElementById('result-panel');
@@ -348,7 +415,12 @@ function renderStatus() {
   const sHue = 200 - 200 * damageFlash;
   shieldBar.style.backgroundColor = `hsl(${sHue}, 75%, ${22 + 38 * sRatio + damageFlash * 40}%)`;
   shieldBar.style.boxShadow = `0 0 ${6 + sRatio * 14 + damageFlash * 50}px hsla(${sHue}, 100%, 65%, ${0.25 + sRatio * 0.4})`;
-  shieldNum.textContent = Math.round(shieldHp);
+  // シールド強度の計器が壊れていると、表示だけが揺らいで信用できなくなる
+  //(実際の値は正しく動いている。「計器が壊れた」のであって装甲が壊れたのではない)
+  const shownShield = isBroken('shieldhp')
+    ? Math.max(0, Math.round(shieldHp + (Math.random() - 0.5) * 26))
+    : Math.round(shieldHp);
+  shieldNum.textContent = shownShield;
   shieldValue.classList.toggle('low', shieldHp < SHIELD.LOW);
 
   // 今の毎秒回復量。シャットダウン中と満タン時は 0
@@ -359,6 +431,7 @@ function renderStatus() {
 
 // シールドの毎秒回復量(仕様書9.3:電力配分で回復速度が変化)
 function currentShieldRegen() {
+  if (isBroken('shield')) return 0;            // シールド系が壊れていると再生しない
   if (shutdownLeft > 0) return 0;              // 停止中は回復しない(＝無防備)
   if (shieldHp >= SHIELD.MAX) return 0;        // 満タンなら回復不要
   return power.shield * SHIELD.REGEN_PER_POWER;
@@ -382,6 +455,13 @@ function currentHeatRate() {
 // 配分操作:指定した系統に +10%。その分を他の3系統から均等に差し引く
 // ===================================================================
 function boost(targetKey, amount = 10) {
+  // 仕様書9.6「電力系被弾→十字の一方向グレーアウト(対応キーも無効化)」
+  if (isBroken(targetKey)) {
+    addCombatLog(BREAKAGE[targetKey].label + '系 損傷', 'hull');
+    playDenied();
+    return;
+  }
+
   // 対象以外の3系統を集める
   const others = SYSTEMS.map(s => s.key).filter(key => key !== targetKey);
 
@@ -434,6 +514,13 @@ function applyPreset(presetKey) {
 //             電気があっても燃料切れなら動けない」
 // ===================================================================
 function burst() {
+  // 推進剤系が壊れていると噴射できない
+  if (isBroken('propellant')) {
+    addCombatLog('推進剤系 損傷', 'hull');
+    playDenied();
+    return;
+  }
+
   // 残量が足りなければ発動しない。ここが「燃料切れなら動けない」の実装
   if (propellant < PROP.BURST_COST) {
     console.log('PROPELLANT EMPTY ― バースト不能');
@@ -488,10 +575,16 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  // R キー … リザルト表示中のみ、再出撃
-  // (仕様書9.6ではRは武器切替だが、そちらは未実装。実装時にキーを見直す)
-  if (event.key.toLowerCase() === 'r') {
+  // Enter キー … リザルト表示中の再出撃
+  // (仕様書9.6でRは武器切替と決まっているため、再出撃は別のキーへ移した)
+  if (event.key === 'Enter') {
     if (missionState !== 'active') restartMission();
+    return;
+  }
+
+  // R キー … 武器切替(仕様書9.6)
+  if (event.key.toLowerCase() === 'r') {
+    if (missionState === 'active') switchWeapon();
     return;
   }
 
@@ -529,6 +622,8 @@ window.addEventListener('keydown', (event) => {
   // V キー … ラジエーター展開/収納
   // toLowerCase() で、Shiftを押していても大文字/小文字どちらでも反応するようにする
   if (event.key.toLowerCase() === 'v') {
+    // 熱系の計器が壊れているとラジエーターを動かせない
+    if (isBroken('heat')) { addCombatLog('冷却系 損傷', 'hull'); playDenied(); return; }
     radiatorOpen = !radiatorOpen;   // ! は「逆にする」。true↔false が入れ替わる
     playRadiator(radiatorOpen);
     return;
@@ -545,7 +640,8 @@ window.addEventListener('keydown', (event) => {
   // 押しっぱなしでは連射しない。撃つ回数=熱の上がり方をプレイヤーが自分で決める形にする。
   // 仕様書9.3「攻撃的なプレイヤーほどリスクを背負う」を、この1行が担っている。
   if (event.key.toLowerCase() === 'f' && !event.repeat) {
-    fire();
+    // 連射武器も最初の1発はここで撃つ。以降は updateAutoFire が続ける
+    if (fireCooldown <= 0) fire();
     return;
   }
 });
@@ -721,12 +817,15 @@ function renderCrosshair() {
 }
 
 function renderRadar() {
-  const range = sensorRange(power.sensor);
+  // センサー系が壊れていると索敵半径が半分になる(仕様書9.3)
+  const sensorPct = isBroken('sensor') ? power.sensor * 0.5 : power.sensor;
+  const range = sensorRange(sensorPct);
   radarRangeEl.textContent = Math.round(range);
   radarSensorEl.textContent = power.sensor;
+  radarEl.classList.toggle('noisy', isBroken('sensor'));   // レーダーにノイズを出す
 
   // 索敵範囲内の敵だけが返ってくる。範囲外の敵はここに含まれない
-  const contacts = getContacts(power.sensor);
+  const contacts = getContacts(sensorPct);
 
   for (let i = 0; i < radarBlips.length; i++) {
     const blip = radarBlips[i];
@@ -775,6 +874,33 @@ function renderRadar() {
       marker.style.display = 'none';
     }
   }
+}
+
+// 兵装を切り替える(仕様書9.6:R)
+function switchWeapon() {
+  weaponIndex = (weaponIndex + 1) % WEAPONS.length;
+  fireCooldown = 0;
+  saidAmmoOut = false;   // 別の武器に替えたので、また弾切れを知らせてよい
+  playPresetConfirm();
+  addCombatLog(currentWeapon().jp, 'warn');
+  renderWeapon();
+}
+
+// 兵装パネルの表示(仕様書9.6「下段右=兵装パネル(弾数・神器コア状態)」)
+function renderWeapon() {
+  const w = currentWeapon();
+  const left = ammo[weaponIndex];
+
+  weaponNameEl.textContent = w.label;
+  weaponJpEl.textContent = w.jp;
+  weaponAmmoEl.textContent = (left === Infinity) ? '\u221e' : left;   // ∞
+  weaponHeatEl.textContent = '+' + w.heat;
+
+  // 残りが少ない、または電力不足で撃てないときは赤くする
+  const low = (left !== Infinity && left <= 10);
+  const noPower = (power.weapon < w.minPower);
+  weaponPanelEl.classList.toggle('low', low || noPower);
+  weaponPanelEl.classList.toggle('beam', w.key === 'BEAM');
 }
 
 // ===================================================================
@@ -866,16 +992,18 @@ function onPlayerHit() {
 // ===================================================================
 function breakRandomInstrument() {
   // 画面上のゲージをすべて集め、まだ無事なものだけを残す
-  const all = Array.from(document.querySelectorAll('.gauge'));
+  const all = Array.from(document.querySelectorAll('.gauge[data-system]'));
   const intact = all.filter((g) => !g.classList.contains('broken'));
   if (intact.length === 0) return null;   // もう全部壊れている
 
   const picked = intact[Math.floor(Math.random() * intact.length)];
   picked.classList.add('broken');
 
-  // ラベルの1行目(日本語名)を取り出す。<br>より前の文字がそれにあたる
-  const label = picked.querySelector('.gauge-label');
-  return label && label.firstChild ? label.firstChild.textContent.trim() : null;
+  const key = picked.dataset.system;
+  brokenSystems.add(key);   // ここから機能が失われる
+
+  const info = BREAKAGE[key];
+  return info ? (info.label + ' ' + info.lost) : null;
 }
 
 // ===================================================================
@@ -973,6 +1101,10 @@ function restartMission() {
   shutdownLeft = 0;
   propellant = PROP.MAX;
   shieldHp = SHIELD.MAX;
+  weaponIndex = 0;
+  ammo = [Infinity, WEAPONS[1].ammo];   // 弾を積み直す
+  fireCooldown = 0;
+  saidAmmoOut = false;
 
   // --- 損傷を消す ---
   hullDamage = 0;
@@ -980,6 +1112,7 @@ function restartMission() {
   for (const gauge of document.querySelectorAll('.gauge.broken')) {
     gauge.classList.remove('broken');
   }
+  brokenSystems.clear();
 
   // --- 戦果とログを消す ---
   killCount = 0;
@@ -997,9 +1130,36 @@ function restartMission() {
 // 発射:熱を上げて、3D空間にビームを撃つ
 // ===================================================================
 function fire() {
-  heat = Math.min(heat + WEAPON.HEAT_PER_SHOT, HEAT.MAX);
-  fireBolt();   // scene.js:見た目のビームを飛ばす
+  const w = currentWeapon();
+
+  // --- 撃てるかどうかの確認 ---
+  // 武器計器が壊れていると発射できない(仕様書9.3「武器系被弾で発射不可」)
+  if (isBroken('weapon')) {
+    addCombatLog('武器系 損傷', 'hull');
+    playDenied();
+    return;
+  }
+  // ビームは武器へ電力が回っていないと撃てない(=電力を大食いする表現)
+  if (power.weapon < w.minPower) {
+    addCombatLog('出力不足', 'hull');
+    playDenied();
+    return;
+  }
+  // 機関砲は弾切れで撃てない(戦闘中の補充なし)
+  if (ammo[weaponIndex] <= 0) {
+    addCombatLog('AMMO OUT', 'hull');
+    playDryFire();                 // 撃鉄だけが落ちる「カチカチ」
+    if (!saidAmmoOut) { speakVoice('AMMO_DEPLETED'); saidAmmoOut = true; }
+    return;
+  }
+
+  if (ammo[weaponIndex] !== Infinity) ammo[weaponIndex] -= 1;
+
+  heat = Math.min(heat + w.heat, HEAT.MAX);
+  fireBolt(w.boltColor);   // scene.js:見た目のビームを飛ばす
   playFireSound();
+
+  fireCooldown = w.interval;
 
   // 撃った手応え。被弾(0.55)よりずっと弱い、ごく小さな振動
   startShake(FEEL.SHAKE_FIRE);
@@ -1058,17 +1218,20 @@ function tick(now) {
     endMission('timeup');
   }
 
+  updateAutoFire(dt);               // 機関砲の連射
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
   updateView(dt);                   // W/A/S/D による機首操作
   updateShake(dt);                  // 被弾の揺れ(カメラを置く前に決めておく)
-  updateFlight(dt, power.engine);   // 自機の前進(速度はエンジンの電力配分に比例)
+  // エンジン系が壊れていると推力を制御できず、最低出力に張り付く
+  updateFlight(dt, isBroken('engine') ? 0 : power.engine);
   updateAimFeedback(dt);            // 照準の捕捉判定と、捕捉音
   updateVoiceAlerts(dt);            // コックピット音声
   updateScene(dt, elapsed);         // 敵機・弾・破片の更新と描画(scene.js)
   renderHeat();        // 計器の描画
   renderStatus();
   renderRadar();       // レーダーと敵マーカー
+  renderWeapon();      // 兵装パネル(残弾)
   renderCrosshair();   // 照準(弾道の向きに合わせる)
 
   requestAnimationFrame(tick);   // 次のコマを予約(これで無限に回り続ける)
@@ -1085,6 +1248,24 @@ function tick(now) {
 // 押している間だけ推力を切る。押しっぱなしを見るので、1回押して1回ではなく
 // 毎コマ「今押されているか」を確かめる形にする。
 // ===================================================================
+// ===================================================================
+// 連射(仕様書v1:機関砲は連射可能)
+//
+// ビーム砲は1回押して1発。機関砲は押しっぱなしで撃ち続けられる。
+// 武器ごとの interval で間隔を決めるので、将来の武器も同じ形で足せる。
+// ===================================================================
+function updateAutoFire(dt) {
+  if (fireCooldown > 0) fireCooldown -= dt;
+  if (missionState !== 'active' || shutdownLeft > 0) return;
+
+  const w = currentWeapon();
+  if (!w.auto) return;
+  if (!keysHeld.has('f')) return;
+  if (fireCooldown > 0) return;
+
+  fire();
+}
+
 function updateDrift() {
   // シャットダウン中は自分では推力を制御できない
   const wasDrifting = driftInput;
@@ -1186,6 +1367,7 @@ setupRadar();                    // 敵の数だけ輝点とマーカーを用�
 // 起動時の視点をオプションから決める
 applyViewMode(OPTIONS.startView === 'cockpit');
 render();                        // 電力ゲージの初期表示
+renderWeapon();                  // 兵装パネルの初期表示
 requestAnimationFrame((t) => {   // ループ開始。1回目は dt=0 になるよう時刻を合わせる
   lastTime = t;
   tick(t);

@@ -69,6 +69,7 @@ const AUDIO = {
   CLICK_FREQ: 560, CLICK_DUR: 0.032, CLICK_GAIN: 0.11,   // 電力配分
   PRESET_GAIN: 0.17,                           // プリセット切替
   DENIED_FREQ: 95, DENIED_DUR: 0.24, DENIED_GAIN: 0.28,  // 推進剤切れ
+  DRYFIRE_GAIN: 0.20,                          // 弾切れの空撃ち「カチカチ」
 
   // --- ミッションの節目 ---
   JINGLE_GAIN: 0.24,
@@ -293,6 +294,13 @@ function playReboot() {
 function playBurst() {
   playNoise(AUDIO.BURST_DUR, AUDIO.BURST_GAIN, 380, 1500, 'bandpass');
   playSweep(85, 240, 0.24, 0.16, 'sawtooth');
+}
+
+// 弾切れの空撃ち。撃鉄だけが落ちる「カチ、カチ」
+// ごく短いノイズを2回鳴らすと、金属が空を打つ音に聞こえる
+function playDryFire() {
+  playNoise(0.030, AUDIO.DRYFIRE_GAIN, 3200, 900, 'bandpass');
+  playNoise(0.030, AUDIO.DRYFIRE_GAIN * 0.8, 2600, 700, 'bandpass', 0.075);
 }
 
 // 推進剤切れで撃てない(拒否音)

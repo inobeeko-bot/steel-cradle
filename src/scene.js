@@ -218,6 +218,20 @@ let boltMaterial = null;   // 弾の材質(同上)
 let boltTrailGeometry = null;   // 残光の形
 let boltTrailMaterial = null;   // 残光の材質
 
+// 兵装ごとに弾の色が違うので、色ごとに材質を作って覚えておく。
+// 毎回作ると数が増えて重くなるため。
+const boltMaterialCache = {};
+const boltTrailCache = {};
+function boltMaterialFor(color) {
+  if (!boltMaterialCache[color]) {
+    boltMaterialCache[color] = new THREE.MeshBasicMaterial({ color: color });
+    boltTrailCache[color] = new THREE.MeshBasicMaterial({
+      color: color, transparent: true, opacity: 0.26,
+    });
+  }
+  return boltMaterialCache[color];
+}
+
 // 1回の発射は左右2条のビームだが、ダメージは「1発ぶん」として数えたい。
 // そこで発射ごとに通し番号(斉射番号)を振り、同じ番号の2本目は
 // 見た目だけ当てて HP は減らさない、という扱いにする。
@@ -1368,8 +1382,9 @@ function turnView(dt, pitchDir, yawDir) {
 // 射撃(仕様書9.6:F=主兵装発射)
 // 命中判定はまだ入れない。まずは「撃った」ことが見て分かる状態にする。
 // ===================================================================
-function fireBolt() {
+function fireBolt(color) {
   if (!sceneReady) return;
+  const boltColor = (color === undefined) ? BOLT.COLOR : color;
 
   // 弾の形と材質は毎回作らず、最初の1回だけ作って使い回す(数が増えても重くならない)
   if (!boltGeometry) {
@@ -1390,8 +1405,8 @@ function fireBolt() {
 
   // 左右の翼から1条ずつ(合わせて「1発」として数える)
   for (const side of [-1, 1]) {
-    const mesh = new THREE.Mesh(boltGeometry, boltMaterial);
-    mesh.add(new THREE.Mesh(boltTrailGeometry, boltTrailMaterial));   // 残光を貼り付ける
+    const mesh = new THREE.Mesh(boltGeometry, boltMaterialFor(boltColor));
+    mesh.add(new THREE.Mesh(boltTrailGeometry, boltTrailCache[boltColor]));   // 残光
 
     // 発射口の位置を「自機から見た座標」で決め、機体の向きに合わせて回す。
     // カメラではなく機体を基準にすることで、翼から弾が出ているように見える。

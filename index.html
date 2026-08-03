@@ -123,7 +123,7 @@
     }
 
     /* 戦闘ログは右下の計器と重なるので上へ逃がす */
-    .hud.cockpit .combat-log { bottom: 168px; }
+    .hud.cockpit .combat-log { bottom: 198px; }
 
     /* =================================================================
        被弾ダメージ表示(仕様書9.3「被弾表現=計器の破損」)
@@ -177,6 +177,29 @@
 
     .gauge.broken .gauge-label { color: #ff5a3c; }
     .gauge.broken .gauge-tube  { border-color: #7a2a1c; }
+
+    /* センサー系が壊れたときのレーダーのノイズ(仕様書9.3)*/
+    .radar.noisy { border-color: #7a2a1c; }
+    .radar.noisy::before { border-color: rgba(255, 90, 60, 0.25); }
+    .radar.noisy .radar-blip { animation: blipFlicker 0.22s steps(2) infinite; }
+    @keyframes blipFlicker {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.15; }
+    }
+    /* 走査線のノイズをスコープ全面に重ねる */
+    .radar.noisy .radar-self::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+    .radar.noisy {
+      background-image: repeating-linear-gradient(
+        to bottom,
+        rgba(255, 120, 90, 0.10) 0px, rgba(255, 120, 90, 0.10) 1px,
+        transparent 1px, transparent 3px);
+      animation: noiseScroll 0.25s steps(3) infinite;
+    }
 
     /* --- MISSION FAILED --- */
     .mission-failed {
@@ -306,7 +329,7 @@
     .combat-log {
       position: absolute;
       right: 22px;
-      bottom: 16px;
+      bottom: 172px;   /* 兵装パネルの上に置く */
       display: flex;
       flex-direction: column;
       align-items: flex-end;     /* 右そろえ */
@@ -330,6 +353,44 @@
     .log-line.kill { color: #ffcf6a; font-size: 14px; letter-spacing: 0.3em; }
     .log-line.warn { color: #8fd8ff; }                      /* シールドで受けた */
     .log-line.hull { color: #ff5a3c; font-size: 13px; }     /* HULL損傷 */
+
+    /* =================================================================
+       兵装パネル(仕様書9.6「下段右:弾数・神器コア状態」)
+       ================================================================= */
+    .weapon-panel {
+      position: absolute;
+      right: 22px;
+      bottom: 92px;
+      min-width: 116px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel-bg);
+      text-align: right;
+      line-height: 1.5;
+    }
+    .weapon-panel .wp-name {
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      color: #ffcf6a;          /* 実体弾のときの色 */
+    }
+    .weapon-panel.beam .wp-name { color: var(--text); }   /* ビームのときは緑 */
+
+    .weapon-panel .wp-ammo {
+      font-size: 22px;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .weapon-panel .wp-jp  { font-size: 9px; letter-spacing: 0.1em; color: var(--dim); }
+    .weapon-panel .wp-sub { font-size: 9px; letter-spacing: 0.1em; color: var(--dim); }
+
+    /* 残弾が少ない、または電力不足で撃てないとき */
+    .weapon-panel.low { border-color: #a83a26; }
+    .weapon-panel.low .wp-ammo { color: #ff5a3c; }
+
+    /* コックピットでは計器台の上に載せる */
+    .hud.cockpit .weapon-panel { bottom: 118px; }
 
     /* =================================================================
        レーダースコープ(仕様書9.6「下段左:自機中心・精度は電力依存」)
@@ -625,6 +686,14 @@
     <!-- 撃墜数 -->
     <div class="kill-counter">KILLS <b id="kill-count">0</b><span style="font-size:11px">/<span id="kill-goal">10</span></span></div>
 
+    <!-- 兵装パネル(仕様書9.6 下段右) -->
+    <div class="weapon-panel beam" id="weapon-panel">
+      <div class="wp-name" id="wp-name">BEAM</div>
+      <div class="wp-jp" id="wp-jp">ビーム砲</div>
+      <div class="wp-ammo"><b id="wp-ammo">∞</b></div>
+      <div class="wp-sub">熱 <span id="wp-heat">+8</span> &nbsp; R 切替</div>
+    </div>
+
     <!-- 戦闘ログ(HIT / KILL) -->
     <div class="combat-log" id="combat-log"></div>
 
@@ -651,7 +720,7 @@
     <!-- 左:熱(仕様書9.6「左縦:HEATゲージ」) -->
     <div class="hud-left">
       <div class="panel panel-heat" id="heat-panel">
-        <div class="gauge">
+        <div class="gauge" data-system="heat">
           <div class="gauge-key">V</div>
           <div class="gauge-tube"><div class="gauge-bar" id="heat-bar"></div></div>
           <div class="gauge-value"><span class="num" id="heat-num">0</span><span class="unit">%</span></div>
@@ -664,14 +733,14 @@
     <!-- 右:推進剤(仕様書9.6「右縦:推進剤ゲージ」)とシールド強度 -->
     <div class="hud-right">
       <div class="panel panel-status">
-        <div class="gauge">
+        <div class="gauge" data-system="propellant">
           <div class="gauge-key">Space</div>
           <div class="gauge-tube"><div class="gauge-bar" id="prop-bar"></div></div>
           <div class="gauge-value" id="prop-value"><span class="num" id="prop-num">100</span><span class="unit">%</span></div>
           <div class="gauge-label">推進剤<br><span class="en">PROPELLANT</span></div>
           <div class="sub-label">BURST −8</div>
         </div>
-        <div class="gauge">
+        <div class="gauge" data-system="shieldhp">
           <div class="gauge-key">H</div>
           <div class="gauge-tube"><div class="gauge-bar" id="shield-bar"></div></div>
           <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
@@ -721,7 +790,7 @@
       </div>
 
       <div class="help">
-        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; F 発射(熱+8) &nbsp; Space 回避バースト &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
+        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; Space 回避バースト &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
         <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
         &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト</span>
       </div>
@@ -736,7 +805,7 @@
         <div>被弾 <b id="r-hits">0</b></div>
         <div>残り時間 <b id="r-time">00:00</b></div>
       </div>
-      <div class="result-hint">R キーで再出撃</div>
+      <div class="result-hint">Enter キーで再出撃</div>
     </div>
 
     <div class="shutdown-overlay">

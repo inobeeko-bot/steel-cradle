@@ -42,6 +42,7 @@ const VOICE = {
     SHIELD_FIFTY:     { text: 'SHIELD FIFTY PERCENT.',       priority: 1 },
     ONE_MINUTE:       { text: 'ONE MINUTE.',                 priority: 1 },
     FUEL_LOW:         { text: 'FUEL LOW.',                   priority: 1 },
+    AMMO_DEPLETED:    { text: 'AMMO DEPLETED.',              priority: 1 },
   },
 };
 
