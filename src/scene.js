@@ -28,6 +28,9 @@ let sceneReady = false;   // 3Dの準備ができたか
 const FEEL = {
   // --- 1. 機体の慣性 ---
   TURN_SPEED:   0.80,   // 最大の旋回速度(ラジアン/秒。約46度/秒)
+  ROLL_SPEED:   1.30,   // Q/E のロール速度(ラジアン/秒。約75度/秒)
+                        //   ロールは視界が回るぶん酔いやすいので、
+                        //   速すぎると気持ち悪くなる。上げるときは少しずつ
   TURN_SMOOTH:  0.18,   // 旋回速度の立ち上がり・減衰にかかる時間(秒)
                         //   大きいほど重い機体。0にすると今までどおり即座に最高速
   BANK_ANGLE:   0.55,   // 旋回時に機体を傾ける最大角(ラジアン。約32度)
@@ -67,17 +70,25 @@ const FEEL = {
 
 // --- 視点(機首の向き)の設定 ---------------------------------------
 // 仕様書9.6:W/S = ピッチ(上下) / A/D = ヨー(左右)
-const VIEW = {
-  PITCH_LIMIT: Math.PI * 0.45,  // 上下を向ける限界(約81度)。真上で一回転するのを防ぐ
-};
+// ===================================================================
+// 機体の姿勢
+//
+// ロール(Q/E)を入れたので、姿勢を「上下の角度・左右の角度」の2つで
+// 持つのをやめ、クォータニオン(回転そのものを表す数)1つで持つ形にした。
+//
+// 理由:横に90度傾いた状態で機首を上げたら、世界の上ではなく
+// 「機体から見た上」へ向かってほしい。角度2つで持っているとこれができない。
+// 毎コマ「機体から見た軸で少しだけ回す」を積み重ねると自然にそうなる。
+//
+// この形にすると上下の角度制限は意味を失う(一回転できるのが正しいため)。
+// ===================================================================
+let shipQuat = null;   // 操縦で作られる機体の向き。initScene で作る
 
-let viewPitch = 0;   // 上下の向き(ラジアン)。プラス=上
-let viewYaw   = 0;   // 左右の向き(ラジアン)。プラス=左
-
-// 今の「回転の速さ」。キー入力はこの値を動かし、この値が角度を動かす。
-// 入力→角度 を直結させず1段はさむことで、慣性のある動きになる。
+// 今の「回転の速さ」。キー入力はこの値を動かし、この値が姿勢を動かす。
+// 入力→姿勢 を直結させず1段はさむことで、慣性のある動きになる。
 let yawRate   = 0;   // ラジアン/秒
 let pitchRate = 0;
+let rollRate  = 0;
 
 let camQuat = null;  // カメラの向き。機体より少し遅れて追いつく。initScene で作る
 
@@ -420,6 +431,7 @@ function initScene() {
 
   shipVelocity = new THREE.Vector3(0, 0, 0);
   camQuat      = new THREE.Quaternion();   // カメラの向き(機体より少し遅れる)
+  shipQuat     = new THREE.Quaternion();   // 操縦で作られる機体の向き
 
   // --- 敵機(2機)---
   for (let i = 0; i < ENEMY_COUNT; i++) {
@@ -962,7 +974,7 @@ function layoutCockpitInterior() {
 // enginePercent … main.js が持っている電力配分の「エンジン」の値(0〜100)
 //
 // 【考え方】
-//  1. 機首の向き(viewPitch / viewYaw)から「前方」の向きを求める
+//  1. 機体の向き(shipQuat)から「前方」の向きを求める
 //  2. 目標の速度ベクトル = 前方 × 目標速度
 //  3. 今の速度をそこへ少しずつ寄せる(いきなり切り替えると機体が軽く感じる)
 //  4. 位置を速度のぶんだけ進める
@@ -994,12 +1006,11 @@ function updateFlight(dt, enginePercent) {
     * (1 + speedRatio * sway.SPEED_GAIN)
     * (drifting ? 1 + sway.DRIFT_GAIN : 1);
 
-  // Euler(上下, 左右, ひねり, 適用順)。ひねり(ロール)は0のままにして、
-  // 見た目の傾きは子(playerModel)だけに掛ける = カメラは水平のまま(酔い対策)
-  playerShip.quaternion.setFromEuler(new THREE.Euler(
-    viewPitch + swayPitch * swayAmp,
-    viewYaw   + swayYaw   * swayAmp,
-    0, 'YXZ'));
+  // 操縦で作った向き(shipQuat)に、アイドル揺れをほんの少し足す。
+  // 揺れも「機体から見た軸」で足すので、どんな姿勢でも同じ揺れ方になる。
+  const swayQuat = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(swayPitch * swayAmp, swayYaw * swayAmp, 0, 'XYZ'));
+  playerShip.quaternion.copy(shipQuat).multiply(swayQuat);
 
   // 操縦士の頭の揺れ。機首とは別の位相で揺らすことで、
   // 内装(計器台・照準器)が画面の中でわずかに漂う = 機内にいる感覚になる。
@@ -1034,8 +1045,8 @@ function updateFlight(dt, enginePercent) {
 
   // --- 自動バンク(旋回している方向へ機体を倒す)---
   // キー入力ではなく「今の実際の旋回速度」から傾きを決める。
-  // こうすると、慣性で回り続けている間は傾いたままになり、
-  // 速度が落ちるにつれて自然に水平へ戻る。
+  // Q/E で本物のロールができるようになったので、こちらは
+  // 「旋回に合わせて機体が少し傾く」程度の飾りに留める。
   const rollTarget = (yawRate / FEEL.TURN_SPEED) * FEEL.BANK_ANGLE;
   visualRoll += (rollTarget - visualRoll) * (1 - Math.exp(-dt / Math.max(FEEL.BANK_SMOOTH, 0.0001)));
   playerModel.rotation.z = visualRoll;
@@ -1165,10 +1176,10 @@ function resetFlight() {
   // 自機を原点・静止・正面向きへ
   playerShip.position.set(0, 0, 0);
   shipVelocity.set(0, 0, 0);
-  viewPitch = 0;
-  viewYaw = 0;
+  shipQuat.identity();
   yawRate = 0;
   pitchRate = 0;
+  rollRate = 0;
   visualRoll = 0;
   camSpeedEase = 0;
   drifting = false;
@@ -1191,6 +1202,22 @@ function resetFlight() {
 function speedFromEnginePower(enginePercent) {
   const ratio = Math.max(0, Math.min(100, enginePercent)) / 100;
   return PLAYER.MIN_SPEED + ratio * (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED);
+}
+
+// 今のロール角(ラジアン)。水平からどれだけ傾いているか。
+// 「機体の右」が世界の水平からどれだけ持ち上がっているかで測る。
+function currentRoll() {
+  if (!sceneReady) return 0;
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(playerShip.quaternion);
+  const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(playerShip.quaternion);
+  return Math.atan2(right.y, up.y);
+}
+
+// 機首が水平からどれだけ上下しているか(ラジアン)
+function currentPitch() {
+  if (!sceneReady) return 0;
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  return Math.asin(Math.max(-1, Math.min(1, fwd.y)));
 }
 
 // 今の速度(単位/秒)。計器表示に使う
@@ -1348,13 +1375,14 @@ function updateDust() {
 // キーの割り当てや反転設定は main.js 側の仕事。ここは「言われた向きに回す」だけにする。
 // カメラ自体を回すことで「機首を向ける」を表現している(コックピット視点)。
 // ===================================================================
-function turnView(dt, pitchDir, yawDir) {
+function turnView(dt, pitchDir, yawDir, rollDir) {
   if (!sceneReady) return;
 
   // --- 目標の回転速度 ---
-  // キーを押している間だけ「最大の旋回速度」を目標にする。
+  // キーを押している間だけ「最大の回転速度」を目標にする。
   const targetYawRate   = yawDir   * FEEL.TURN_SPEED;
   const targetPitchRate = pitchDir * FEEL.TURN_SPEED;
+  const targetRollRate  = (rollDir || 0) * FEEL.ROLL_SPEED;
 
   // --- 今の回転速度を目標へ寄せる ---
   // ここが慣性の正体。押した瞬間に最高速で回らず、離しても即座には止まらない。
@@ -1362,20 +1390,18 @@ function turnView(dt, pitchDir, yawDir) {
   const k = 1 - Math.exp(-dt / Math.max(FEEL.TURN_SMOOTH, 0.0001));
   yawRate   += (targetYawRate   - yawRate)   * k;
   pitchRate += (targetPitchRate - pitchRate) * k;
+  rollRate  += (targetRollRate  - rollRate)  * k;
 
-  // --- 回転速度で角度を動かす ---
-  viewYaw   += yawRate   * dt;
-  viewPitch += pitchRate * dt;
+  // --- 「機体から見た軸」で少しだけ回す ---
+  // multiply は「今の向きに、さらにこの回転を足す」という意味になる。
+  // 掛ける順を後ろにすると、世界の軸ではなく機体の軸で回る。
+  // これにより、横に傾いた状態で機首を上げれば機体基準の上へ向く。
+  const step = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(pitchRate * dt, yawRate * dt, rollRate * dt, 'XYZ'));
+  shipQuat.multiply(step);
+  shipQuat.normalize();   // 計算誤差が溜まって歪むのを防ぐ
 
-  // 上下は限界を設ける。Math.max/min で挟むと「一定の範囲から出さない」ができる
-  const clamped = Math.max(-VIEW.PITCH_LIMIT, Math.min(VIEW.PITCH_LIMIT, viewPitch));
-  // 限界に当たったら回転速度も止める。そうしないと勢いが溜まり、
-  // 逆に倒したときに引っかかったような操作感になる。
-  if (clamped !== viewPitch) pitchRate = 0;
-  viewPitch = clamped;
-
-  // 左右は制限なし(ぐるりと一周できる)
-  // ※ 実際に機体とカメラを向けるのは updateFlight()。ここでは角度を決めるだけ。
+  // ※ 実際に機体とカメラを向けるのは updateFlight()。ここでは向きを決めるだけ。
 }
 
 // ===================================================================

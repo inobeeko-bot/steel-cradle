@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-28 weapons';
+const BUILD = 'p1-29 roll';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -1303,7 +1303,12 @@ function updateView(dt) {
   if (keysHeld.has('a')) yawDir += 1;
   if (keysHeld.has('d')) yawDir -= 1;
 
-  turnView(dt, pitchDir, yawDir);
+  // Q=左へ傾ける / E=右へ傾ける(仕様書9.6:Q/E ロール)
+  let rollDir = 0;
+  if (keysHeld.has('q')) rollDir += 1;
+  if (keysHeld.has('e')) rollDir -= 1;
+
+  turnView(dt, pitchDir, yawDir, rollDir);
 }
 
 // 1コマぶんの状態更新。dt = 経過秒数
