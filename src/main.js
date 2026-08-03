@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-35 bomb/emp';
+const BUILD = 'p1-36 pyro-shell';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -40,7 +40,7 @@ const HEAT = {
   WARN:            80,   // 警告域。ゲージの赤線の位置
   PER_WEAPON:     0.35,  // 武器配分1%につき、毎秒たまる熱の量(武器50%なら 17.5/秒)
   VENT_BASE:      6.0,   // 自然放熱。真空なので「遅い」のがこのゲームの肝(仕様書9.3)
-  VENT_RADIATOR: 22.0,   // ラジエーター展開中に上乗せされる放熱量
+  VENT_RADIATOR: 8.0,   // ラジエーター展開中に上乗せされる放熱量
   VENT_SHUTDOWN: 30.0,   // 強制シャットダウン中の冷却量
   SHUTDOWN_SEC:   4.0,   // 無防備になる秒数
 
@@ -172,11 +172,11 @@ const WEAPONS = [
     label: 'PYRO',        // パイロフォリック弾
     jp: 'パイロ弾',
     heat: 1.5,            // 自分の熱はほとんど出ない
-    ammo: 40,             // 機関砲より少ない
+    ammo: 24,             // 1発が範囲攻撃なので、機関砲よりずっと少ない
     minPower: 0,
     auto: true,
-    interval: 0.22,       // 機関砲より遅い
-    pyro: true,           // ★ 着弾で敵の熱を上げる
+    interval: 0.30,       // 機関砲より遅い
+    shell: 'pyro',        // ★ 弾ではなく「一定距離で炸裂する砲弾」として撃つ
     boltColor: 0xff7a2a,
   },
   {
@@ -468,8 +468,11 @@ function renderHeat() {
 
   // いちばん近い敵の熱。パイロ弾がどれだけ効いているかを見せる
   const eHeat = nearestEnemyHeat();
-  enemyHeatEl.textContent = eHeat;
-  enemyHeatEl.style.color = eHeat >= 70 ? '#ff5a3c' : (eHeat >= 35 ? '#ffcf6a' : '');
+  const ventDown = nearestEnemyVentDown();
+  // ▼ が付いている間は敵が熱を捨てられない = パイロ弾のデバフが効いている
+  enemyHeatEl.textContent = eHeat + (ventDown ? ' ▼' : '');
+  enemyHeatEl.style.color = ventDown ? '#ff7a2a'
+                          : (eHeat >= 70 ? '#ff5a3c' : (eHeat >= 35 ? '#ffcf6a' : ''));
 
   // 敵AIの状態(接近/攻撃/発射/回避)。動作確認しやすいよう計器に出しておく
   const aiState = currentEnemyState();
@@ -1463,8 +1466,15 @@ function fireOnce(w) {
   if (ammo[index] !== Infinity) ammo[index] -= 1;
 
   heat = Math.min(heat + w.heat, HEAT.MAX);
-  fireBolt(w.boltColor, w.pyro);   // scene.js:弾を飛ばす
-  playFireSound();
+
+  if (w.shell) {
+    // 一定距離を飛んでから炸裂する砲弾(パイロ弾)
+    launchOrdnance(w.shell);
+    playOrdnanceLaunch(false);
+  } else {
+    fireBolt(w.boltColor);   // scene.js:弾を飛ばす
+    playFireSound();
+  }
 
   // 撃った手応え。被弾(0.55)よりずっと弱い、ごく小さな振動
   startShake(FEEL.SHAKE_FIRE);
@@ -1549,6 +1559,16 @@ function switchArea() {
 
 // 範囲攻撃が炸裂した。hit=巻き込んだ機数 / killed=そのうち撃墜した数
 function onAreaBlast(kind, hit, killed) {
+  if (kind === 'pyro') {
+    // パイロ弾は毎秒何発も出るので、音とログは当たったときだけにする
+    playEnemyHit();
+    if (hit > 0) {
+      addCombatLog('PYRO ― ' + hit + '機に燃焼片', 'warn');
+      speakVoice('TARGET_OVERHEAT');
+    }
+    return;
+  }
+
   playBlast(kind === 'emp');
 
   if (kind === 'emp') {
@@ -1565,6 +1585,20 @@ function onPlayerBlast(damage) {
   if (damage <= 0) return;
   addCombatLog('自爆 ― 爆風', 'hull');
   takeDamage(damage);
+}
+
+// 自分のパイロ弾の燃焼片を浴びた。近すぎる相手に撒くと自分の熱が上がる
+function onPlayerPyro(heatAdd) {
+  if (heatAdd <= 0) return;
+  heat = Math.min(heat + heatAdd, HEAT.MAX);
+  addCombatLog('自機に燃焼片 ― 熱+' + Math.round(heatAdd), 'hull');
+  if (heat >= HEAT.MAX) {
+    heat = HEAT.MAX;
+    shutdownLeft = HEAT.SHUTDOWN_SEC;
+    burstLeft = 0;
+    playShutdown();
+    speakVoice('POWER_FAILURE');
+  }
 }
 
 // 自分のEMPに巻き込まれた。

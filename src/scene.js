@@ -218,9 +218,24 @@ const BOLT = {
   // 射程が短いと「振り向き撃ち」が成立しない。ここを詰めて射程を確保している。
   LIFE:    2.2,
   COLOR:   0x9fe1cb,  // 自機の兵装色(計器と同じ蛍光グリーン)
-  OFFSET_X: 1.3,      // 発射口の左右の位置(自機の翼の位置)
-  OFFSET_Y: -0.8,     // 発射口の高さ(少し下)
-  OFFSET_Z: -2.5,     // 発射口の前後(少し前)
+  // --- 発射口の位置(自機の中心から見た相対位置)---
+  // 左右は実際の主翼の先(モデル座標 x=±2.05、機体スケール0.85 → ±1.74)に合わせ、
+  // 前後は「主翼から前へ突き出した砲身の先」の位置に置いてある。
+  //
+  // 発射口は「両翼の前に出した砲身の先」に置いてある。世界の座標として1か所しか
+  // 持たないので、三人称でもコックピットでも同じ場所から弾が出る。
+  //
+  // 見え方は視点で変わるが、どちらも正しい見え方になる:
+  //   三人称     … 主翼の先が光り、そこから2条が出て前方で交わる
+  //   コックピット … 発射口は目(EYE_FORWARD=0.70)より外側かつほぼ真横なので、
+  //                 発射炎自体は視野の外。弾は画面の左右下の縁から現れ、
+  //                 内側へ切れ上がって照準に集まる = 両翼から出ていることが分かる
+  //
+  // 「発射炎が見えない」のは省略ではなく、実機のコックピットでも
+  // 自分の翼下の銃口は見えず、見えるのは前方へ伸びる曳光だけ、という事情と同じ。
+  OFFSET_X: 1.62,     // 発射口の左右の位置(主翼の先の少し内側)
+  OFFSET_Y: -0.15,    // 発射口の高さ(主翼の面)
+  OFFSET_Z: -1.20,    // 発射口の前後(主翼から前へ出した砲身の先)
 };
 
 let bolts = [];            // 飛んでいる弾のリスト
@@ -313,8 +328,8 @@ const AIM = {
 //      「勝手に動いた」と分かるようになる。
 const ASSIST = {
   ENABLED:   true,
-  CONE:      0.048,  // 効き始める角度(ラジアン)。約2.7度=照準のすぐ内側だけ
-  MAX_RATE:  0.13,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)の約1/6
+  CONE:      0.060,  // 効き始める角度(ラジアン)。約3.4度=照準のすぐ内側だけ
+  MAX_RATE:  0.17,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)の約1/5
   RANGE:      220,   // これより遠い敵には効かない
   MIN_RANGE:    8,   // 近すぎる敵には効かない(すれ違いで振り回されるため)
 };
@@ -376,12 +391,29 @@ let flareGeometry = null;
 //   1. 敵のシャットダウンを誘発する
 //   2. 熱放射は隠せない = クロークを炙り出すマーキング(神器9への対策)
 // 真空でも燃えるよう「酸化剤入りの燃焼体を付着させる弾」という理屈。
+// 撃ち方は「弾」だが、当てるのではなく一定距離を飛んだところで炸裂し、
+// 燃焼片を面でばらまく。当たり判定の細かさではなく、
+// 「敵の進路にばらまいて熱を押し上げる」武器として使う。
 const PYRO = {
-  DAMAGE:        1,   // HPを削る力は弱い
-  HEAT_ADD:     34,   // 着弾で敵のHEATに加える量
+  SPEED:        72,   // 弾として撃つので速い。ビーム(90)よりわずかに遅い
+  ARM_DIST:     60,   // これだけ飛ぶと自分から炸裂する(時限ではなく距離の信管)
+  PROX_RADIUS:   7,   // 敵にこれだけ近づいても炸裂する(近接信管)
+  RADIUS:       22,   // 炸裂して燃焼片が届く範囲
+  DAMAGE:        1,   // HPを削る力は弱い。狙いはあくまで熱
+  HEAT_ADD:     34,   // 炸裂の中心で敵のHEATに加える量
   BURN_SEC:    5.0,   // 燃え続ける秒数(この間ずっと熱が入り続ける)
   BURN_RATE:     7,   // 燃焼中に毎秒加わる熱
   MARK_SEC:    6.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
+
+  // --- 熱に基づくデバフ(この武器の本命)---
+  // 燃焼片が放熱面にこびりついて、熱を捨てられなくする。
+  // 敵は「熱が入る」だけでなく「熱を逃がせない」状態になるので、
+  // 撃ち続ければ自分の発熱だけで勝手にシャットダウンへ向かう。
+  VENT_MULT:  0.30,   // 放熱能力をこの割合まで落とす(毎秒9.0 → 2.7)
+  DEBUFF_SEC:  8.0,   // 放熱不能が続く秒数
+
+  SELF_RADIUS:  14,   // 自機がこれより近いと自分も浴びる
+  SELF_HEAT:    22,   // 浴びたときに自分の熱に加わる量
   COLOR: 0xff7a2a,
 };
 
@@ -422,8 +454,9 @@ let blastGeometry    = null;
 // 敵のHEAT。100を超えると自機と同じく強制シャットダウンする。
 const ENEMY_HEAT = {
   MAX:          100,
-  VENT:         9.0,  // 敵の自然放熱(毎秒)
-  SHUTDOWN_SEC: 3.5,  // 停止している秒数。この間は無防備で動かない
+  VENT:          9.0, // 敵の自然放熱(毎秒)
+  VENT_SHUTDOWN: 26.0,// 停止中の非常冷却(毎秒)。自機の30に相当する
+  SHUTDOWN_SEC:  3.5, // 停止している秒数。この間は無防備で動かない
 };
 
 // --- 敵のミサイルとフレア -------------------------------------------
@@ -1641,7 +1674,7 @@ function applyAimAssist(dt) {
 // 射撃(仕様書9.6:F=主兵装発射)
 // 命中判定はまだ入れない。まずは「撃った」ことが見て分かる状態にする。
 // ===================================================================
-function fireBolt(color, isPyro) {
+function fireBolt(color) {
   if (!sceneReady) return;
   const boltColor = (color === undefined) ? BOLT.COLOR : color;
 
@@ -1662,6 +1695,17 @@ function fireBolt(color, isPyro) {
 
   volleyCounter += 1;   // この発射の通し番号
 
+  // --- 弾道の集束点(ガン・ハーモナイゼーション)---
+  // 左右の発射口から真っすぐ前へ撃つと、弾は平行に飛んで永久に交わらない。
+  // 実機の機銃も、ある距離で弾道が交わるように銃を内側へ向けて据え付けてある。
+  // ここでは照準の先(FEEL.AIM_DISTANCE)を集束点にしているので、
+  //   ・三人称 … 両翼から出た弾が前方で1点に集まる
+  //   ・コックピット … 画面の左右下から入ってきてレティクルに集まる
+  // と、どちらの視点でも「両翼から撃っている」ことが同じ理屈で見える。
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  const convergePoint = playerShip.position.clone()
+    .addScaledVector(forward, FEEL.AIM_DISTANCE);
+
   // 左右の翼から1条ずつ(合わせて「1発」として数える)
   for (const side of [-1, 1]) {
     const mesh = new THREE.Mesh(boltGeometry, boltMaterialFor(boltColor));
@@ -1672,16 +1716,23 @@ function fireBolt(color, isPyro) {
     const offset = new THREE.Vector3(side * BOLT.OFFSET_X, BOLT.OFFSET_Y, BOLT.OFFSET_Z);
     offset.applyQuaternion(playerShip.quaternion);
     mesh.position.copy(playerShip.position).add(offset);
-    mesh.quaternion.copy(playerShip.quaternion);    // 弾も進行方向を向かせる
 
-    // 進む向き = 機首の正面(-Z方向)
-    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+    // 進む向き = 発射口から集束点へ。真っすぐ前ではなく、わずかに内側を向く
+    const direction = convergePoint.clone().sub(mesh.position).normalize();
+
+    // 弾(と残光)を進行方向へ向ける。lookAt は -Z が相手を向く向きを作るので、
+    // 進む向きを反転して渡す。
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(
+      new THREE.Vector3(0, 0, 0), direction.clone().negate(), new THREE.Vector3(0, 1, 0)));
 
     scene.add(mesh);
     bolts.push({
       mesh: mesh, direction: direction, life: BOLT.LIFE,
-      volleyId: volleyCounter, pyro: !!isPyro,
+      volleyId: volleyCounter,
     });
+
+    // 発射口が一瞬光る。これが「どこから出たか」を目に残す
+    spawnMuzzleFlash(mesh.position, boltColor);
   }
 }
 
@@ -1913,13 +1964,15 @@ function updateFlares(dt) {
 function launchOrdnance(kind) {
   if (!sceneReady) return false;
 
-  const cfg = (kind === 'emp') ? EMP : BOMB;
+  const cfg = ordnanceConfig(kind);
+  const isPyro = (kind === 'pyro');
 
   // 八面体。ローポリのまま「弾頭とは違う何か」に見える形を選んでいる
   if (!ordnanceGeometry) ordnanceGeometry = new THREE.OctahedronGeometry(0.55);
 
   const material = new THREE.MeshBasicMaterial({ color: cfg.COLOR });
   const mesh = new THREE.Mesh(ordnanceGeometry, material);
+  if (isPyro) mesh.scale.setScalar(0.5);   // パイロ弾は「弾」なので小さい
 
   // 輪郭線を付けて、他のローポリと見た目を揃える
   const edges = new THREE.LineSegments(
@@ -1929,34 +1982,73 @@ function launchOrdnance(kind) {
   mesh.add(edges);
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
-  mesh.position.copy(playerShip.position).addScaledVector(forward, 2.2);
+
+  // パイロ弾は主兵装なので、機関砲と同じく翼から撃つ。
+  // ボム/EMPは機体の下から前へ放り出す。
+  if (isPyro) {
+    const side = new THREE.Vector3(1, 0, 0).applyQuaternion(playerShip.quaternion);
+    const sign = (ordnance.length % 2 === 0) ? 1 : -1;   // 左右交互
+    mesh.position.copy(playerShip.position)
+      .addScaledVector(forward, 1.5)
+      .addScaledVector(side, sign * BOLT.OFFSET_X);
+  } else {
+    mesh.position.copy(playerShip.position).addScaledVector(forward, 2.2);
+  }
   scene.add(mesh);
 
   ordnance.push({
     mesh: mesh,
     // 自機の速度 + 前方への射出速度。ドリフト中に撒くと真横へ流れていく
     velocity: shipVelocity.clone().addScaledVector(forward, cfg.SPEED),
-    fuse: cfg.FUSE,
     kind: kind,
+    // ボム/EMPは「何秒後」、パイロ弾は「何メートル飛んだら」で炸裂する
+    fuse: isPyro ? Infinity : cfg.FUSE,
+    travelLeft: isPyro ? PYRO.ARM_DIST : Infinity,
   });
   return true;
 }
 
-// 投げた弾を進め、信管の時間が来たら炸裂させる
+// 種類ごとの設定表を引く。3種とも同じ仕組みで飛ばせるようにまとめてある
+function ordnanceConfig(kind) {
+  if (kind === 'emp')  return EMP;
+  if (kind === 'pyro') return PYRO;
+  return BOMB;
+}
+
+// 投げた弾を進め、信管が働いたら炸裂させる
 function updateOrdnance(dt) {
   for (let i = ordnance.length - 1; i >= 0; i--) {
     const o = ordnance[i];
 
+    const move = o.velocity.length() * dt;   // このコマで進む距離
     o.mesh.position.addScaledVector(o.velocity, dt);
     o.mesh.rotation.x += 4 * dt;    // くるくる回して「投げた物」らしく見せる
     o.mesh.rotation.y += 5.5 * dt;
 
-    o.fuse -= dt;
-    // 炸裂が近づくと点滅を速める(いつ爆発するか読めるようにする)
-    const blink = Math.sin(o.fuse * (o.fuse < 0.6 ? 40 : 14));
-    o.mesh.visible = blink > -0.4;
+    let blow = false;
 
-    if (o.fuse <= 0) {
+    if (o.kind === 'pyro') {
+      // --- 距離の信管 ---
+      o.travelLeft -= move;
+      if (o.travelLeft <= 0) blow = true;
+
+      // --- 近接信管:敵のそばを通れば、そこで炸裂する ---
+      if (!blow) {
+        for (const e of enemies) {
+          if (!e.alive) continue;
+          if (o.mesh.position.distanceTo(e.group.position) < PYRO.PROX_RADIUS) { blow = true; break; }
+        }
+      }
+    } else {
+      // --- 時限信管 ---
+      o.fuse -= dt;
+      // 炸裂が近づくと点滅を速める(いつ爆発するか読めるようにする)
+      const blink = Math.sin(o.fuse * (o.fuse < 0.6 ? 40 : 14));
+      o.mesh.visible = blink > -0.4;
+      if (o.fuse <= 0) blow = true;
+    }
+
+    if (blow) {
       detonateOrdnance(o);
       scene.remove(o.mesh);
       o.mesh.material.dispose();
@@ -1973,11 +2065,11 @@ function updateOrdnance(dt) {
 // 結果を main.js に返して、ログと音はそちらに任せる。
 // ===================================================================
 function detonateOrdnance(o) {
-  const cfg = (o.kind === 'emp') ? EMP : BOMB;
+  const cfg = ordnanceConfig(o.kind);
   const pos = o.mesh.position.clone();
 
   spawnBlast(pos, cfg.RADIUS, cfg.COLOR);
-  spawnDebris(pos, 14, 0.30, 22);
+  spawnDebris(pos, o.kind === 'pyro' ? 10 : 14, 0.30, o.kind === 'pyro' ? 16 : 22);
 
   let hitCount = 0;
   let killCountHere = 0;
@@ -1992,7 +2084,20 @@ function detonateOrdnance(o) {
     e.hitFlash = ENEMY.FLASH_SEC;
     e.heatSig  = SENSOR.HEAT_LINGER;
 
-    if (o.kind === 'emp') {
+    if (o.kind === 'pyro') {
+      // 燃焼片を浴びせる。熱を「入れる」だけでなく「逃がせなくする」のが本命。
+      hitCount += 1;
+      e.heat += PYRO.HEAT_ADD * falloff;
+      e.burnLeft = Math.max(e.burnLeft, PYRO.BURN_SEC * falloff);
+      e.ventDown = Math.max(e.ventDown, PYRO.DEBUFF_SEC * falloff);
+      e.heatSig  = Math.max(e.heatSig, PYRO.MARK_SEC);
+      // HPを削る力は弱い。中心付近でだけ1減る
+      if (falloff > 0.5) {
+        e.hp -= PYRO.DAMAGE;
+        if (e.hp <= 0) { killEnemy(e); killCountHere += 1; }
+      }
+
+    } else if (o.kind === 'emp') {
       // 電力を落とす。HPは1も減らないが、範囲内の敵は数秒なにもできない
       e.empLeft = Math.max(e.empLeft, EMP.STUN_SEC * falloff);
       e.telegraph = 0;
@@ -2020,6 +2125,15 @@ function detonateOrdnance(o) {
   const selfDist = playerShip.position.distanceTo(pos);
   if (o.kind === 'emp') {
     if (selfDist <= EMP.SELF_RADIUS) onPlayerEmp(EMP.SELF_SEC);
+
+  } else if (o.kind === 'pyro') {
+    // 自分の燃焼片を浴びると、自分の熱も上がる。
+    // 近すぎる相手にパイロを撒くと自分が先に熱で落ちる、という関係になる。
+    if (selfDist <= PYRO.SELF_RADIUS) {
+      const falloff = 1 - selfDist / PYRO.SELF_RADIUS;
+      onPlayerPyro(PYRO.SELF_HEAT * falloff);
+    }
+
   } else {
     if (selfDist <= BOMB.SELF_RADIUS) {
       const falloff = 1 - selfDist / BOMB.SELF_RADIUS;
@@ -2045,13 +2159,43 @@ function spawnBlast(position, radius, color) {
   blasts.push({ mesh: mesh, radius: radius, life: 0.55, maxLife: 0.55 });
 }
 
+// ===================================================================
+// 発射炎(マズルフラッシュ)
+//
+// 弾そのものは速すぎて、どこから出たのかが目に残らない。
+// 発射口の位置に一瞬だけ光を置くことで、
+//   ・コックピット … 画面の左右下の隅がパッと光る = 両翼から撃っている
+//   ・三人称     … 主翼の先が光る
+// と、同じ1つの光がどちらの視点でも「発射口はここ」を伝える。
+// ===================================================================
+function spawnMuzzleFlash(position, color) {
+  if (!blastGeometry) blastGeometry = new THREE.IcosahedronGeometry(1, 1);
+
+  const material = new THREE.MeshBasicMaterial({
+    color: color, transparent: true, opacity: 0.95,
+  });
+  const mesh = new THREE.Mesh(blastGeometry, material);
+  mesh.position.copy(position);
+  mesh.scale.setScalar(0.42);
+  scene.add(mesh);
+
+  // shrink: true = ふくらまずに、しぼみながら消える
+  blasts.push({ mesh: mesh, radius: 0.42, life: 0.09, maxLife: 0.09, shrink: true });
+}
+
 function updateBlasts(dt) {
   for (let i = blasts.length - 1; i >= 0; i--) {
     const b = blasts[i];
     b.life -= dt;
     const t = 1 - Math.max(b.life / b.maxLife, 0);   // 0 → 1
-    b.mesh.scale.setScalar(b.radius * (0.2 + t * 0.8));
-    b.mesh.material.opacity = 0.42 * (1 - t);
+
+    if (b.shrink) {
+      b.mesh.scale.setScalar(b.radius * (1 - t * 0.7));
+      b.mesh.material.opacity = 0.95 * (1 - t);
+    } else {
+      b.mesh.scale.setScalar(b.radius * (0.2 + t * 0.8));
+      b.mesh.material.opacity = 0.42 * (1 - t);
+    }
 
     if (b.life <= 0) {
       scene.remove(b.mesh);
@@ -2088,14 +2232,6 @@ function updateBolts(dt) {
       if (isFirstOfVolley) lastDamagedVolley = bolt.volleyId;
 
       hitEnemy(struck, bolt.mesh.position, isFirstOfVolley);
-
-      // パイロ弾は着弾で燃焼片が付着し、敵の熱を跳ね上げる
-      if (bolt.pyro && isFirstOfVolley) {
-        struck.heat += PYRO.HEAT_ADD;
-        struck.burnLeft = PYRO.BURN_SEC;
-        struck.heatSig = Math.max(struck.heatSig, PYRO.MARK_SEC);
-        spawnDebris(bolt.mesh.position, 9, 0.2, 8);
-      }
       scene.remove(bolt.mesh);
       bolts.splice(i, 1);
       continue;   // この弾はもう無いので、次の弾へ
@@ -2151,6 +2287,7 @@ function createEnemy() {
     // 熱(パイロ弾で上がる)。100超えで強制シャットダウン
     heat: 0,
     burnLeft: 0,       // パイロ弾で燃えている残り秒数
+    ventDown: 0,       // 放熱できない残り秒数(パイロ弾のデバフ)
     heatDown: 0,       // 熱で停止している残り秒数
 
     // EMPで電力を落とされている残り秒数。この間は動けず撃てない
@@ -2186,15 +2323,31 @@ function updateEnemyAI(e, dt) {
     e.heat += PYRO.BURN_RATE * dt;           // 燃えている間ずっと熱が入る
     e.heatSig = Math.max(e.heatSig, 0.3);    // 燃えていると熱で丸見えになる
   }
-  e.heat = Math.max(e.heat - ENEMY_HEAT.VENT * dt, 0);
 
-  // 強制シャットダウン中は何もできない(自機と同じ)
+  // 放熱不能のデバフ。燃焼片が放熱面をふさいでいる間は熱を捨てられない。
+  // 燃焼が終わってもしばらく続くので、追撃で押し切れる時間が生まれる。
+  let vent = ENEMY_HEAT.VENT;
+  if (e.ventDown > 0) {
+    e.ventDown -= dt;
+    vent *= PYRO.VENT_MULT;
+  }
+
+  // 強制シャットダウン中は何もできない(自機と同じ)。
+  // ただし停止中は非常冷却が働くので、放熱不能のデバフを振り切って一気に冷える。
+  // こうしないと「熱が下がりきらず再び停止」がくり返され、
+  // 一度パイロを当てただけで永久に動けなくなってしまう。
   if (e.heatDown > 0) {
     e.heatDown -= dt;
+    e.burnLeft = 0;      // 非常冷却で燃焼片を吹き飛ばす
+    e.ventDown = 0;
+    e.heat = Math.max(e.heat - ENEMY_HEAT.VENT_SHUTDOWN * dt, 0);
     e.telegraph = 0;
     e.missileTele = 0;
     return;
   }
+
+  e.heat = Math.max(e.heat - vent * dt, 0);
+  e.heat = Math.min(e.heat, ENEMY_HEAT.MAX);   // 表示が100を超えないようにする
 
   // --- EMPで電力を落とされている間も何もできない ---
   // 熱による停止と結果は同じだが、原因が違う(熱=自分の発熱 / EMP=撃たれた)。
@@ -2529,15 +2682,27 @@ function currentEnemyState() {
   return { approach: 'APPROACH', attack: 'ATTACK', evade: 'EVADE' }[nearest.state];
 }
 
-// いちばん近い敵の熱(0〜100)。計器に出して、パイロ弾の効きを見せる
-function nearestEnemyHeat() {
+// いちばん近い敵を返す(計器表示用)
+function nearestEnemy() {
   let best = null, bestD = Infinity;
   for (const e of enemies) {
     if (!e.alive) continue;
     const d = e.group.position.distanceTo(playerShip.position);
     if (d < bestD) { bestD = d; best = e; }
   }
-  return best ? Math.round(best.heat) : 0;
+  return best;
+}
+
+// いちばん近い敵の熱(0〜100)。計器に出して、パイロ弾の効きを見せる
+function nearestEnemyHeat() {
+  const e = nearestEnemy();
+  return e ? Math.round(e.heat) : 0;
+}
+
+// いちばん近い敵が「放熱できない」状態か。パイロ弾のデバフが効いている印
+function nearestEnemyVentDown() {
+  const e = nearestEnemy();
+  return !!(e && e.ventDown > 0);
 }
 
 // 生きている敵の数(計器表示用)
@@ -2676,6 +2841,7 @@ function respawnEnemy(e) {
   e.telegraph = 0;
   e.heat = 0;
   e.burnLeft = 0;
+  e.ventDown = 0;
   e.heatDown = 0;
   e.empLeft = 0;
   e.missileAmmo = ENEMY_MISSILE.AMMO;
