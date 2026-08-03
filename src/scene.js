@@ -54,17 +54,20 @@ const FEEL = {
   },
 
   // --- 3. カメラの生命感 ---
-  CAM_PULL:        3.5,  // 最高速のときカメラが後ろへ引く距離
+  CAM_PULL:        6.0,  // 最高速のときカメラが後ろへ引く距離
   FOV_BASE:         70,  // 標準の視野角(度)
-  FOV_GAIN:          9,  // 最高速で広がる視野角(度)。大きいほど速度感が強い
-  CAM_SPEED_SMOOTH: 0.55,// 引き・視野角の追従時間(秒)
+  FOV_GAIN:         18,  // 最高速で広がる視野角(度)。大きいほど速度感が強い
+  CAM_SPEED_SMOOTH: 0.32,// 引き・視野角の追従時間(秒)。短いほど加速に鋭く反応する
+  // 回避バーストで最高速を超えたぶん、視野角と引きをどこまで伸ばすか。
+  // 1.0 で頭打ちにすると、噴射しても画面が何も変わらず「速くなった感じ」が出ない。
+  SPEED_OVER_MAX:  1.55,
   CAM_LAG_DRIFT:   0.40, // ドリフト中のカメラ追従時間(通常より緩める=滑ってる感)
   SHAKE_FIRE:      0.10, // 射撃時のごく小さな振動(被弾の 0.55 に対してごく弱く)
 
   // --- 4. 見た目の底上げ ---
   GLOW_FLICKER:   0.14,  // エンジン噴射光のゆらぎの大きさ
   BOLT_TRAIL:       11,  // ビームの残光の長さ
-  STAR_NEAR_COUNT: 700,  // 近い星の数(視差用の2層目)
+  STAR_NEAR_COUNT: 1200, // 近い星の数(視差用の2層目)。多いほど視差がよく効く
   STAR_NEAR_FIELD: 760,  // 近い星をばらまく立方体の一辺
 };
 
@@ -217,10 +220,25 @@ let drifting = false;
 // --- 流れる宇宙塵(速度感を出すための線)-----------------------------
 // 遠くの星だけでは動いている実感が出ないため、自機の周りに近距離の塵をばらまき、
 // 速度の逆向きに尾を引かせて「流れる線」に見せる。
+// 宇宙は「何もない」ので、そのままでは進んでいる実感が出ない。
+// 目の前を流れる塵だけが、速度をプレイヤーに伝える唯一の手がかりになる。
+// そのため数・長さともに、現実的な密度より大げさに寄せてある。
 const DUST = {
-  COUNT:   420,    // 塵の数
-  FIELD:   120,    // 自機を中心とした立方体の一辺の長さ。外へ出たら反対側へ回り込ませる
-  STREAK: 0.055,   // 尾の長さ(秒)。速いほど線が長く伸びる
+  COUNT:   900,    // 塵の数。多いほど「空間を突き抜けている」感じが強くなる
+  // 自機を中心とした立方体の一辺の長さ。外へ出たら反対側へ回り込ませる。
+  // 狭いほど塵が近くを通るので、低速でも「すれ違っている」ことが分かりやすい。
+  // 低速時の速度感はここが効く(尾の長さは速度に比例するため伸ばせない)。
+  FIELD:    95,
+
+  // 尾の長さは「速度 × STREAK × (速いほど増える倍率)」で決まる。
+  // 速度に正比例させるだけだと、低速と高速の差が見た目に出にくい。
+  // 速いほど倍率も上がる作りにすると、加速した瞬間に線が一気に伸びる。
+  STREAK:     0.13,   // 基本の尾の長さ(秒)
+  STREAK_GAIN: 2.6,   // 最高速で尾が何倍に伸びるか
+
+  // 濃さも速度で変える。止まっているときは控えめ、加速すると前が線だらけになる
+  OPACITY_BASE: 0.42,
+  OPACITY_GAIN: 0.48,
 };
 
 let dust = null;   // LineSegments(線の集まり)
@@ -325,14 +343,14 @@ const SENSOR = {
 const AIM = {
   CAPTURE_MULT:   2.2,   // 捕捉半径 = 敵の当たり半径 × これ
   CAPTURE_SPREAD: 0.05,  // 距離に応じて広がる分(遠い敵も捉えられるように)
-  CAPTURE_RANGE:  240,   // この距離より遠い敵は捕捉しない
+  CAPTURE_RANGE:  480,   // この距離より遠い敵は捕捉しない
 
   // --- ロックオン(武器仕様書:ミサイルは発射にセンサーロック必須)---
   // 捕捉を続けるとロックが進み、満ちると LOCKED になる。
   // かかる時間はセンサーの電力配分で変わる。
   // 「センサー厚め → ミサイル型」という配分スタイルの対応を、この数字が作る。
-  LOCK_SEC_MIN:  0.45,   // センサー100%のときのロック所要時間(秒)
-  LOCK_SEC_MAX:   1.6,   // センサー0%のときの所要時間
+  LOCK_SEC_MIN:  0.58,   // センサー100%のときのロック所要時間(秒)
+  LOCK_SEC_MAX:  2.08,   // センサー0%のときの所要時間
   LOCK_KEEP:      0.6,   // 照準から外れてもロックを保つ猶予(秒)
 };
 
@@ -522,6 +540,26 @@ let enemyBoltMaterial = null;
 let enemyVolleyCounter = 0;
 let lastPlayerHitVolley = -1;
 
+// --- 後方確認ミラー(コックピット視点だけ)---------------------------
+// 車のバックミラーと同じ役目。画面上部の小窓に、機体の後ろを映す。
+// 追われているかどうかを、振り向かずに知るための計器。
+//
+// 仕組みは「同じ空間をもう一度、別のカメラで、画面の一部にだけ描く」。
+// setScissor で描く範囲を小窓に限れば、本画面を消さずに上から重ねられる。
+const MIRROR = {
+  ENABLED: true,
+  WIDTH:  0.24,   // 小窓の幅(画面幅に対する割合)
+  HEIGHT: 0.15,   // 小窓の高さ(画面高さに対する割合)
+  TOP:    0.045,  // 画面上端からの余白(画面高さに対する割合)
+
+  // ミラーの視野角(上下)。
+  // 小窓は横長なので、上下の視野角をそのままにすると左右がとんでもなく広くなり、
+  // 星が中央に吸い寄せられたように歪んで、何が映っているのか分からなくなる。
+  // 本画面(70度)よりかなり狭くして、追ってくる機体が見える大きさに保つ。
+  FOV:       44,
+};
+let mirrorCamera = null;
+
 // 被弾時のカメラの揺れ。main.js が毎コマ setCameraShake() で渡してくる
 let camShakeX = 0;
 let camShakeY = 0;
@@ -576,6 +614,10 @@ function initScene() {
   // 回転の適用順。'YXZ' = 先に左右(Y)、次に上下(X)。
   // この順にしないと、上を向いた状態で左右に振ったときに首がねじれてしまう。
   camera.rotation.order = 'YXZ';
+
+  // --- 後方確認ミラー用のカメラ ---
+  // 本カメラと同じ空間を、後ろ向きに、もう一度描くために使う
+  mirrorCamera = new THREE.PerspectiveCamera(MIRROR.FOV, 2, 0.1, 3000);
 
   // --- 光 ---
   // フラットシェーディング(面ごとに単色)を活かすため、光は2つだけの単純構成にする。
@@ -1338,8 +1380,12 @@ function updateFlight(dt, enginePercent) {
   //
   // camQuat は「カメラの向き」。機体の向きへ slerp で寄せていくことで、
   // 機首が先に動き、カメラが少し遅れて追う = 重量感が出る。
-  // 速度に応じた「なめらかな速度の割合」。視野角とカメラの引きに使う
-  camSpeedEase += (speedRatio - camSpeedEase) *
+  // 速度に応じた「なめらかな速度の割合」。視野角とカメラの引きに使う。
+  // こちらは1で頭打ちにせず、バーストで最高速を超えたぶんも拾う。
+  const camRatio = Math.min(
+    Math.max(speedNow - PLAYER.MIN_SPEED, 0) / (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED),
+    FEEL.SPEED_OVER_MAX);
+  camSpeedEase += (camRatio - camSpeedEase) *
     (1 - Math.exp(-dt / Math.max(FEEL.CAM_SPEED_SMOOTH, 0.0001)));
 
   if (cockpitView) {
@@ -1673,10 +1719,20 @@ function updateDust() {
   const p    = playerShip.position;
   const half = DUST.FIELD / 2;
 
-  // 尾を伸ばす向き = 速度の逆向き。速いほど長い線になる
-  const tailX = -shipVelocity.x * DUST.STREAK;
-  const tailY = -shipVelocity.y * DUST.STREAK;
-  const tailZ = -shipVelocity.z * DUST.STREAK;
+  // 速度の割合(0〜1)。バーストで最高速を超えたときは1で頭打ちにせず、
+  // 少しだけ超えさせる ― 噴射した瞬間に線が跳ねるのはここが効いている。
+  const speedNow = shipVelocity.length();
+  const ratio = Math.min(speedNow / PLAYER.MAX_SPEED, 1.5);
+
+  // 尾を伸ばす向き = 速度の逆向き。速いほど長く、さらに倍率でもっと長くなる
+  const k = DUST.STREAK * (1 + ratio * DUST.STREAK_GAIN);
+  const tailX = -shipVelocity.x * k;
+  const tailY = -shipVelocity.y * k;
+  const tailZ = -shipVelocity.z * k;
+
+  // 濃さも速度で変える。加速すると前方が線で埋まる
+  dust.material.opacity = Math.min(
+    DUST.OPACITY_BASE + ratio * DUST.OPACITY_GAIN, 0.95);
 
   const center = [p.x, p.y, p.z];
 
@@ -2898,12 +2954,47 @@ function getContacts(sensorPercent) {
 
     result.push({
       localX: local.x,
+      localY: local.y,     // 自機から見た上下。レーダーの ▲▼ に使う
       localZ: local.z,
       dist: dist,
       hot: hot,
       ndcX: ndc.x,
       ndcY: ndc.y,
       inFront: inFront,
+    });
+  }
+
+  return result;
+}
+
+// ===================================================================
+// 迫ってくる敵ミサイルのレーダー情報
+//
+// 敵機と同じ形で返すので、main.js は同じ描画処理を使い回せる。
+// ミサイルは噴射で燃えているぶん、敵機より遠くから捉えられる
+// (索敵半径に熱の補正 HEAT_BONUS をかけている)。
+// ===================================================================
+function missileContacts(sensorPercent) {
+  const result = [];
+  if (!sceneReady) return result;
+
+  const range = sensorRange(sensorPercent) * SENSOR.HEAT_BONUS;
+  const inverse = playerShip.quaternion.clone().invert();
+
+  for (const m of missiles) {
+    if (!m.fromEnemy) continue;      // 自機に向かってくるものだけ
+
+    const to = m.mesh.position.clone().sub(playerShip.position);
+    const dist = to.length();
+    if (dist > range) continue;
+
+    const local = to.clone().applyQuaternion(inverse);
+    result.push({
+      localX: local.x,
+      localY: local.y,
+      localZ: local.z,
+      dist: dist,
+      decoyed: !!m.decoy,            // フレアに引っかかっているか
     });
   }
 
@@ -3073,6 +3164,7 @@ function updateScene(dt, elapsed) {
   // --- ミッション終了中は戦闘を止める(破片だけ動かす)---
   if (combatFrozen) {
     renderer.render(scene, camera);
+    renderRearMirror();
     return;
   }
 
@@ -3087,6 +3179,47 @@ function updateScene(dt, elapsed) {
   }
 
   renderer.render(scene, camera);
+  renderRearMirror();
+}
+
+// ===================================================================
+// 後方確認ミラーを描く
+//
+// 本画面を描き終えたあとに呼ぶこと。
+// setScissor で「この四角の中だけ描いてよい」と指示してから描くので、
+// 本画面はそのまま残り、小窓の部分だけが後方の景色に置き換わる。
+// ===================================================================
+function renderRearMirror() {
+  if (!MIRROR.ENABLED || !cockpitView) return;
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = Math.round(vw * MIRROR.WIDTH);
+  const h = Math.round(vh * MIRROR.HEIGHT);
+  const x = Math.round((vw - w) / 2);                    // 横は中央
+  // WebGL の座標は左下が原点。上端に置きたいので、上からの余白を下から測り直す
+  const y = Math.round(vh - h - vh * MIRROR.TOP);
+
+  // --- ミラーのカメラを、操縦席から後ろ向きに置く ---
+  const eye = new THREE.Vector3(0, COCKPIT.EYE_UP, -COCKPIT.EYE_FORWARD)
+    .applyQuaternion(playerShip.quaternion);
+  mirrorCamera.position.copy(playerShip.position).add(eye);
+  mirrorCamera.quaternion.copy(playerShip.quaternion);
+  mirrorCamera.rotateY(Math.PI);        // 180度回して真後ろを向く
+
+  mirrorCamera.aspect = w / h;
+  mirrorCamera.updateProjectionMatrix();
+
+  // 描く範囲を小窓に限定する。
+  // setViewport = 描く場所 / setScissor = 塗ってよい範囲。両方を同じ四角にする。
+  renderer.setScissorTest(true);
+  renderer.setViewport(x, y, w, h);
+  renderer.setScissor(x, y, w, h);
+  renderer.render(scene, mirrorCamera);
+
+  // 後片付け。戻さないと次のコマの本画面が小窓の大きさで描かれてしまう
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, vw, vh);
 }
 
 // ウィンドウサイズが変わったらカメラと描画サイズを合わせ直す

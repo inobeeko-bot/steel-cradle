@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-39 burst thrust';
+const BUILD = 'p1-40 radar/speed';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -78,7 +78,6 @@ const PROP = {
 const SHIELD = {
   MAX:              100,   // 最大値
   REGEN_PER_POWER: 0.12,   // シールド配分1%につき、毎秒回復する量(配分25%なら 3.0/秒)
-  TEST_DAMAGE:       20,   // Hキーの被弾テストで減る量
   LOW:               30,   // この値を下回ると数値が赤くなる
 };
 
@@ -672,7 +671,7 @@ function burst() {
 }
 
 // ===================================================================
-// 被弾テスト(H)― 本番では敵の攻撃がこれを呼ぶ
+// シールドを削る ― 敵の攻撃や自分のボムの爆風から呼ばれる
 // ===================================================================
 function takeDamage(amount) {
   shieldHp = Math.max(shieldHp - amount, 0);
@@ -735,14 +734,6 @@ window.addEventListener('keydown', (event) => {
 
   // ミッションが終わっている間は、以下の操作を受け付けない
   if (missionState !== 'active') return;
-
-  // H キー … 被弾テスト(テスト用。フェーズ1で敵の攻撃に置き換える)
-  // これは「自分の操作」ではなく「敵にやられること」なので、
-  // シャットダウン判定より前に置く ― 停止中こそ被弾するのが「無防備」の意味。
-  if (event.key.toLowerCase() === 'h') {
-    takeDamage(SHIELD.TEST_DAMAGE);
-    return;
-  }
 
   // 強制シャットダウン中は自分の操作をいっさい受け付けない(＝無防備。仕様書9.3)
   // 回避バーストも当然使えない ― これが「無防備」の中身
@@ -1008,11 +999,29 @@ function updateAimFeedback(dt) {
 // 輝点とマーカーは敵の数だけ必要なので、起動時にまとめて作っておき、
 // 毎コマ「使う/使わない」を切り替える。毎回作り直すと重くなる。
 // ===================================================================
-const radarBlips   = [];   // レーダーの輝点
+// レーダーの調整値
+const RADAR = {
+  MISSILE_BLIPS: 6,    // 同時に映せる接近ミサイルの数
+  // 「ほぼ同じ高さ」とみなす幅(索敵半径に対する割合)。
+  // これがないと、高さが揃っているときに ▲▼ が細かく入れ替わって読みづらい。
+  LEVEL_BAND:  0.05,
+  EDGE:        0.94,   // 輝点を円の内側にとどめる位置(1.0=ふち)
+};
+
+const radarBlips   = [];   // 敵の輝点
+const missileBlips = [];   // 接近ミサイルの輝点
 const enemyMarkers = [];   // 3D画面に重ねる敵マーカー
 
 function setupRadar() {
   const count = (typeof enemyCount === 'function') ? enemyCount() : 0;
+
+  // 接近ミサイル用の輝点をあらかじめ作っておく
+  for (let i = 0; i < RADAR.MISSILE_BLIPS; i++) {
+    const mb = document.createElement('div');
+    mb.className = 'radar-blip missile';
+    radarEl.appendChild(mb);
+    missileBlips.push(mb);
+  }
 
   for (let i = 0; i < count; i++) {
     const blip = document.createElement('div');
@@ -1096,18 +1105,7 @@ function renderRadar() {
     }
 
     // --- レーダーの輝点 ---
-    // 自機から見た左右(localX)と前後(localZ)を、そのまま画面の横と縦に使う。
-    // localZ がマイナス=前方 → 画面の上、になるので座標の向きがそのまま合う。
-    let nx = c.localX / range;
-    let ny = c.localZ / range;
-
-    // 熱ボーナスで範囲外の敵が映るときは、円からはみ出すので縁に貼り付ける
-    const r = Math.hypot(nx, ny);
-    if (r > 0.94) { nx = (nx / r) * 0.94; ny = (ny / r) * 0.94; }
-
-    blip.style.display = 'block';
-    blip.style.left = (50 + nx * 50) + '%';
-    blip.style.top  = (50 + ny * 50) + '%';
+    placeBlip(blip, c, range);
     blip.classList.toggle('hot', c.hot);
 
     // --- 3D画面の敵マーカー ---
@@ -1130,6 +1128,51 @@ function renderRadar() {
       marker.style.display = 'none';
     }
   }
+
+  // --- 接近しているミサイル ---
+  // 敵機と同じ形の輝点だが、色と点滅で「これは弾ではなく脅威」と分かるようにする
+  const inbound = missileContacts(sensorPct);
+  for (let i = 0; i < missileBlips.length; i++) {
+    const mb = missileBlips[i];
+    const m = inbound[i];
+    if (!m) { mb.style.display = 'none'; continue; }
+    placeBlip(mb, m, range * SENSOR_HEAT_BONUS_FOR_RADAR);
+    // フレアに引っかかったミサイルは、もう自機を狙っていないので落ち着いた色に
+    mb.classList.toggle('decoyed', m.decoyed);
+  }
+}
+
+// レーダーに使う索敵半径の熱補正。ミサイルは噴射で燃えているぶん遠くから映る
+const SENSOR_HEAT_BONUS_FOR_RADAR = 1.5;
+
+// ===================================================================
+// 輝点を1つ置く
+//
+// 自機から見た左右(localX)と前後(localZ)を、そのまま画面の横と縦に使う。
+// localZ がマイナス=前方 → 画面の上、になるので座標の向きがそのまま合う。
+// 高さ(localY)は位置ではなく「記号」で表す ― 平面のスコープに
+// 高さを描く場所はないので、▲(上にいる)/▼(下にいる)で伝える。
+// ===================================================================
+function placeBlip(el, c, range) {
+  let nx = c.localX / range;
+  let ny = c.localZ / range;
+
+  // 熱ボーナスなどで範囲外の対象が映るときは、円からはみ出すので縁に貼り付ける
+  const r = Math.hypot(nx, ny);
+  if (r > RADAR.EDGE) { nx = (nx / r) * RADAR.EDGE; ny = (ny / r) * RADAR.EDGE; }
+
+  el.style.display = 'block';
+  el.style.left = (50 + nx * 50) + '%';
+  el.style.top  = (50 + ny * 50) + '%';
+  el.textContent = altitudeGlyph(c.localY, range);
+}
+
+// 高さを表す記号。▲=自分より上 / ▼=自分より下 / ◆=ほぼ同じ高さ
+function altitudeGlyph(localY, range) {
+  const band = range * RADAR.LEVEL_BAND;
+  if (localY >  band) return '▲';
+  if (localY < -band) return '▼';
+  return '◆';
 }
 
 // ===================================================================

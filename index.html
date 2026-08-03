@@ -105,6 +105,10 @@
     }
     .hud.cockpit .hud-bottom { bottom: 10px; }
 
+    /* コックピットでは画面上部を後方確認ミラーが占めるので、
+       残り時間の表示はミラーの真下へ降ろす(ミラー = 4.5%〜19.5%) */
+    .hud.cockpit .hud-top { top: 20.5%; }
+
     /* 計器台に載る高さに収めるため、縦ゲージを短くする */
     .hud.cockpit .panel-heat .gauge-tube,
     .hud.cockpit .panel-status .gauge-tube { height: 74px; }
@@ -399,6 +403,48 @@
     .weapon-panel .wp-sub { font-size: 9px; letter-spacing: 0.1em; color: var(--dim); }
 
     /* =================================================================
+       後方確認ミラー(コックピット視点のみ)
+       中身の映像は scene.js が3Dで描くので、ここは枠だけを重ねる。
+       位置と大きさは scene.js の MIRROR 定数と揃えること。
+       ================================================================= */
+    .rear-mirror {
+      position: absolute;
+      display: none;                 /* コックピットのときだけ出す */
+      left: 50%;
+      top: 4.5%;                     /* = MIRROR.TOP */
+      width: 24%;                    /* = MIRROR.WIDTH */
+      height: 15%;                   /* = MIRROR.HEIGHT */
+      transform: translateX(-50%);
+      border: 1px solid #2f5a52;
+      border-radius: 3px;
+      box-shadow: 0 0 14px rgba(0, 0, 0, 0.9),
+                  inset 0 0 22px rgba(0, 0, 0, 0.75);
+      pointer-events: none;
+      z-index: 3;
+    }
+    .hud.cockpit .rear-mirror { display: block; }
+
+    /* 「REAR」の小さなラベル。枠の左上に沈めて置く */
+    .rear-mirror span {
+      position: absolute;
+      left: 6px;
+      top: 3px;
+      font-size: 8px;
+      letter-spacing: 0.24em;
+      color: #4e7a70;
+    }
+    /* 枠の上辺だけ少し明るくして、鏡が嵌まっている感じを出す */
+    .rear-mirror::before {
+      content: "";
+      position: absolute;
+      left: 8%;
+      right: 8%;
+      top: -2px;
+      height: 2px;
+      background: #3c6a60;
+    }
+
+    /* =================================================================
        ロックオン表示(ミサイルを撃てる状態)
        照準の位置に重ねるので、位置は main.js が毎コマ書き込む。
        ================================================================= */
@@ -530,21 +576,53 @@
       z-index: 2;
     }
 
-    /* 敵の輝点 */
+    /* 敵の輝点。
+       高さは記号で表す ― ▲=自機より上 / ▼=自機より下 / ◆=ほぼ同じ高さ。
+       文字を使うので、点ではなく文字の大きさで中心を合わせる。 */
     .radar-blip {
       position: absolute;
-      width: 7px; height: 7px;
-      margin: -3.5px 0 0 -3.5px;
-      border-radius: 50%;
-      background: #ff6a4d;
-      box-shadow: 0 0 6px rgba(255, 90, 60, 0.85);
+      width: 13px; height: 13px;
+      margin: -6.5px 0 0 -6.5px;
       display: none;
       z-index: 3;
+      font-size: 11px;
+      line-height: 13px;
+      text-align: center;
+      color: #ff6a4d;
+      text-shadow: 0 0 7px rgba(255, 90, 60, 0.9);
     }
     /* 熱で捕捉している敵(発射直前・被弾直後)は色を変えて目立たせる */
     .radar-blip.hot {
-      background: #ffcf6a;
-      box-shadow: 0 0 11px rgba(255, 205, 100, 1);
+      color: #ffcf6a;
+      text-shadow: 0 0 11px rgba(255, 205, 100, 1);
+    }
+
+    /* 接近してくるミサイル。白く光らせ、輪を付けて速く点滅させる。
+       敵機の輝点と同じ ▲▼ を使うので、高さの読み方は同じまま。 */
+    .radar-blip.missile {
+      color: #fff;
+      font-size: 12px;
+      text-shadow: 0 0 10px rgba(255, 60, 40, 1);
+      animation: blipAlert 0.26s steps(2) infinite;
+      z-index: 4;
+    }
+    .radar-blip.missile::after {
+      content: "";
+      position: absolute;
+      inset: -3px;
+      border: 1px solid #ff3a24;
+      border-radius: 50%;
+    }
+    /* フレアで逸らしたミサイル。もう自機を狙っていないので静かな表示にする */
+    .radar-blip.missile.decoyed {
+      color: #7f95a3;
+      text-shadow: none;
+      animation: none;
+    }
+    .radar-blip.missile.decoyed::after { border-color: #3a4f5c; }
+    @keyframes blipAlert {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.2; }
     }
 
     .radar-label {
@@ -764,6 +842,10 @@
     <!-- 画面中央の照準 -->
     <div class="crosshair"><span class="crosshair-gap"></span></div>
 
+    <!-- 後方確認ミラーの枠。中身(後方の景色)は scene.js が3Dで描く。
+         ここは枠とラベルだけを担当する。コックピット視点のときだけ出す -->
+    <div class="rear-mirror" id="rear-mirror"><span>REAR</span></div>
+
     <!-- ロックオン表示。照準の位置に重ねる。三人称でもコックピットでも出す -->
     <div class="lock-ring" id="lock-ring">
       <div class="lock-ring-outer"></div>
@@ -832,7 +914,7 @@
           <div class="sub-label">BURST −8</div>
         </div>
         <div class="gauge" data-system="shieldhp">
-          <div class="gauge-key">H</div>
+          <div class="gauge-key">&nbsp;</div>
           <div class="gauge-tube"><div class="gauge-bar" id="shield-bar"></div></div>
           <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
           <div class="gauge-label">シールド<br><span class="en">SHIELD HP</span></div>
@@ -884,9 +966,8 @@
       </div>
 
       <div class="help">
-        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; Space 回避バースト &nbsp; C フレア &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
+        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; B 投下 / N 切替 &nbsp; Space 回避バースト &nbsp; C フレア &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
         <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
-        &nbsp;&nbsp;|&nbsp;&nbsp; <span style="color:#7a4a4a">H 被弾テスト</span>
       </div>
     </div>
 
