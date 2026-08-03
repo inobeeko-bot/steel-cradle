@@ -54,7 +54,7 @@
 | B | BOMBS を投下(パイロは連射可) | N | BOMBS の切替(パイロ/ボム/EMP) |
 | C | フレア投下 | X | 視点切替(三人称 ⇄ コックピット) |
 | Space | 回避バースト(推進剤−8・約2秒の加速) | Enter | 再出撃(リザルト表示中) |
-| Shift長押し | ドリフト | | |
+| Shift長押し | ドリフト | Tab | 操作説明の開閉 |
 
 ピッチ反転は `src/main.js` の `OPTIONS.invertPitch` で切り替え。
 照準の微追尾の強さは `src/scene.js` の `ASSIST` で調整できる。

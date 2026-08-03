@@ -787,10 +787,41 @@
     }
 
     /* ---- 下部の情報行と操作説明 ---- */
+    /* 各項目は折り返さない。折り返すと「TAB 操作説 / 明」のように割れてしまう */
     .status { display: flex; gap: 22px; font-size: 11px; color: var(--dim); }
+    .status > div { white-space: nowrap; }
     .status b { color: var(--text); font-weight: normal; }
 
-    .help { font-size: 10px; color: var(--dim); text-align: center; line-height: 1.8; }
+    /* ---- 操作説明(Tabで開閉)----
+       常時出しておくと画面の下が文字で埋まり、戦闘中に読むものでもない。
+       ふだんは隠し、Tab を押したときだけ画面上部に薄く重ねる。
+       宇宙の上に重なるので、背景をわずかに落として読めるようにしてある。 */
+    .help {
+      position: absolute;
+      display: none;
+      left: 50%;
+      /* 三人称では画面上部に残り時間があるので、その下に出す */
+      top: 96px;
+      transform: translateX(-50%);
+      max-width: 92%;
+      padding: 10px 20px;
+      font-size: 10px;
+      line-height: 2.0;
+      letter-spacing: 0.04em;
+      color: #58707d;                    /* 薄い文字。読めるが主張しない */
+      text-align: center;
+      background: rgba(3, 6, 10, 0.72);
+      border: 1px solid #1d2b33;
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 6;
+    }
+    .help.on { display: block; }
+    .help b { color: #7f95a3; font-weight: normal; }
+    .help-hint { color: #35474f; letter-spacing: 0.2em; }
+
+    /* コックピットでは画面上部にミラーと残り時間があるので、その下へずらす */
+    .hud.cockpit .help { top: 28%; }
 
     /* ===================================================================
        強制シャットダウン演出
@@ -841,6 +872,13 @@
 
     <!-- 画面中央の照準 -->
     <div class="crosshair"><span class="crosshair-gap"></span></div>
+
+    <!-- 操作説明。ふだんは隠しておき、Tab を押している間だけ画面上部に出す -->
+    <div class="help" id="help">
+      <b>左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; B 投下 / N 切替 &nbsp; Space 回避バースト &nbsp; C フレア &nbsp; Shift長押し ドリフト &nbsp; X 視点切替<br>
+      <b>右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター<br>
+      <span class="help-hint">Tab で開閉</span>
+    </div>
 
     <!-- 後方確認ミラーの枠。中身(後方の景色)は scene.js が3Dで描く。
          ここは枠とラベルだけを担当する。コックピット視点のときだけ出す -->
@@ -963,12 +1001,10 @@
         <div>HEAT RATE <b id="heat-rate">+0.0</b>/s</div>
         <!-- EMPを浴びている間だけ出す警告。ふだんは非表示 -->
         <div id="emp-badge" class="emp-badge">EMP <b>0.0</b>s</div>
+        <!-- 操作説明の出し方だけは常に見えるようにしておく -->
+        <div style="color:#35474f">TAB 操作説明</div>
       </div>
 
-      <div class="help">
-        <b style="color:#7f95a3;font-weight:normal">左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; B 投下 / N 切替 &nbsp; Space 回避バースト &nbsp; C フレア &nbsp; <span style="color:#5f8ba3">Shift長押し ドリフト</span> &nbsp; <span style="color:#5f8ba3">X 視点切替</span><br>
-        <b style="color:#7f95a3;font-weight:normal">右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター
-      </div>
     </div>
 
     <!-- ミッション終了時のリザルト -->

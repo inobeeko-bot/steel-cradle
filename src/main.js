@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-40 radar/speed';
+const BUILD = 'p1-41 tab help';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -385,6 +385,7 @@ const radarSensorEl = document.getElementById('radar-sensor');
 const markerLayer   = document.getElementById('marker-layer');
 const crosshairEl   = document.querySelector('.crosshair');
 const lockRingEl    = document.getElementById('lock-ring');
+const helpEl        = document.getElementById('help');
 const viewModeEl    = document.getElementById('view-mode');
 const weaponPanelEl = document.getElementById('weapon-panel');
 const weaponNameEl  = document.getElementById('wp-name');
@@ -708,6 +709,16 @@ window.addEventListener('keydown', (event) => {
   //   暫定でここに割り当てている。実装時にキーを見直すこと。
   if (event.key.toLowerCase() === 'c') {
     if (missionState === 'active') useFlare();
+    return;
+  }
+
+  // Tab キー … 操作説明の開閉
+  // preventDefault を入れないと、ブラウザ本来の「次の要素へ移動」が起きてしまう。
+  // ミッション中でも終了後でも使えるよう、他の判定より先に置く。
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    helpEl.classList.toggle('on');
+    playViewClick();
     return;
   }
 
