@@ -367,13 +367,31 @@
       position: absolute;
       right: 22px;
       bottom: 40px;    /* 三人称では右計器が画面中央の高さにあるので、その下に置く */
-      min-width: 116px;
-      padding: 7px 12px;
+      min-width: 128px;
+      padding: 8px 13px;
       border: 1px solid var(--line);
-      border-radius: 3px;
       background: var(--panel-bg);
+      box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
       text-align: right;
       line-height: 1.5;
+      /* 計器盤と同じく角を落として、面板の仲間に見せる */
+      clip-path: polygon(
+        8px 0, 100% 0, 100% calc(100% - 8px),
+        calc(100% - 8px) 100%, 0 100%, 0 8px);
+    }
+    /* 左端に細い縦線を引き、兵装欄であることを一目で示す */
+    .weapon-panel::before {
+      content: "";
+      position: absolute;
+      left: 5px; top: 9px; bottom: 9px;
+      width: 2px;
+      background: linear-gradient(to bottom, #ffcf6a, rgba(255, 207, 106, 0.08));
+    }
+    .weapon-panel.beam::before {
+      background: linear-gradient(to bottom, var(--text), rgba(159, 225, 203, 0.08));
+    }
+    .weapon-panel.low::before {
+      background: linear-gradient(to bottom, #ff5a3c, rgba(255, 90, 60, 0.08));
     }
     .weapon-panel .wp-name {
       font-size: 11px;
@@ -570,9 +588,11 @@
       width: 152px;
       height: 152px;
       border-radius: 50%;                 /* 円形にする */
-      border: 1px solid var(--line);
-      background: radial-gradient(circle, rgba(12, 30, 24, 0.55), rgba(4, 8, 12, 0.88));
+      border: 1px solid #2a4550;
+      background: radial-gradient(circle, rgba(12, 30, 24, 0.55), rgba(4, 8, 12, 0.92));
       overflow: hidden;                   /* はみ出した輝点を隠す */
+      box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.9),
+                  0 0 12px rgba(0, 0, 0, 0.8);
     }
 
     /* 中間の同心円 */
@@ -596,6 +616,28 @@
           transparent calc(50% - 0.5px), rgba(159,225,203,0.11) calc(50% - 0.5px),
           rgba(159,225,203,0.11) calc(50% + 0.5px), transparent calc(50% + 0.5px));
     }
+
+    /* 走査線。時計回りに回り続ける扇。動いていることが分かると
+       「生きている計器」に見える。円錐グラデーションで扇形を1枚描いて回す。 */
+    .radar-sweep {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 1;
+      background: conic-gradient(
+        from 0deg,
+        rgba(159, 225, 203, 0.20) 0deg,
+        rgba(159, 225, 203, 0.06) 26deg,
+        transparent 58deg, transparent 360deg);
+      animation: radarSweep 3.4s linear infinite;
+    }
+    @keyframes radarSweep {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    /* センサーが壊れているときは走査が乱れる */
+    .radar.noisy .radar-sweep { animation-duration: 0.9s; opacity: 0.5; }
 
     /* 自機。常に中心で上(機首方向)を向く三角 */
     .radar-self {
@@ -662,6 +704,9 @@
       font-size: 9px;
       letter-spacing: 0.16em;
       color: var(--dim);
+      padding: 2px 8px;
+      border: 1px solid #16222b;
+      background: rgba(0, 0, 0, 0.35);
     }
     .radar-label b { color: var(--text); font-weight: normal; }
 
@@ -732,14 +777,31 @@
     }
 
     /* ---- パネル(計器の箱)---- */
+    /* 計器盤。四隅を斜めに落とした多角形にすると、
+       ただの四角より「機械の面板」らしくなる。
+       clip-path = 指定した形に切り抜く指定。角を落とすのに使っている。 */
     .panel {
+      position: relative;
       display: flex;
       gap: 20px;
       padding: 14px 20px;
       border: 1px solid var(--line);
-      border-radius: 4px;
       background: var(--panel-bg);
       box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.85);
+      clip-path: polygon(
+        9px 0, 100% 0, 100% calc(100% - 9px),
+        calc(100% - 9px) 100%, 0 100%, 0 9px);
+    }
+    /* 面板にうっすら走査線を重ねる。ブラウン管の計器の質感 */
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(159, 225, 203, 0.030) 0px, rgba(159, 225, 203, 0.030) 1px,
+        transparent 1px, transparent 4px);
     }
 
     /* ---- ゲージ1本ぶん ---- */
@@ -750,7 +812,17 @@
       align-items: center;
       gap: 6px;
     }
-    .gauge-key { font-size: 13px; color: var(--dim); line-height: 1; }
+    /* 操作キーの表示。枠で囲ってキートップらしく見せる */
+    .gauge-key {
+      font-size: 10px;
+      color: var(--dim);
+      line-height: 1;
+      padding: 2px 5px;
+      border: 1px solid #16222b;
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.35);
+      letter-spacing: 0.08em;
+    }
 
     .gauge-tube {
       position: relative;
@@ -759,12 +831,19 @@
       border: 1px solid var(--line);
       background: rgba(4, 6, 10, 0.9);
       overflow: hidden;
-      background-image: repeating-linear-gradient(
-        to top,
-        transparent 0px, transparent 21px,
-        rgba(255,255,255,0.07) 21px, rgba(255,255,255,0.07) 22px
-      );
+      /* 目盛り。細かい線を等間隔に、10本ごとに長い線を重ねる。
+         2種類の間隔を重ねるだけで「刻んだ目盛り」に見える */
+      background-image:
+        repeating-linear-gradient(to top,
+          transparent 0px, transparent 21px,
+          rgba(159,225,203,0.10) 21px, rgba(159,225,203,0.10) 22px),
+        repeating-linear-gradient(to top,
+          transparent 0px, transparent 10px,
+          rgba(159,225,203,0.05) 10px, rgba(159,225,203,0.05) 11px);
+      box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.9);
     }
+    /* ※ .gauge-tube::before は破損時のノイズ、::after は熱の危険域ラインで
+       すでに使っている。ここに新しい飾りを足すときは別の要素を使うこと。 */
 
     /* 左右の縦型計器は背を高くする(仕様書9.6「周辺視野で針の高さを感じる実機式縦型計器」)*/
     .panel-heat .gauge-tube,
@@ -778,13 +857,31 @@
       background: #3a5f52;
       transition: height 0.12s linear, background-color 0.12s linear;
     }
+    /* 棒の上端に明るい線を1本引く。「今どこを指しているか」が読み取りやすくなる */
+    .gauge-bar::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.85);
+    }
 
-    .gauge-value { font-size: 18px; line-height: 1; font-variant-numeric: tabular-nums; }
-    .gauge-value .unit { font-size: 10px; color: var(--dim); }
+    .gauge-value {
+      font-size: 19px; line-height: 1;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+    }
+    .gauge-value .unit { font-size: 10px; color: var(--dim); margin-left: 1px; }
     .gauge-value.low .num { color: #ff5a3c !important; }
 
-    .gauge-label { text-align: center; font-size: 11px; line-height: 1.45; }
-    .gauge-label .en { font-size: 8px; color: var(--dim); letter-spacing: 0.1em; }
+    .gauge-label { text-align: center; font-size: 11px; line-height: 1.5; }
+    /* 英字の系統名は、上に細い罫線を引いて「銘板」らしく見せる */
+    .gauge-label .en {
+      display: inline-block;
+      font-size: 8px; color: var(--dim); letter-spacing: 0.16em;
+      padding-top: 2px;
+      border-top: 1px solid #16222b;
+    }
 
     /* ---- 熱パネル ---- */
     .panel-heat { padding-left: 18px; padding-right: 18px; }
@@ -821,8 +918,16 @@
 
     /* ---- 下部の情報行と操作説明 ---- */
     /* 各項目は折り返さない。折り返すと「TAB 操作説 / 明」のように割れてしまう */
-    .status { display: flex; gap: 22px; font-size: 11px; color: var(--dim); }
-    .status > div { white-space: nowrap; }
+    .status { display: flex; gap: 0; font-size: 11px; color: var(--dim); }
+    /* 項目ごとに細い仕切りを入れる。ただの余白より、計器の目盛りらしく整う */
+    .status > div {
+      white-space: nowrap;
+      padding: 0 11px;
+      border-left: 1px solid #16222b;
+      letter-spacing: 0.06em;
+    }
+    .status > div:first-child { border-left: none; }
+    .status b { color: var(--text); font-weight: normal; }
     .status b { color: var(--text); font-weight: normal; }
 
     /* ---- 操作説明(Tabで開閉)----
@@ -947,6 +1052,7 @@
     <!-- レーダースコープ(自機中心・機首方向が常に上) -->
     <div class="radar-wrap">
       <div class="radar" id="radar">
+        <div class="radar-sweep"></div>
         <div class="radar-self"></div>
         <!-- 敵の輝点は main.js が敵の数だけ作る -->
       </div>
