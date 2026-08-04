@@ -338,50 +338,84 @@ const CRAFT = [
       'フレアで騙せる確率も落ちる。冷やすか、隠れるか ― 同時には選べない。' +
       '</div>',
   },
-  {
-    key: 'enemy',
-    name: 'HOSTILE FIGHTER',
-    cls: '企業連合軍 ― 単座 戦闘機',
-    build: () =>
-      galSec('STRUCTURE / 構造') +
-      galRow('HULL', ENEMY.MAX_HP) +
-      galRow('再出撃', ENEMY.RESPAWN_SEC + ' 秒', '(演習空域のため無制限)') +
+];
 
-      galSec('SENSOR / 索敵') +
-      galRow('基本探知', ENEMY_SENSOR.BASE_RANGE, '(こちらが冷えているとき)') +
-      galRow('最大探知', ENEMY_SENSOR.HEAT_RANGE, '(こちらが高熱のとき)') +
-      galRow('偏差精度', ENEMY_SENSOR.LEAD_COLD + ' → ' + ENEMY_SENSOR.LEAD_HOT,
-             '(冷 → 熱。高いほど正確に置き撃ちされる)') +
-      galRow('射撃のばらつき', ENEMY_SENSOR.SPREAD_COLD + ' → ' + ENEMY_SENSOR.SPREAD_HOT,
-             '(熱いほど散らない)') +
+// ===================================================================
+// 敵の3タイプを、ギャラリーの項目として作る
+//
+// 3つは表の中身が同じ形なので、1機ずつ手で書かず、AI_ARCHETYPES から
+// 組み立てる。数字を書き写さないので、AIを調整すれば資料も一緒に変わる。
+// ===================================================================
+const ARCH_NOTES = {
+  SOLDIER: '<b>撃ちすぎて、自分で止まる。</b>　この機体は熱の扱いが下手で、' +
+           '撃ち続けると自分の熱で強制冷却に入り、数秒のあいだ無防備になる。' +
+           '青白く沈黙した瞬間が、こちらの取り分。' +
+           '3タイプで唯一まともなミサイルを積んでいるのもこの機体で、' +
+           'ロックされたときにフレアを切るかどうかの読み合いは主にここで起きる。',
+  HOUND:   '<b>後ろを取りに来る。</b>　正面から来ず、脇から回り込んで' +
+           '自機の後方に貼りつく。一定時間で必ず抜けるが、すぐ戻ってくる。' +
+           '前を向いたままでは捉えられないので、後方ミラーと回避バーストで' +
+           '推進剤を削られる。撃ち合いではなく、位置の勝負を挑んでくる相手。',
+  SNIPER:  '<b>こちらの熱を見て撃つ。</b>　遠距離を保ち、詰めると下がりながら' +
+           '横へ逃げる。命中弾は重いが、撃つ前に青白い充填光が' +
+           '長く光る ― 見てから避けられる。' +
+           '熱を下げれば探知距離の外に出られ、この機体は撃つことすらできない。',
+};
+
+for (const key of Object.keys(AI_ARCHETYPES)) {
+  const A = AI_ARCHETYPES[key];
+  CRAFT.push({
+    key: key,
+    name: A.LABEL,
+    cls: '企業連合軍 ― ' + A.JP,
+    build: () =>
+      galSec('PROFILE / 概要') +
+      galRow('出現比率', archWeightPercent(key) + ' %', '(撃墜されるたびに抽選)') +
+      galRow('HULL', A.MAX_HP) +
+      galRow('識別色', '#' + A.COLOR.BODY.toString(16).padStart(6, '0'),
+             '(遠くからでもタイプが分かる)') +
 
       galSec('ARMAMENT / 兵装') +
-      galRow('機関砲', '速度 ' + ENEMY_BOLT.SPEED, '(射程 ' + AI.ATTACK_RANGE + ' で交戦)') +
-      galRow('ミサイル', ENEMY_MISSILE.AMMO + ' 発',
-             '(射程 ' + ENEMY_MISSILE.RANGE + ' ・ 間隔 ' + ENEMY_MISSILE.INTERVAL + '秒)') +
-      galRow('発射予告', ENEMY_MISSILE.TELEGRAPH + ' 秒',
-             '(うち ' + Math.round(ENEMY_MISSILE.BLUFF_CHANCE * 100) + '% はブラフ)') +
-      galRow('フレア', ENEMY_MISSILE.FLARE_AMMO + ' 発',
-             '(こちらのミサイルも騙される)') +
+      galRow('射撃間隔', A.FIRE.INTERVAL + ' 秒') +
+      galRow('発射予告', A.FIRE.TELEGRAPH + ' 秒', '(光ってから避ける余地)') +
+      galRow('弾速', A.BOLT.SPEED) +
+      galRow('1発の威力', '×' + A.BOLT.DAMAGE_MULT, '(自機のシールドを削る量の倍率)') +
+      galRow('弾道の散り', '×' + A.BOLT.SPREAD_MULT, '(小さいほど正確)') +
+      galRow('偏差の深さ', '×' + A.BOLT.LEAD_MULT, '(大きいほど置き撃ちしてくる)') +
+      galRow('ミサイル', A.MISSILE.AMMO + ' 発',
+             '(射程 ' + A.MISSILE.RANGE + ' ・ 間隔 ' + A.MISSILE.INTERVAL + '秒 ・ ' +
+             Math.round(A.MISSILE.BLUFF * 100) + '% はブラフ)') +
 
       galSec('THERMAL / 熱') +
-      galRow('熱容量', ENEMY_HEAT.MAX) +
-      galRow('排熱', '−' + ENEMY_HEAT.VENT + ' /秒') +
-      galRow('強制冷却', ENEMY_HEAT.MAX + ' 到達で ' + ENEMY_HEAT.SHUTDOWN_SEC + '秒',
-             '(パイロ弾で誘発できる)') +
+      galRow('熱容量', A.HEAT.MAX) +
+      galRow('1射の発熱', '+' + A.FIRE.HEAT) +
+      galRow('排熱', '−' + A.HEAT.VENT + ' /秒',
+             '(差引 ' + ((A.FIRE.HEAT - A.HEAT.VENT * A.FIRE.INTERVAL) >= 0 ? '+' : '') +
+             (A.FIRE.HEAT - A.HEAT.VENT * A.FIRE.INTERVAL).toFixed(1) + ' /射)') +
+      galRow('強制冷却', A.HEAT.SHUTDOWN_SEC + ' 秒', '(この間は無防備)') +
 
       galSec('BEHAVIOUR / 機動') +
-      galRow('接近 / 交戦 / 回避', AI.APPROACH_SPEED + ' / ' + AI.ATTACK_SPEED + ' / ' + AI.EVADE_SPEED) +
-      galRow('旋回性能', AI.TURN_RATE + ' rad/秒') +
-      galRow('離脱距離', AI.BREAK_RANGE, '(近づきすぎると ' + AI.TOO_CLOSE + ' で離れる)') +
+      galRow('接近 / 交戦 / 回避',
+             A.SPEED.APPROACH + ' / ' + A.SPEED.ATTACK + ' / ' + A.SPEED.EVADE) +
+      galRow('旋回性能', A.TURN_RATE + ' rad/秒') +
+      galRow('交戦距離', A.RANGE.ATTACK, '(' + A.RANGE.TOO_CLOSE + ' より近いと下がる)') +
+      galRow('蛇行', '振幅 ' + A.WANDER.AMP + ' / 周期 ' + A.WANDER.RATE,
+             '(軌道を読ませないための揺らぎ)') +
+      (A.DIVE
+        ? galRow('一撃離脱', A.DIVE.RUN_SEC + '秒 噛みつき → ' + A.DIVE.EXTEND_SEC + '秒 離脱',
+                 '(自機の後方 ' + A.DIVE.REAR_OFFSET + ' を狙う)')
+        : '') +
 
-      '<div class="gal-note">' +
-      '<b>相手もこちらを探している。</b>　この機体の探知距離は固定ではなく、' +
-      'こちらの熱で ' + ENEMY_SENSOR.BASE_RANGE + ' から ' + ENEMY_SENSOR.HEAT_RANGE +
-      ' まで伸びる。撃たれ方が急に正確になったときは、たいてい自分が熱いせいである。' +
-      '</div>',
-  },
-];
+      '<div class="gal-note">' + ARCH_NOTES[key] + '</div>',
+  });
+}
+
+// 出現比率を % で出す。WEIGHT の合計に対する割合
+function archWeightPercent(key) {
+  let total = 0;
+  for (const k of Object.keys(AI_ARCHETYPES)) total += AI_ARCHETYPES[k].WEIGHT;
+  return Math.round(AI_ARCHETYPES[key].WEIGHT / total * 100);
+}
 
 // --- ギャラリーを開く / 閉じる ---------------------------------------
 function showGallery() {

@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-64 main menu';
+const BUILD = 'p1-65 enemy archetypes';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -1762,18 +1762,23 @@ function addCombatLog(text, kind) {
 //   1段目:シールド強度が肩代わりする(電力配分で回復するので立て直せる)
 //   2段目:シールドが割れていたらHULL(機体構造)が削れる。こちらは戦闘中回復しない
 // ===================================================================
-function onPlayerHit() {
+// damageMult = 撃ってきた敵のタイプごとの威力倍率。
+// 省略されたら1.0(=これまでどおり)として扱う。
+function onPlayerHit(damageMult) {
   if (missionState !== 'active') return;   // リザルト表示中はもう減らさない
 
+  const mult = (typeof damageMult === 'number') ? damageMult : 1;
+  const damage = Math.round(INCOMING.SHIELD_DAMAGE * mult);
+
   hitsTaken += 1;              // リザルトに出す被弾回数
-  hitVignette = 0.45;          // 画面端が一瞬強く赤く光る
+  hitVignette = 0.45 * Math.min(mult, 1.6);   // 重い一撃ほど画面が強く赤くなる
 
   if (shieldHp > 0) {
     // --- シールドで受けた ---
-    shieldHp = Math.max(shieldHp - INCOMING.SHIELD_DAMAGE, 0);
+    shieldHp = Math.max(shieldHp - damage, 0);
     damageFlash = 0.3;         // シールドゲージが赤く光る(既存の演出を流用)
-    startShake(INCOMING.SHAKE_STRENGTH);
-    addCombatLog('SHIELD −' + INCOMING.SHIELD_DAMAGE, 'warn');
+    startShake(INCOMING.SHAKE_STRENGTH * Math.min(mult, 1.8));
+    addCombatLog('SHIELD −' + damage, 'warn');
     playShieldHit();
 
     if (shieldHp <= 0) { addCombatLog('SHIELD DOWN', 'hull'); playShieldDown(); }

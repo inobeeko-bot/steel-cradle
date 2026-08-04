@@ -784,7 +784,131 @@ const ENEMY_BOLT = {
 // 常に2機を保つ(仕様:撃墜されるたびリスポーンして1〜2機いる状態を維持)。
 // 機体を作り直すと重いので、2機ぶんを最初に作って「生きている/死んでいる」を
 // 切り替えて使い回す。
+//
+// ※ これが「同時に出てくる敵の数の上限」でもある。
+//   10分で10撃墜という難度はこの数で釣り合いを取ってあるので、
+//   増やすときは撃墜数の目標(MISSION.KILL_GOAL)も一緒に見直すこと。
 const ENEMY_COUNT = 2;
+
+// ===================================================================
+// 敵の3タイプ(アーキタイプ)
+//
+// 強い/弱いの差ではなく「自機の7パラメーターのどこを攻めてくるか」の差。
+//   SOLDIER … 正面から撃ち合う。撃ちすぎて自分で熱停止する = 熱管理の教材
+//   HOUND   … 一撃離脱で後ろに回り込む。後方警戒と回避バースト(推進剤)を強いる
+//   SNIPER  … 遠距離から精密射撃。自機の熱が高いほど当ててくる = 熱の隠蔽を教える
+//
+// 状態機械(approach / attack / evade)は3タイプ共通で、
+// 差は「ここに並んだ数字」と、タイプ固有のわずかな機動だけで作る。
+// 手で調整できるよう、効く数字はすべてこの表に集めてある。
+// ===================================================================
+const AI_ARCHETYPES = {
+
+  SOLDIER: {
+    LABEL: 'SOLDIER', JP: 'ソルジャー',
+    WEIGHT: 50,            // 出現比率(3つの合計に対する重み)
+    // 標準色。今までの敵機の色そのまま
+    COLOR: { BODY: 0xa8452f, WING: 0x6d2a20, CANOPY: 0x3a1a16, EDGE: 0xff9d84 },
+    MAX_HP: 6,
+    SPEED:  { APPROACH: 30, ATTACK: 20, EVADE: 34 },
+    RANGE:  { ATTACK: 85, BREAK: 130, TOO_CLOSE: 22 },
+    TURN_RATE: 2.2,
+    // 動きの揺らぎ。AMP=どれだけ蛇行するか / RATE=向きが変わる速さ。
+    // これが 0 だと軌道が完全に読めてしまい、偏差照準に置かれるだけの的になる。
+    WANDER: { AMP: 0.55, RATE: 0.9 },
+    FIRE:   { INTERVAL: 2.3, TELEGRAPH: 0.5, HEAT: 30 },   // HEAT = 1回撃つごとの発熱
+    // 予告のときに光る色(赤,緑,青の割合)。タイプごとに変えて、
+    // 遠くの光を見ただけで「何が撃とうとしているか」が分かるようにする
+    GLOW: { R: 1.0, G: 0.45, B: 0.15, PULSE: 0 },          // 橙。ふつうの砲
+    // LEAD / SPREAD は「自機の熱で決まる基本値」に掛ける倍率。
+    // 基本値そのものは ENEMY_SENSOR にあり、熱が高いほど正確になる。
+    // タイプの差は、その正確さをどれだけ活かせるかの差として乗る。
+    BOLT:   { SPEED: 60, LEAD_MULT: 1.0, SPREAD_MULT: 1.0, DAMAGE_MULT: 1.0 },
+    // 熱の扱いが下手。撃ち続けると自分で止まる。
+    // ただし止まっている間はタダで殴れる時間になるので、頻度は抑えめにしてある
+    HEAT:   { MAX: 100, VENT: 8.0, SHUTDOWN_SEC: 3.0 },
+    // ミサイル。全タイプが持つ ― 持たせないと「ロックされた、撃たれるのか?」
+    // という読み合いがその機体には一切発生せず、緊張感が消える
+    MISSILE: { AMMO: 4, INTERVAL: 8.5, TELEGRAPH: 1.8, BLUFF: 0.35,
+               RANGE: 95, MIN_RANGE: 22 },
+    MOVE: 'orbit',         // 交戦中の動き方(後述)
+  },
+
+  HOUND: {
+    LABEL: 'HOUND', JP: 'ハウンド',
+    WEIGHT: 30,
+    // 暖色系(琥珀)。ソルジャーのくすんだ赤とはっきり離すため、黄色寄りにする。
+    // 近づいてくる機体が視界の端に入った瞬間に分かることが大事
+    COLOR: { BODY: 0xdd8a12, WING: 0x96560a, CANOPY: 0x40280c, EDGE: 0xffd98a },
+    MAX_HP: 4,             // 脆い。突進中は的になる
+    SPEED:  { APPROACH: 46, ATTACK: 34, EVADE: 42 },
+    RANGE:  { ATTACK: 46, BREAK: 95, TOO_CLOSE: 9 },       // ぐっと詰めてくる
+    TURN_RATE: 3.2,
+    WANDER: { AMP: 0.85, RATE: 1.6 },   // 大きく速く蛇行する。いちばん捉えにくい
+    FIRE:   { INTERVAL: 0.85, TELEGRAPH: 0.22, HEAT: 7 },  // 機関砲。速射・予告は短い
+    GLOW: { R: 1.0, G: 0.72, B: 0.12, PULSE: 0 },          // 黄。細かく光る
+    // ばらまく代わりに1発は軽い。数で圧をかけるタイプ
+    BOLT:   { SPEED: 74, LEAD_MULT: 0.85, SPREAD_MULT: 1.7, DAMAGE_MULT: 0.7 },
+    HEAT:   { MAX: 100, VENT: 12.0, SHUTDOWN_SEC: 3.0 },   // 熱には強い
+    // 近距離で撃つ短射程ミサイル。数は少ないが、後ろから来るので厄介
+    MISSILE: { AMMO: 2, INTERVAL: 9.0, TELEGRAPH: 1.3, BLUFF: 0.25,
+               RANGE: 55, MIN_RANGE: 12 },
+    MOVE: 'dive',          // 突っ込んで、抜けて、また来る
+    DIVE: {
+      REAR_OFFSET: 30,     // 自機の「真後ろ何メートル」を狙って突っ込むか
+      // 真後ろの点を一直線に狙うと、経路が自機のど真ん中を通ってしまう。
+      // すると衝突回避(TOO_CLOSE)に弾かれて機首の前で跳ね返るだけになり、
+      // いつまでも後ろを取れない ― 実際そうなった。
+      // 横へこれだけ膨らませて、脇から回り込ませる。
+      SIDE_OFFSET: 30,
+      // 抜けている時間が長いと、ただ離れていくだけの相手になって
+      // 「しつこさ」が消える。噛みつく時間を長く、離す時間を短く。
+      RUN_SEC:     8.0,    // 1回の突撃を続ける秒数。これを過ぎたら抜ける
+      EXTEND_SEC:  1.2,    // 抜けている(離脱)秒数。この間は撃たない
+      EXTEND_SPEED: 62,    // 抜けるときの速度。突撃より速く、振り切るように離れる
+    },
+  },
+
+  SNIPER: {
+    LABEL: 'SNIPER', JP: 'スナイパー',
+    WEIGHT: 20,
+    // 寒色系(青)。遠くの点として見えたとき、色で「あれは狙撃機」と分かる
+    COLOR: { BODY: 0x2f5f8a, WING: 0x1b3a56, CANOPY: 0x14283a, EDGE: 0x8fd2ff },
+    MAX_HP: 5,
+    SPEED:  { APPROACH: 18, ATTACK: 14, EVADE: 30 },
+    // 遠距離を保つ。TOO_CLOSE が大きい = 詰められると下がりたがる
+    RANGE:  { ATTACK: 150, BREAK: 230, TOO_CLOSE: 90 },
+    TURN_RATE: 1.2,        // 旋回が遅い = 懐に入られると何もできない
+    WANDER: { AMP: 0.40, RATE: 0.5 },   // ゆっくり大きく漂う。狙撃姿勢は崩さない
+    FIRE:   { INTERVAL: 4.6, TELEGRAPH: 1.1, HEAT: 26 },   // チャージ式。長い予兆
+    // 青白い充填光。撃つ直前に速く明滅する = 「溜まりきった」合図。
+    // 予兆が見えてから避けられることが、このタイプが成立する条件そのもの
+    GLOW: { R: 0.55, G: 0.85, B: 1.0, PULSE: 16 },
+    // 読みが深く、散らず、痛い。ただし予兆が長いので見てから避けられる
+    BOLT:   { SPEED: 96, LEAD_MULT: 1.25, SPREAD_MULT: 0.40, DAMAGE_MULT: 2.2 },
+    HEAT:   { MAX: 110, VENT: 10.0, SHUTDOWN_SEC: 3.5 },
+    // 長射程ミサイル。撃たれる前に「遠くの青い光がこちらを向いた」段階で
+    // 気づけるかどうかの勝負になる
+    MISSILE: { AMMO: 3, INTERVAL: 10.0, TELEGRAPH: 2.2, BLUFF: 0.40,
+               RANGE: 200, MIN_RANGE: 40 },
+    MOVE: 'standoff',      // 距離を保ち、詰められたら下がりながら横へ逃げる
+  },
+};
+
+// 出現比率の抽選。WEIGHT の合計を出し、その中のどこに当たったかで決める。
+// 比率を変えたいときは、上の WEIGHT だけを触ればよい。
+function pickArchetype() {
+  const keys = Object.keys(AI_ARCHETYPES);
+  let total = 0;
+  for (const k of keys) total += AI_ARCHETYPES[k].WEIGHT;
+
+  let r = Math.random() * total;
+  for (const k of keys) {
+    r -= AI_ARCHETYPES[k].WEIGHT;
+    if (r <= 0) return k;
+  }
+  return keys[0];   // 念のため(浮動小数の誤差で漏れたとき)
+}
 
 // 1機ぶんの情報をまとめたオブジェクトの配列。
 // 敵が1機だけのときは変数を並べれば足りたが、複数になると
@@ -963,6 +1087,11 @@ function initScene() {
   // --- 敵機(2機)---
   for (let i = 0; i < ENEMY_COUNT; i++) {
     const e = createEnemy();
+    // 最初の1機は必ず SOLDIER にする。
+    // 初弾から狙撃機や追撃機に当たると、まず何が起きているのか分からない。
+    // 基準になる相手から始めて、そのあと抽選に任せる。
+    assignArchetype(e, i === 0 ? 'SOLDIER' : pickArchetype());
+    e.hp = e.arch.MAX_HP;
     // 最初は自機の前方に少しずらして配置する
     e.group.position.set((i - 0.5) * 26, 0, ENEMY.DISTANCE - i * 14);
     enemies.push(e);
@@ -1933,10 +2062,15 @@ function updateGalleryView(dt, which) {
   galleryAngle += dt * GALLERY.SPIN;
 
   // --- 見せる機体を決めて、もう一方を隠す ---
-  const showEnemy = (which === 'enemy');
+  // which が 'player' 以外なら、それは敵のタイプ名(SOLDIER / HOUND / SNIPER)。
+  // 1機目の敵にそのタイプを着せて見せる ― 色もそのまま反映される。
+  const showEnemy = (which !== 'player');
   playerShip.visible = !showEnemy;
   if (playerModel) playerModel.visible = !showEnemy;   // 三人称用の外見モデル
   enemies.forEach((e, i) => { e.group.visible = showEnemy && i === 0; });
+  if (showEnemy && AI_ARCHETYPES[which] && enemies[0].archKey !== which) {
+    assignArchetype(enemies[0], which);
+  }
 
   // --- 機体は「真上を軸に回す」だけにする ---
   // ここで前傾(X軸)も一緒に掛けると、回転の順番の都合で
@@ -2019,7 +2153,11 @@ function resetFlight() {
   blasts.length = 0;
 
   // 敵を全機復活させて前方に置き直す
-  for (const e of enemies) respawnEnemy(e);
+  // 出撃のたびに敵を初期化する。
+  // 1機目だけは必ず SOLDIER にしておく ― 出撃した瞬間に狙撃機と追撃機が
+  // 揃っていると、何が起きたのか分からないまま撃たれて終わってしまう。
+  // 基準になる相手を必ず1機置いて、そこから読ませる。
+  enemies.forEach((e, i) => respawnEnemy(e, i === 0 ? 'SOLDIER' : null));
 }
 
 // エンジンの電力配分(0〜100%)から速度を決める
@@ -3413,9 +3551,31 @@ function createEnemy() {
     if (obj.isMesh && obj.material && obj.material.emissive) materials.push(obj.material);
   });
 
+  // タイプごとに色を塗り替えるため、材質を「どこの色だったか」で仕分けしておく。
+  // 部品を作るときに使った色(胴体/翼/風防/輪郭線)がそのまま残っているので、
+  // それを見て振り分ければ、部品を1つずつ覚えておかなくてよい。
+  const paint = { body: [], wing: [], canopy: [], edge: [] };
+  group.traverse((obj) => {
+    if (!obj.material || !obj.material.color) return;
+    if (obj.isLineSegments) { paint.edge.push(obj.material); return; }
+    // 噴射光は MeshBasicMaterial(emissive を持たない)。
+    // 光そのものなので塗り替えない ― ここで弾いておく。
+    if (!obj.material.emissive) return;
+
+    const hex = obj.material.color.getHex();
+    if      (hex === ENEMY.BODY_COLOR)    paint.body.push(obj.material);
+    else if (hex === ENEMY.CANOPY_COLOR)  paint.canopy.push(obj.material);
+    // 翼色、および上のどれでもない小物(機首ポッドなど)は翼色にまとめる。
+    // 塗り漏らすと、その部品だけ前のタイプの色のまま残ってしまう。
+    else paint.wing.push(obj.material);
+  });
+
   return {
     group: group,
     materials: materials,
+    paint: paint,
+    archKey: 'SOLDIER',            // タイプ名。respawn のたびに抽選し直す
+    arch: AI_ARCHETYPES.SOLDIER,   // その中身(数字の表)への近道
     hp: ENEMY.MAX_HP,
     alive: true,
     respawnLeft: 0,      // リスポーンまでの残り秒数
@@ -3427,6 +3587,14 @@ function createEnemy() {
     fireTimer: AI.FIRE_INTERVAL,   // 次の発射までの残り秒
     telegraph: 0,        // 発射予告(光っている)の残り秒。0 なら予告していない
     evadeDir: new THREE.Vector3(1, 0, 0),
+
+    // ハウンドが後ろへ回り込むとき、自機の左右どちら側から回るか(-1 / +1)。
+    // 抜けるたびに反転させる ― 毎回同じ側から来ると読まれて置き撃ちされるため。
+    diveSide: (Math.random() < 0.5) ? -1 : 1,
+
+    // 蛇行の位相。機体ごとにずらしておかないと、2機が同じ揺れ方をして
+    // 「同じ動きの2機」に見えてしまう。
+    wanderPhase: Math.random() * Math.PI * 2,
 
     // 熱の痕跡。発射や被弾で跳ね上がり、時間とともに冷める。
     // 仕様書9.3「敵のHEATが探知手段(撃ちまくる敵ほどよく見える)」の初歩版。
@@ -3452,6 +3620,24 @@ function createEnemy() {
   };
 }
 
+// ===================================================================
+// タイプを割り当てて、機体の色を塗り替える
+//
+// 見た目で区別できないと、プレイヤーは「なぜ今回は挙動が違うのか」を
+// 学習できない。色は3タイプの差を伝える唯一の手がかりなので、
+// 胴体・翼・風防・輪郭線をまとめて塗り替える。
+// ===================================================================
+function assignArchetype(e, key) {
+  e.archKey = key;
+  e.arch    = AI_ARCHETYPES[key];
+
+  const c = e.arch.COLOR;
+  for (const m of e.paint.body)   m.color.setHex(c.BODY);
+  for (const m of e.paint.wing)   m.color.setHex(c.WING);
+  for (const m of e.paint.canopy) m.color.setHex(c.CANOPY);
+  for (const m of e.paint.edge)   m.color.setHex(c.EDGE);
+}
+
 function setEnemyState(e, next) {
   e.state = next;
   e.stateTime = 0;
@@ -3461,9 +3647,16 @@ function setEnemyState(e, next) {
     e.evadeDir.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1).normalize();
     e.telegraph = 0;   // 逃げる間は撃たない。予告も消す
   }
+  if (next === 'extend') {
+    // 抜けている間は撃たない。溜めかけの予告も消す
+    e.telegraph = 0;
+    // 次はもう片側から回り込む。同じ側を繰り返すと待ち構えられる
+    e.diveSide = -e.diveSide;
+  }
 }
 
 function updateEnemyAI(e, dt) {
+  const A = e.arch;          // このタイプの数字の表(以降ずっと使う)
   e.stateTime += dt;
   e.heatSig = Math.max(e.heatSig - dt, 0);   // 熱はだんだん冷める
 
@@ -3476,7 +3669,7 @@ function updateEnemyAI(e, dt) {
 
   // 放熱不能のデバフ。燃焼片が放熱面をふさいでいる間は熱を捨てられない。
   // 燃焼が終わってもしばらく続くので、追撃で押し切れる時間が生まれる。
-  let vent = ENEMY_HEAT.VENT;
+  let vent = A.HEAT.VENT;
   if (e.ventDown > 0) {
     e.ventDown -= dt;
     vent *= PYRO.VENT_MULT;
@@ -3497,7 +3690,7 @@ function updateEnemyAI(e, dt) {
   }
 
   e.heat = Math.max(e.heat - vent * dt, 0);
-  e.heat = Math.min(e.heat, ENEMY_HEAT.MAX);   // 表示が100を超えないようにする
+  e.heat = Math.min(e.heat, A.HEAT.MAX);   // 表示が上限を超えないようにする
 
   // --- EMPで電力を落とされている間も何もできない ---
   // 熱による停止と結果は同じだが、原因が違う(熱=自分の発熱 / EMP=撃たれた)。
@@ -3509,9 +3702,9 @@ function updateEnemyAI(e, dt) {
     return;
   }
 
-  if (e.heat >= ENEMY_HEAT.MAX) {
-    e.heat = ENEMY_HEAT.MAX;
-    e.heatDown = ENEMY_HEAT.SHUTDOWN_SEC;
+  if (e.heat >= A.HEAT.MAX) {
+    e.heat = A.HEAT.MAX;
+    e.heatDown = A.HEAT.SHUTDOWN_SEC;
     e.telegraph = 0;
     e.missileTele = 0;
     onEnemyOverheat();                       // main.js:ログと音
@@ -3530,18 +3723,30 @@ function updateEnemyAI(e, dt) {
   e.seesPlayer = seen;
 
   // --- 状態の切り替え ---
-  if (!seen) {
+  //
+  // 「時間で終わる状態」(回避・離脱)は、自機を見失っていても必ず終わらせる。
+  // ここを見失い判定より後ろに置くと、離れて見失った瞬間に時間切れの判定が
+  // 素通りされ、そのまま永遠に離れ続けてしまう(実際にそうなった)。
+  if (e.state === 'evade' && e.stateTime > AI.EVADE_SEC) {
+    setEnemyState(e, 'approach');
+  } else if (e.state === 'extend' && (!A.DIVE || e.stateTime > A.DIVE.EXTEND_SEC)) {
+    // 抜け終わった。もう一度、正面から入り直す
+    setEnemyState(e, 'approach');
+  } else if (!seen) {
     // 見失った。攻撃をやめ、だいたいの方角へゆっくり詰める。
     // 完全に消えるわけではないので、冷やしても永久には撒けない。
     if (e.state === 'attack') setEnemyState(e, 'approach');
     e.telegraph = 0;
     e.missileTele = 0;
-  } else if (e.state === 'approach' && distance < AI.ATTACK_RANGE) {
+  } else if (e.state === 'approach' && distance < A.RANGE.ATTACK) {
     setEnemyState(e, 'attack');
-  } else if (e.state === 'attack' && distance > AI.BREAK_RANGE) {
+  } else if (e.state === 'attack' && distance > A.RANGE.BREAK) {
     setEnemyState(e, 'approach');
-  } else if (e.state === 'evade' && e.stateTime > AI.EVADE_SEC) {
-    setEnemyState(e, 'approach');
+  } else if (e.state === 'attack' && A.MOVE === 'dive' && e.stateTime > A.DIVE.RUN_SEC) {
+    // 一撃離脱:突っ込み続けず、決まった秒数で必ず抜ける。
+    // 抜ける動きがあるから「後ろを取られた → 振り切られた → また来る」という
+    // 波ができ、プレイヤーは後方を見張り続けることになる。
+    setEnemyState(e, 'extend');
   }
 
   // --- 状態ごとの移動 ---
@@ -3550,22 +3755,77 @@ function updateEnemyAI(e, dt) {
 
   if (e.state === 'evade') {
     move.copy(e.evadeDir);
-    speed = AI.EVADE_SPEED;
+    speed = A.SPEED.EVADE;
+
+  } else if (e.state === 'extend') {
+    // 一撃離脱の「抜け」。自機から一直線に離れる
+    move.copy(toPlayerDir).negate();
+    speed = A.DIVE ? A.DIVE.EXTEND_SPEED : A.SPEED.EVADE;
 
   } else if (e.state === 'attack') {
-    if (distance < AI.TOO_CLOSE) {
-      move.copy(toPlayerDir).negate();     // 近すぎるので下がる
+    if (A.MOVE === 'dive') {
+      // --- ハウンド:自機の真後ろへ回り込む ---
+      // 自機の位置ではなく「自機の後方 REAR_OFFSET の点」を目指す。
+      // 正面から突っ込むと相手の照準の真ん中を通ることになるが、
+      // 後ろを取りにいくと、プレイヤーは首を振らないと捉えられない。
+      const back  = new THREE.Vector3(0, 0, 1).applyQuaternion(playerShip.quaternion);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(playerShip.quaternion);
+      const rearPoint = playerShip.position.clone()
+        .addScaledVector(back,  A.DIVE.REAR_OFFSET)
+        .addScaledVector(right, A.DIVE.SIDE_OFFSET * e.diveSide);
+      move.copy(rearPoint).sub(e.group.position);
+      // 目標の後方点にほぼ着いてしまったら、そのまま自機へ向かう
+      if (move.lengthSq() < 4) move.copy(toPlayerDir); else move.normalize();
+      // 近すぎるときだけは下がる(すり抜け防止)
+      if (distance < A.RANGE.TOO_CLOSE) move.copy(toPlayerDir).negate();
+
+    } else if (A.MOVE === 'standoff') {
+      // --- スナイパー:間合いを一定に保つ ---
+      // 詰められたら下がり、離れすぎたら少し寄る。その中間では横へ流れる。
+      if (distance < A.RANGE.TOO_CLOSE) {
+        // 下がりながら横へずれる(転位)。まっすぐ下がるだけだと追いつかれる
+        const side = toPlayerDir.clone().cross(new THREE.Vector3(0, 1, 0)).normalize();
+        move.copy(toPlayerDir).negate().addScaledVector(side, 0.8).normalize();
+      } else if (distance > A.RANGE.ATTACK * 0.92) {
+        move.copy(toPlayerDir);
+      } else {
+        move.copy(toPlayerDir).cross(new THREE.Vector3(0, 1, 0)).normalize();
+      }
+
     } else {
-      // 自機の周りを横へ回り込む。
-      // cross(外積)= 2つの向きの両方に直角な向き。これで「横」が求まる。
-      move.copy(toPlayerDir).cross(new THREE.Vector3(0, 1, 0)).normalize();
+      // --- ソルジャー:今までどおり、横へ回り込みながら撃ち合う ---
+      if (distance < A.RANGE.TOO_CLOSE) {
+        move.copy(toPlayerDir).negate();     // 近すぎるので下がる
+      } else {
+        // cross(外積)= 2つの向きの両方に直角な向き。これで「横」が求まる。
+        move.copy(toPlayerDir).cross(new THREE.Vector3(0, 1, 0)).normalize();
+      }
     }
-    speed = AI.ATTACK_SPEED;
+    speed = A.SPEED.ATTACK;
 
   } else {   // approach
     move.copy(toPlayerDir);
     // 見失っている間は「たぶんこのあたり」を探しているだけなので遅い
-    speed = seen ? AI.APPROACH_SPEED : ENEMY_SENSOR.SEARCH_SPEED;
+    speed = seen ? A.SPEED.APPROACH : ENEMY_SENSOR.SEARCH_SPEED;
+  }
+
+  // --- 蛇行(単調さ消し)---
+  //
+  // ここまでで決めた move は、位置関係だけから決まる「正解の向き」なので、
+  // 同じ状況では必ず同じ軌道になる ― 一度読まれると偏差照準に置かれるだけの
+  // 的になり、動きが単調に見える原因になる。
+  // そこで、時間とともにゆっくり向きを変える横揺れを足して軌道を崩す。
+  // 進む向きそのものは変えないので、AIの判断は壊れない。
+  if (e.arch.WANDER && e.state !== 'evade') {
+    const t = sceneTime * e.arch.WANDER.RATE + e.wanderPhase;
+    // move と直角な2方向(横と上)を作り、その組み合わせで揺らす
+    const side = move.clone().cross(new THREE.Vector3(0, 1, 0));
+    if (side.lengthSq() < 0.001) side.set(1, 0, 0);   // 真上/真下を向いていたとき用
+    side.normalize();
+    const up = side.clone().cross(move).normalize();
+    move.addScaledVector(side, Math.sin(t) * e.arch.WANDER.AMP)
+        .addScaledVector(up,   Math.sin(t * 0.7 + 1.3) * e.arch.WANDER.AMP * 0.6)
+        .normalize();
   }
 
   e.group.position.addScaledVector(move, speed * dt);
@@ -3577,7 +3837,7 @@ function updateEnemyAI(e, dt) {
     e.group.position, playerShip.position, new THREE.Vector3(0, 1, 0)
   );
   const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
-  e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-AI.TURN_RATE * dt));
+  e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-A.TURN_RATE * dt));
 
   // --- ミサイル(攻撃状態のときだけ)---
   updateEnemyMissileLogic(e, dt, distance);
@@ -3593,14 +3853,15 @@ function updateEnemyAI(e, dt) {
       if (e.telegraph <= 0) {
         e.telegraph = 0;
         fireEnemyBolt(e);
-        e.fireTimer = AI.FIRE_INTERVAL;
+        e.fireTimer = A.FIRE.INTERVAL;
+        e.heat += A.FIRE.HEAT;            // 撃てば自分も熱くなる(タイプごとに違う)
         e.heatSig = SENSOR.HEAT_LINGER;   // 撃った直後は熱くて見つかりやすい
       }
     } else {
       e.fireTimer -= dt;
       if (e.fireTimer <= 0) {
-        e.telegraph = AI.TELEGRAPH;   // 予告開始(光り始める)
-        onIncomingLock();             // main.js:狙われた警告音
+        e.telegraph = A.FIRE.TELEGRAPH;   // 予告開始(光り始める)
+        onIncomingLock();                 // main.js:狙われた警告音
       }
     }
   }
@@ -3613,6 +3874,8 @@ function updateEnemyAI(e, dt) {
 // 機体を大きく振るか、フレアを撒くかの判断が要るため。
 // ===================================================================
 function updateEnemyMissileLogic(e, dt, distance) {
+  const M = e.arch.MISSILE;   // このタイプのミサイル性能
+
   // --- ロック中 ---
   // ロックしたからといって必ず撃つわけではない。
   // 一定の割合で撃たずに解く ― これがこの装備のいちばんの肝。
@@ -3627,29 +3890,30 @@ function updateEnemyMissileLogic(e, dt, distance) {
       if (e.missileBluff) {
         // 撃たずに解いた。次に狙うまでは短めにして、また揺さぶってくる
         e.missileBluff = false;
-        e.missileTimer = ENEMY_MISSILE.INTERVAL * 0.45;
+        e.missileTimer = M.INTERVAL * 0.45;
         onEnemyMissileBreak();               // main.js:ログ(撃たなかったことを伝える)
       } else {
         fireEnemyMissile(e);
-        e.missileTimer = ENEMY_MISSILE.INTERVAL;
+        e.missileTimer = M.INTERVAL;
         e.heatSig = SENSOR.HEAT_LINGER * 1.5;   // 撃つと大きく熱を出す
       }
     }
     return;
   }
 
+  if (!M) return;
   if (e.state !== 'attack') return;
   if (!e.seesPlayer) return;      // 見つけていない相手はロックできない
   if (e.missileAmmo <= 0) return;
-  if (distance > ENEMY_MISSILE.RANGE || distance < ENEMY_MISSILE.MIN_RANGE) return;
+  if (distance > M.RANGE || distance < M.MIN_RANGE) return;
 
   e.missileTimer -= dt;
   if (e.missileTimer <= 0) {
-    e.missileTele = ENEMY_MISSILE.TELEGRAPH;
+    e.missileTele = M.TELEGRAPH;
     // このロックが本気かハッタリかを、ここで決めておく。
     // 決めるのはロックに入る瞬間 ― 途中で変えると、
     // プレイヤーの反応を見て決めているように振る舞ってしまう。
-    e.missileBluff = (Math.random() < ENEMY_MISSILE.BLUFF_CHANCE);
+    e.missileBluff = (Math.random() < M.BLUFF);
     onIncomingMissile();     // main.js:警報と音声
   }
 }
@@ -3726,10 +3990,17 @@ function updateEnemyGlow(e, dt) {
 
   if (e.telegraph > 0) {
     // 予告は「発射が近づくほど明るくなる」ようにする = 溜めている感じが出る
-    const t = 1 - e.telegraph / AI.TELEGRAPH;   // 0 → 1
-    r = Math.max(r, t);
-    g = Math.max(g, t * 0.45);   // オレンジ寄りの色
-    b = Math.max(b, t * 0.15);
+    let t = 1 - e.telegraph / e.arch.FIRE.TELEGRAPH;   // 0 → 1
+    const G = e.arch.GLOW;
+    // PULSE があるタイプ(スナイパー)は、溜まるほど速く明滅させる。
+    // ただの明るさ変化より「充填している」ことがはるかに伝わる。
+    if (G.PULSE > 0) {
+      const beat = 0.72 + 0.28 * Math.sin(sceneTime * G.PULSE * (0.4 + t));
+      t *= beat;
+    }
+    r = Math.max(r, t * G.R);
+    g = Math.max(g, t * G.G);
+    b = Math.max(b, t * G.B);
   }
 
   // パイロ弾で燃えている間は赤熱する。熱で目立っていることが目で分かる
@@ -3756,7 +4027,7 @@ function updateEnemyGlow(e, dt) {
 
   // ミサイルの予告は白紫。銃の予告(オレンジ)と色で区別できるようにする
   if (e.missileTele > 0) {
-    const t = 1 - e.missileTele / ENEMY_MISSILE.TELEGRAPH;
+    const t = 1 - e.missileTele / e.arch.MISSILE.TELEGRAPH;
     r = Math.max(r, t);
     g = Math.max(g, t * 0.55);
     b = Math.max(b, t * 0.95);
@@ -3776,21 +4047,25 @@ function updateEnemyGlow(e, dt) {
 // 距離 ÷ 弾速 で飛翔時間を出し、そのぶんだけ自機の速度で先へ進めた点を返す。
 // ただし丸ごと読むと当たりすぎるので、ENEMY_BOLT.LEAD の割合しか読まない。
 // ===================================================================
-function predictedPlayerPoint(fromPos) {
-  const flightTime = fromPos.distanceTo(playerShip.position) / ENEMY_BOLT.SPEED;
+function predictedPlayerPoint(fromPos, boltSpeed, leadMult) {
+  const flightTime = fromPos.distanceTo(playerShip.position) / boltSpeed;
   // 先読みの精度は自機の熱で決まる。冷えているほど読みが甘い。
   const sig = playerSignature();
-  const lead = ENEMY_SENSOR.LEAD_COLD
-             + (ENEMY_SENSOR.LEAD_HOT - ENEMY_SENSOR.LEAD_COLD) * sig;
+  let lead = ENEMY_SENSOR.LEAD_COLD
+           + (ENEMY_SENSOR.LEAD_HOT - ENEMY_SENSOR.LEAD_COLD) * sig;
+  // タイプごとの読みの深さ。1.0 を超えると「完全に読む」= 避けようがなくなるので、
+  // スナイパーでも 0.95 で頭打ちにして、逃げ道を必ず残す。
+  lead = Math.min(lead * leadMult, 0.95);
   return playerShip.position.clone()
     .addScaledVector(shipVelocity, flightTime * lead);
 }
 
 // 弾道の散り。こちらも熱で決まる ― 冷えているほど散って当たらない
-function enemyBoltSpread() {
+function enemyBoltSpread(spreadMult) {
   const sig = playerSignature();
-  return ENEMY_SENSOR.SPREAD_COLD
-       + (ENEMY_SENSOR.SPREAD_HOT - ENEMY_SENSOR.SPREAD_COLD) * sig;
+  const base = ENEMY_SENSOR.SPREAD_COLD
+             + (ENEMY_SENSOR.SPREAD_HOT - ENEMY_SENSOR.SPREAD_COLD) * sig;
+  return base * spreadMult;
 }
 
 function fireEnemyBolt(e) {
@@ -3800,6 +4075,8 @@ function fireEnemyBolt(e) {
   }
 
   enemyVolleyCounter += 1;   // この発射の通し番号
+
+  const b = e.arch.BOLT;     // このタイプの弾の性能
 
   for (const side of [-1, 1]) {
     const mesh = new THREE.Mesh(enemyBoltGeometry, enemyBoltMaterial);
@@ -3819,11 +4096,11 @@ function fireEnemyBolt(e) {
     // わざと LEAD ぶんしか読まず、さらに SPREAD で散らしてある。
     // 発射の 0.5 秒前から光る(TELEGRAPH)ので、
     // 光ってから進路を変えれば読みは外れる ― 避ける余地はそこで確保している。
-    const aimPoint = predictedPlayerPoint(mesh.position);
+    const aimPoint = predictedPlayerPoint(mesh.position, b.SPEED, b.LEAD_MULT);
     const direction = aimPoint.sub(mesh.position).normalize();
 
     // 左右へわずかに散らす。毎回きっちり同じ点へ来ないようにする
-    const spread = enemyBoltSpread();
+    const spread = enemyBoltSpread(b.SPREAD_MULT);
     direction.x += (Math.random() - 0.5) * spread;
     direction.y += (Math.random() - 0.5) * spread;
     direction.z += (Math.random() - 0.5) * spread;
@@ -3835,7 +4112,12 @@ function fireEnemyBolt(e) {
 
     scene.add(mesh);
     enemyBolts.push({
-      mesh: mesh, direction: direction, life: ENEMY_BOLT.LIFE,
+      mesh: mesh, direction: direction,
+      // 射程を全タイプでそろえるため、寿命は「射程 ÷ 弾速」で出す。
+      // 速い弾ほど寿命が短くなり、どのタイプも同じ距離で消える。
+      life: (ENEMY_BOLT.SPEED * ENEMY_BOLT.LIFE) / b.SPEED,
+      speed: b.SPEED,
+      damageMult: b.DAMAGE_MULT,
       volleyId: enemyVolleyCounter,
     });
   }
@@ -3846,7 +4128,7 @@ function updateEnemyBolts(dt) {
   for (let i = enemyBolts.length - 1; i >= 0; i--) {
     const bolt = enemyBolts[i];
 
-    bolt.mesh.position.addScaledVector(bolt.direction, ENEMY_BOLT.SPEED * dt);
+    bolt.mesh.position.addScaledVector(bolt.direction, bolt.speed * dt);
     bolt.life -= dt;
 
     // --- 自機への命中判定 ---
@@ -3859,7 +4141,8 @@ function updateEnemyBolts(dt) {
       // 同じ発射の2本目なら火花だけ。ダメージは1回ぶんに数える
       if (bolt.volleyId !== lastPlayerHitVolley) {
         lastPlayerHitVolley = bolt.volleyId;
-        onPlayerHit();   // main.js:シールド/HULLの処理と画面演出
+        // 撃った機体のタイプで威力が変わる(スナイパーは重い)
+        onPlayerHit(bolt.damageMult);   // main.js:シールド/HULLの処理と画面演出
       }
       continue;
     }
@@ -4246,8 +4529,12 @@ function updateCollisions() {
 // ===================================================================
 // リスポーン:HPを戻し、前とは違う位置に出現させる
 // ===================================================================
-function respawnEnemy(e) {
-  e.hp = ENEMY.MAX_HP;
+// forceType にタイプ名を渡すと抽選せずそのタイプで出す(出撃時の1機目用)
+function respawnEnemy(e, forceType) {
+  // 出てくるたびにタイプを引き直す。同じ相手が続かないので、
+  // プレイヤーは「今度は何が来たか」を毎回見てから組み立てることになる。
+  assignArchetype(e, forceType || pickArchetype());
+  e.hp = e.arch.MAX_HP;
   e.alive = true;
   e.group.visible = true;
   e.respawnLeft = 0;
@@ -4265,7 +4552,7 @@ function respawnEnemy(e) {
 
   // AIを初期状態に戻す
   setEnemyState(e, 'approach');
-  e.fireTimer = AI.FIRE_INTERVAL;
+  e.fireTimer = e.arch.FIRE.INTERVAL;
   e.telegraph = 0;
   // 位置が飛ぶので、速度の測定もやり直す(古い値を引きずらせない)
   if (e.vel) {
@@ -4278,8 +4565,10 @@ function respawnEnemy(e) {
   e.ventDown = 0;
   e.heatDown = 0;
   e.empLeft = 0;
-  e.missileAmmo = ENEMY_MISSILE.AMMO;
-  e.missileTimer = ENEMY_MISSILE.INTERVAL * (0.5 + Math.random() * 0.5);
+  e.missileAmmo = e.arch.MISSILE.AMMO;
+  // 最初の1発を撃つまでの時間は毎回ばらつかせる。
+  // そろっていると2機が同時にロックしてきて、動きが機械的に見える。
+  e.missileTimer = e.arch.MISSILE.INTERVAL * (0.35 + Math.random() * 0.5);
   e.missileTele = 0;
   e.missileBluff = false;
   e.flareAmmo = ENEMY_MISSILE.FLARE_AMMO;
