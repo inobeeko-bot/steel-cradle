@@ -321,6 +321,186 @@ function drawAdvanced(g, x, y, s) {
   }
 }
 
+// 見出し(小さな見出し+下線)。区画の頭に置く
+function drawHeading(g, x, y, w, text) {
+  g.textAlign = 'left';
+  g.font = '12px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText(text, x, y - 10);
+  g.strokeStyle = 'rgba(159,225,203,0.18)';
+  g.lineWidth = 1;
+  g.beginPath(); g.moveTo(x, y - 4.5); g.lineTo(x + w, y - 4.5); g.stroke();
+}
+
+// ===================================================================
+// 熱の内訳
+//
+// 熱ゲージは「今いくつ溜まっているか」しか見せない。
+// 熱が上がるのか下がるのかは、発熱(武器+エンジン)と放熱の差で決まる。
+// その3つを並べて見せると、どちらを削れば冷えるのかが一目で決まる。
+// ===================================================================
+function drawHeatBudget(g, x, y, s) {
+  drawHeading(g, x, y, 150, 'HEAT BUDGET');
+
+  const scale = 34;   // この値を「棒いっぱい」とする(毎秒の熱)
+  const rows = [
+    ['WPN',  s.heatFromWeapon, CONSOLE3D.WARN],
+    ['ENG',  s.heatFromEngine, CONSOLE3D.AMBER],
+    ['VENT', -s.heatVent,      '#8fd8ff'],
+  ];
+  let ry = y + 12;
+  for (const [name, val, col] of rows) {
+    g.textAlign = 'left';
+    g.font = '11px monospace';
+    g.fillStyle = CONSOLE3D.DIM;
+    g.fillText(name, x, ry + 8);
+    drawBar(g, x + 40, ry, 66, 9, Math.abs(val) / scale, col);
+    g.font = '12px monospace';
+    g.fillStyle = col;
+    g.textAlign = 'right';
+    g.fillText((val >= 0 ? '+' : '') + val.toFixed(1), x + 150, ry + 9);
+    ry += 16;
+  }
+
+  // 差し引き。ここが正なら熱は溜まっていく
+  const net = s.heatFromWeapon + s.heatFromEngine - s.heatVent;
+  g.textAlign = 'left';
+  g.font = '11px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('NET', x, ry + 12);
+  g.textAlign = 'right';
+  g.font = 'bold 17px monospace';
+  g.fillStyle = net > 0 ? CONSOLE3D.WARN : '#8fd8ff';
+  g.fillText((net >= 0 ? '+' : '') + net.toFixed(1) + '/s', x + 150, ry + 13);
+}
+
+// ===================================================================
+// 被(ひ)ロック警戒
+//
+// 「こちらが狙っているか」ではなく「こちらが狙われているか」。
+// 撃たれる前に必ず予告が出るので、この欄が変わった瞬間が回避の合図になる。
+// ===================================================================
+function drawThreat(g, x, y, s) {
+  drawHeading(g, x, y, 190, 'THREAT');
+
+  const t = s.threat;
+  const map = {
+    CLEAR:   { text: 'CLEAR',   color: CONSOLE3D.DIM,   blink: false },
+    TRACK:   { text: 'TRACKED', color: CONSOLE3D.AMBER, blink: false },
+    LOCK:    { text: 'LOCKED',  color: CONSOLE3D.WARN,  blink: true },
+    MISSILE: { text: 'MISSILE', color: '#ffffff',       blink: true },
+  };
+  const m = map[t.level] || map.CLEAR;
+  const on = !m.blink || (Math.sin(consoleTick * 12) > -0.2);
+
+  // 枠。危険なときだけ縁が点く
+  g.strokeStyle = (t.level === 'CLEAR') ? CONSOLE3D.LINE
+                : (on ? m.color : 'rgba(0,0,0,0)');
+  g.lineWidth = 2;
+  g.strokeRect(x + 0.5, y + 6.5, 186, 40);
+
+  g.textAlign = 'center';
+  g.font = 'bold 24px monospace';
+  g.fillStyle = on ? m.color : 'rgba(0,0,0,0)';
+  g.fillText(m.text, x + 93, y + 34);
+
+  // 何機に狙われているか
+  g.textAlign = 'left';
+  g.font = '12px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('ENGAGED BY', x, y + 66);
+  g.font = 'bold 16px monospace';
+  g.fillStyle = t.count > 0 ? CONSOLE3D.AMBER : CONSOLE3D.DIM;
+  g.fillText(String(t.count), x + 106, y + 66);
+}
+
+// ===================================================================
+// 目標の状態
+//
+// いちばん近い敵の中身。熱と、パイロ弾の効き(放熱不能)が見える。
+// 残弾はセンサーに十分電力を回しているときだけ読める ―
+// 「センサーへ配ると相手の手札が見える」という利得を作るため。
+// ===================================================================
+function drawTargetBlock(g, x, y, s) {
+  drawHeading(g, x, y, 190, 'TARGET');
+
+  const e = s.enemyInfo;
+  if (!e.valid) {
+    g.textAlign = 'left';
+    g.font = '16px monospace';
+    g.fillStyle = CONSOLE3D.DIM;
+    g.fillText('NO CONTACT', x, y + 22);
+    return;
+  }
+
+  // 状態
+  const stMap = { approach: 'APPROACH', attack: 'ATTACK', evade: 'EVADE' };
+  let stText = stMap[e.state] || '----';
+  let stColor = CONSOLE3D.TEXT;
+  if (e.heatDown) { stText = 'OVERHEAT'; stColor = CONSOLE3D.AMBER; }
+  else if (e.empLeft > 0) { stText = 'EMP DOWN'; stColor = '#7fd4ff'; }
+  g.textAlign = 'left';
+  g.font = 'bold 16px monospace';
+  g.fillStyle = stColor;
+  g.fillText(stText, x, y + 18);
+
+  // 敵の熱
+  g.font = '11px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('T-HEAT', x, y + 40);
+  drawBar(g, x + 56, y + 30, 92, 11, e.heat / 100,
+          e.heat >= 70 ? CONSOLE3D.WARN : (e.heat >= 35 ? CONSOLE3D.AMBER : '#5f8f7c'));
+  g.textAlign = 'right';
+  g.font = '13px monospace';
+  g.fillStyle = e.ventDown ? '#ff7a2a' : CONSOLE3D.DIM;
+  // ▼ は放熱不能(パイロ弾が効いている)の印
+  g.fillText(Math.round(e.heat) + (e.ventDown ? ' ▼' : ''), x + 190, y + 40);
+
+  // 敵の残弾。センサーが足りないと読めない
+  g.textAlign = 'left';
+  g.font = '11px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('MSL', x, y + 62);
+  g.fillText('FLR', x + 96, y + 62);
+  g.font = 'bold 15px monospace';
+  if (s.canReadEnemyAmmo) {
+    g.fillStyle = CONSOLE3D.TEXT;
+    g.fillText(String(e.missileAmmo), x + 40, y + 62);
+    g.fillText(String(e.flareAmmo), x + 136, y + 62);
+  } else {
+    g.fillStyle = CONSOLE3D.DIM;
+    g.fillText('--', x + 40, y + 62);
+    g.fillText('--', x + 136, y + 62);
+  }
+}
+
+// ===================================================================
+// 戦績と補給の見通し(右端の細い欄)
+// ===================================================================
+function drawScoreStrip(g, x, y, s) {
+  drawHeading(g, x, y, 96, 'MISSION');
+
+  const rows = [
+    ['KILLS', s.kills + '/' + s.killGoal, CONSOLE3D.TEXT],
+    ['HITS',  String(s.hitsTaken),        s.hitsTaken > 0 ? CONSOLE3D.AMBER : CONSOLE3D.DIM],
+    // シールドが満タンに戻るまでの秒数。撤退の判断に使う
+    ['S-FULL', s.shieldToFull === null ? '--' : Math.round(s.shieldToFull) + 's',
+      s.shieldToFull === null ? CONSOLE3D.DIM : '#8fd8ff'],
+  ];
+  let ry = y + 16;
+  for (const [k, v, c] of rows) {
+    g.textAlign = 'left';
+    g.font = '11px monospace';
+    g.fillStyle = CONSOLE3D.DIM;
+    g.fillText(k, x, ry);
+    g.textAlign = 'right';
+    g.font = 'bold 15px monospace';
+    g.fillStyle = c;
+    g.fillText(v, x + 96, ry);
+    ry += 22;
+  }
+}
+
 // ===================================================================
 // 計器盤ぜんぶを1枚に描く
 // main.js が毎コマ、今の状態(s)を渡して呼ぶ。
@@ -390,9 +570,13 @@ function drawConsole3D(s, dt) {
     });
   });
 
+  // --- 中央の空きに置く計器 ---
+  // 照準器の土台をなくしたので、中央も使える。
+  drawHeatBudget(g, 300, 46, s);      // 熱の内訳(熱ゲージのすぐ右)
+  drawThreat(g, 820, 46, s);          // 被ロック警戒
+  drawTargetBlock(g, 820, 148, s);    // 目標の状態
+
   // --- 上級者向け計器 ---
-  // 画面中央(canvas座標でおよそ 980〜1060)には光像式照準器の土台が立っていて、
-  // その帯は隠れて読めない。飛行データも兵装欄も、そこを避けて右側に並べる。
   drawAdvanced(g, 1090, 46, s);
 
   // --- 兵装(右寄り)---
@@ -463,6 +647,9 @@ function drawConsole3D(s, dt) {
   g.fillText('+' + s.shieldRegen.toFixed(1) + '/s', 1917, 252);
   g.fillStyle = CONSOLE3D.DIM;
   g.fillText('BURST −8', 1777, 252);
+
+  // --- 右端の細い欄:戦績 ---
+  drawScoreStrip(g, 1950, 46, s);
 
   // --- 下段の情報行 ---
   const items = [

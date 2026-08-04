@@ -42,7 +42,7 @@ const FEEL = {
   //   抜け  (ROLL_DAMP)  … 長い = 離しても勢いが残り、ゆっくり収まる
   // 宇宙には空気抵抗がないので、止まらないほうがむしろ自然でもある。
   ROLL_SMOOTH:  0.07,
-  ROLL_DAMP:    1.40,
+  ROLL_DAMP:    2.60,
                         //   大きいほど重い機体。0にすると今までどおり即座に最高速
   BANK_ANGLE:   0.55,   // 旋回時に機体を傾ける最大角(ラジアン。約32度)
   BANK_SMOOTH:  0.30,   // 傾きの追従時間(秒)。大きいほどゆっくり倒れ、ゆっくり戻る
@@ -159,6 +159,9 @@ const COCKPIT = {
   SIGHT_GLASS_H:  0.135,   // ガラス板の高さ(画面高さの割合)
   SIGHT_GLASS_OPACITY: 0.08,  // ガラスの濃さ。上げると視界が曇る
   SIGHT_TILT:      0.30,   // ガラス板の傾き(上を手前へ倒す)
+  // 照準器の土台(柱)を出すか。
+  // 出すと計器盤の中央が縦に隠れて、そこの計器が読めなくなる。
+  SIGHT_BASE_SHOW: false,
   SIGHT_BASE_W:   0.050,   // 土台の幅(画面幅の割合)
   SIGHT_BASE_TOP: 0.575,   // 土台の上端の高さ(画面上からの割合)
 
@@ -321,7 +324,19 @@ const ENEMY = {
   SCALE:          1.4,    // 機体全体の大きさ
 
   MAX_HP:           5,    // 何発で撃墜されるか
-  HIT_RADIUS:     2.8,    // 当たり判定の半径。機体を包む球の大きさ
+  HIT_RADIUS:     2.8,    // ざっくり判定用の半径(捕捉半径の基準などに使う)
+
+  // 当たり判定の実寸(機体から見た半分の大きさ)。
+  // 球ひとつで包むと、機体は横に広く薄い形なのに
+  // 上下にも前後にも同じだけ判定が出てしまう ―
+  // 翼の外を通った弾が当たり、真上を通った弾も当たる、という雑さになる。
+  // 楕円体(軸ごとに半径が違う球)にすると、形にずっと近くなる。
+  //   x = 翼を含む横幅 / y = 薄い上下 / z = 機首から尾までの前後
+  //
+  // ※ 数字は「モデルの寸法」で書くこと。
+  //   判定は機体から見た座標で行うので、ENEMY.SCALE は自動的に効く。
+  //   主翼は x=±2.2、胴体は z=±1.5(ノズルまで1.8)、尾翼で y≈1.0。
+  HIT_HALF:  { x: 2.2, y: 0.95, z: 1.8 },
   FLASH_SEC:     0.18,    // 被弾したとき白く光る時間
   RESPAWN_SEC:    3.0,    // 撃墜されてから次の機体が現れるまでの秒数
 };
@@ -641,7 +656,10 @@ const ENEMY_BOLT = {
   COLOR: 0xff6a4d,       // 敵の兵装色(赤)。自機の緑と混ざらないようにする
   OFFSET_X:  1.2,        // 発射口の左右位置
   OFFSET_Z: -2.0,        // 発射口の前後位置(機首側)
-  HIT_RADIUS: 2.2,       // 自機の当たり判定の半径
+  HIT_RADIUS: 2.2,       // ざっくり判定用の半径
+  // 自機の当たり判定の実寸(半分の大きさ)。敵機と同じくモデルの寸法で書く。
+  // 主翼と機関砲ポッドで x=±2.05、胴体は z=±1.4、尾翼で y≈0.9。
+  HIT_HALF:  { x: 2.1, y: 0.85, z: 1.6 },
 };
 
 // --- 敵機の管理 -----------------------------------------------------
@@ -1277,9 +1295,15 @@ function createCockpitInterior() {
 
   // --- 光像式照準器:土台 ---
   // 計器台から生えて、ガラス板を目の高さまで持ち上げる箱。
+  //
+  // ※ 既定では出さない。ガラス板より手前にあるため、計器盤の中央を
+  //   縦に塞いでしまい、そこに置いた計器が読めなくなる。
+  //   照準器は上から吊っている、という解釈にして柱をなくしてある。
+  //   戻したいときは COCKPIT.SIGHT_BASE_SHOW を true に。
   const sightBase = createSilhouette([
     [-0.5, -0.5], [0.5, -0.5], [0.32, 0.5], [-0.32, 0.5],
   ]);
+  sightBase.visible = !!COCKPIT.SIGHT_BASE_SHOW;
   g.add(sightBase);
 
   // --- 光像式照準器:ガラス板 ---
@@ -1366,10 +1390,36 @@ function createCockpitInterior() {
   const face = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1),
     new THREE.MeshBasicMaterial({
-      map: faceTex, transparent: true, depthWrite: false,
+      map: faceTex, transparent: true, depthWrite: false, depthTest: false,
     })
   );
+  face.renderOrder = 6;
   g.add(face);
+
+  // ===================================================================
+  // 内装は「必ず手前」に描く
+  //
+  // 自分が乗っている機体の一部なので、外の景色が計器台の手前に
+  // 出てくることはありえない。ところが弾は翼(目より後ろ)から出るので、
+  // 計器台の面(目から2.0)より近い位置を通る一瞬があり、
+  // 素直に奥行きで比べると弾が計器を突き抜けて見えてしまう。
+  //
+  // そこで内装は奥行きの判定をやめ、描く順番だけで前後を決める。
+  //   計器台・支柱・上枠 … 5
+  //   計器の面           … 6
+  //   レティクル         … 10(いちばん手前。ガラスに映る光なので)
+  // ===================================================================
+  const alwaysFront = (obj, order) => {
+    obj.renderOrder = order;
+    if (obj.material) { obj.material.depthTest = false; obj.material.depthWrite = false; }
+    for (const c of obj.children) alwaysFront(c, order);
+  };
+  alwaysFront(dash, 5);
+  for (const p of pillars) alwaysFront(p, 5);
+  alwaysFront(topBar, 5);
+  alwaysFront(trim, 5);
+  alwaysFront(nose, 4);     // 機首は計器台より奥。台に根元を隠させる
+  alwaysFront(face, 6);
 
   // 毎コマの配置計算で使うので、部品を覚えておく
   g.userData = {
@@ -2453,7 +2503,7 @@ function updateMissiles(dt) {
     // --- 命中判定 ---
     // 敵のミサイルは自機に、自機のミサイルは敵に当たる
     if (m.fromEnemy) {
-      if (m.mesh.position.distanceTo(playerShip.position) < MISSILE.HIT_RADIUS) {
+      if (hitsShip(m.mesh.position, playerShip, ENEMY_BOLT.HIT_HALF, MISSILE.HIT_RADIUS)) {
         spawnFlash(m.mesh.position, 22, 0xffffff, 0.28);
         spawnBlast(m.mesh.position, 11, 0xffb060);
         spawnDebris(m.mesh.position, 10, 0.28, 16, 0xffd9a0, true);
@@ -2476,7 +2526,8 @@ function updateMissiles(dt) {
     let struck = null;
     for (const e of enemies) {
       if (!e.alive) continue;
-      if (m.mesh.position.distanceTo(e.group.position) < MISSILE.HIT_RADIUS) { struck = e; break; }
+      // ミサイルは近接信管なので、機体の形に信管の効く距離を足して判定する
+      if (hitsShip(m.mesh.position, e.group, ENEMY.HIT_HALF, MISSILE.HIT_RADIUS)) { struck = e; break; }
     }
 
     if (struck) {
@@ -2974,7 +3025,7 @@ function updateBolts(dt) {
     let struck = null;
     for (const e of enemies) {
       if (!e.alive) continue;
-      if (bolt.mesh.position.distanceTo(e.group.position) < ENEMY.HIT_RADIUS) { struck = e; break; }
+      if (hitsShip(bolt.mesh.position, e.group, ENEMY.HIT_HALF)) { struck = e; break; }
     }
 
     if (struck) {
@@ -3411,7 +3462,7 @@ function updateEnemyBolts(dt) {
     bolt.life -= dt;
 
     // --- 自機への命中判定 ---
-    if (bolt.mesh.position.distanceTo(playerShip.position) < ENEMY_BOLT.HIT_RADIUS) {
+    if (hitsShip(bolt.mesh.position, playerShip, ENEMY_BOLT.HIT_HALF)) {
       // 当たった場所に赤い火花を散らす
       spawnDebris(bolt.mesh.position, 5, 0.14, 7);
       scene.remove(bolt.mesh);
@@ -3462,6 +3513,61 @@ function nearestEnemy() {
     if (d < bestD) { bestD = d; best = e; }
   }
   return best;
+}
+
+// ===================================================================
+// 自分が今どれだけ狙われているか
+//
+// 敵の内部状態を、こちら側の警戒段階に翻訳して返す。
+//   CLEAR   … 誰も攻撃態勢に入っていない
+//   TRACK   … 攻撃態勢の敵がいる(射程に入られている)
+//   LOCK    … 銃の発射予告中(0.5秒後に撃たれる)
+//   MISSILE … ミサイルの発射予告中(いちばん危ない)
+//
+// count は、こちらを攻撃態勢で捉えている敵の数。
+// ===================================================================
+function threatStatus() {
+  let level = 'CLEAR';
+  let count = 0;
+  const rank = { CLEAR: 0, TRACK: 1, LOCK: 2, MISSILE: 3 };
+
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    // 熱やEMPで止まっている敵は、こちらを狙えない
+    if (e.heatDown > 0 || e.empLeft > 0) continue;
+
+    let mine = 'CLEAR';
+    if (e.missileTele > 0)      mine = 'MISSILE';
+    else if (e.telegraph > 0)   mine = 'LOCK';
+    else if (e.state === 'attack') mine = 'TRACK';
+
+    if (mine !== 'CLEAR') count++;
+    if (rank[mine] > rank[level]) level = mine;
+  }
+  return { level: level, count: count };
+}
+
+// ===================================================================
+// いちばん近い敵の中身をまとめて返す(計器表示用)
+//
+// 残弾までは、本来こちらから見えるはずのない情報。
+// センサーに十分な電力を回しているときだけ読める、という扱いにするため、
+// 見せるかどうかの判断は main.js に任せて、ここでは値だけ返す。
+// ===================================================================
+function nearestEnemyInfo() {
+  const e = nearestEnemy();
+  if (!e) return { valid: false };
+  return {
+    valid: true,
+    heat: e.heat,
+    ventDown: e.ventDown > 0,
+    heatDown: e.heatDown > 0,
+    empLeft: e.empLeft,
+    burning: e.burnLeft > 0,
+    missileAmmo: e.missileAmmo,
+    flareAmmo: e.flareAmmo,
+    state: e.state,
+  };
 }
 
 // いちばん近い敵の熱(0〜100)。計器に出して、パイロ弾の効きを見せる
@@ -3583,6 +3689,34 @@ function missileContacts(sensorPercent) {
   }
 
   return result;
+}
+
+// ===================================================================
+// 楕円体の当たり判定
+//
+// point(世界の座標)が、obj を中心とした楕円体の内側にあるかを返す。
+// half は「機体から見た半分の大きさ」。
+//
+// やっていること:
+//   1. 点を機体から見た座標に直す(worldToLocal)。
+//      こうすると機体がどんな姿勢でも、まっすぐな箱の中の話になる。
+//   2. 各軸を半径で割って、合計が1以下なら内側。
+//      (x/a)² + (y/b)² + (z/c)² ≤ 1 が楕円体の式。
+// ===================================================================
+const _hitPoint = new THREE.Vector3();   // 毎回作らず使い回す
+
+function hitsShip(point, obj, half, margin) {
+  obj.updateMatrixWorld();
+  _hitPoint.copy(point);
+  obj.worldToLocal(_hitPoint);
+
+  // margin は世界の単位で渡ってくる(近接信管の効く距離など)。
+  // 判定は機体から見た座標で行うので、機体の拡大率でわって単位を合わせる。
+  const m = (margin || 0) / (obj.scale.x || 1);
+  const ax = half.x + m, ay = half.y + m, az = half.z + m;
+  return (_hitPoint.x * _hitPoint.x) / (ax * ax)
+       + (_hitPoint.y * _hitPoint.y) / (ay * ay)
+       + (_hitPoint.z * _hitPoint.z) / (az * az) <= 1;
 }
 
 // ===================================================================

@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-48 flight data';
+const BUILD = 'p1-49 more gauges';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -1198,6 +1198,35 @@ function renderConsole3D(dt) {
       heat: isBroken('heat'), propellant: isBroken('propellant'),
       shieldhp: isBroken('shieldhp'),
     },
+
+    // --- 熱の内訳 ---
+    // 熱ゲージは溜まった量しか見せない。上がるか下がるかは
+    // 発熱(武器+エンジン)と放熱の差で決まるので、その3つを分けて渡す。
+    heatFromWeapon: power.weapon * HEAT.PER_WEAPON,
+    heatFromEngine: isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE,
+    heatVent: (shutdownLeft > 0) ? HEAT.VENT_SHUTDOWN
+      : (HEAT.VENT_BASE * (driftInput ? HEAT.DRIFT_VENT_MULT : 1)
+         + (radiatorOpen ? HEAT.VENT_RADIATOR : 0)),
+
+    // --- 狙われているか ---
+    threat: threatStatus(),
+
+    // --- 目標の中身 ---
+    enemyInfo: nearestEnemyInfo(),
+    // 敵の残弾は本来こちらから見えない情報。
+    // センサーに十分配っているときだけ読める、という利得にしてある。
+    canReadEnemyAmmo: (sensorPct >= 40) && !isBroken('sensor'),
+
+    // --- 戦績 ---
+    kills: killCount,
+    killGoal: MISSION.KILL_GOAL,
+    hitsTaken: hitsTaken,
+    // シールドが満タンに戻るまでの秒数。撤退するかの判断に使う
+    shieldToFull: (function () {
+      const r = currentShieldRegen();
+      if (r <= 0 || shieldHp >= SHIELD.MAX) return null;
+      return (SHIELD.MAX - shieldHp) / r;
+    })(),
 
     // --- 上級者向けの読み ---
     // 現在値ではなく「このままだとどうなるか」を出す欄。
