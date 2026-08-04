@@ -1440,11 +1440,15 @@
       position: absolute;
       border-radius: 2px 2px 0 0;
     }
-    .story-actor.kaito {
-      background: #cfd8dd;
-      box-shadow: inset 0 -40% 30% rgba(0, 0, 0, 0.35),
-                  0 0 0 1px rgba(0, 0, 0, 0.45);
+    /* ドット絵のスプライト。1枚の絵を横にずらして1コマずつ出す */
+    .story-actor.sprite {
+      background-repeat: no-repeat;
+      /* 背景と同じく、拡大しても補間させない */
+      image-rendering: crisp-edges;
+      image-rendering: pixelated;
     }
+    /* スプライトになったので、矩形時代の塗りと影は付けない */
+    .story-actor.kaito { background-color: transparent; box-shadow: none; }
     .story-actor.npc { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
     .story-actor span {
       position: absolute; left: -40px; right: -40px; top: -15px;
@@ -1452,9 +1456,7 @@
       color: rgba(255, 240, 220, 0.85);
       text-shadow: 0 1px 2px #000;
     }
-    /* 歩いているあいだ、わずかに上下させる(足踏みの代わり) */
-    .story-actor.walking { animation: storyWalk 0.3s steps(2) infinite; }
-    @keyframes storyWalk { 0% { margin-top: 0; } 50% { margin-top: 2px; } 100% { margin-top: 0; } }
+    /* 左へ歩くときの水平反転。左向きの素材は用意せず、これで賄う */
     .story-actor.flip { transform: scaleX(-1); }
 
     /* --- 出口 --- */

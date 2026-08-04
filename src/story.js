@@ -57,12 +57,28 @@ const ADV_CONFIG = {
 
   // --- 人物と操作(すべて仮想解像度の px)---
   WALK_SPEED:   72,    // 歩く速さ(1秒あたり)
-  // 人物の身長。背景の家の戸口(約55px)を物差しにして決める。
-  // ここを変えると、カイトも祖父もまとめて大きさが変わる。
-  CHAR_HEIGHT:  44,
+  // 人物の身長。カイトのドット絵の中身がちょうど46pxあるので、
+  // まだ矩形のままの人物(祖父)もこれに揃える。
+  CHAR_HEIGHT:  46,
   // 幅は身長からの比で出す。別々に持つと、身長だけ変えたとき
-  // 縦長・横長にひしゃげてしまう。
+  // 縦長・横長にひしゃげてしまう。矩形の人物にだけ使う。
   CHAR_ASPECT: 0.32,
+
+  // --- スプライト ---
+  // コマは 48×48。中身は下端まで詰まっているので、
+  // 「コマの底辺中央」がそのまま接地点になる。
+  SPRITE: {
+    FRAME_W: 48,
+    FRAME_H: 48,
+    IDLE: 'assets/adv/kite_idle.png',
+    WALK: 'assets/adv/kite_walk.png',
+    WALK_FRAMES: 6,
+    // ドット絵は右向きに描かれている。左へ歩くときは水平反転して使う。
+    // (もし素材が左向きだったら、ここを false にすれば反転が逆になる)
+    FACES_RIGHT: true,
+  },
+  // 歩きの毎秒コマ数。上げるとせかせか、下げるとのっそり歩く
+  WALK_ANIM_FPS: 10,
   REACH:        34,    // 「調べる」が届く距離
   CAM_EDGE:   0.40,    // 画面のどこにカイトを置くか(0.5=中央)
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
@@ -145,9 +161,8 @@ const STORY_SCENES = {
     // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
     npc: {
       id: 'grandpa', x: 300,
-      // 祖父は歳のぶん少し小さい。身長は CHAR_HEIGHT からの比で出すので、
-      // 基準を変えれば2人まとめて追従する
-      scale: 0.94,
+      // 祖父はまだ矩形のプレースホルダー。大きさは CHAR_HEIGHT に揃える
+      scale: 1,
       color: '#6b5240', label: '祖父',
 
       talks: [
@@ -229,6 +244,11 @@ let storyExitEl   = null;
 let storyMarkEl   = null;
 
 let storyHintShown = null;
+
+// 歩きアニメの状態
+let storyAnimTime  = 0;    // コマを進めるための時計
+let storyAnimFrame = 0;    // いま何コマ目か
+let storyWalking   = false;
 
 // ===================================================================
 // 拡大率を決めて、舞台の大きさを合わせる
@@ -363,10 +383,15 @@ function buildStoryScene(scene) {
   storyExitEl.className = 'story-exit';
   storyWorldEl.appendChild(storyExitEl);
 
-  // --- カイト ---
+  // --- カイト(ドット絵のスプライト)---
+  // 1枚の絵を横にずらして使う(スプライトシート)。
+  // コマごとに画像を差し替えるより、切り替えが速くて描画も安定する。
   storyActorEl = document.createElement('div');
-  storyActorEl.className = 'story-actor kaito';
+  storyActorEl.className = 'story-actor kaito sprite';
   storyWorldEl.appendChild(storyActorEl);
+  storyAnimTime  = 0;
+  storyAnimFrame = 0;
+  storyWalking   = null;   // 最初の1回で必ず idle を貼るため、あえて未定義にしておく
 
   // --- 調べられるものを指す印 ---
   storyMarkEl = document.createElement('div');
@@ -514,11 +539,11 @@ function updateStory(dt) {
     if (storyKeys.has('arrowright') || storyKeys.has('d')) dir += 1;
     if (dir !== 0) {
       storyX += dir * ADV_CONFIG.WALK_SPEED * dt;
-      storyActorEl.classList.toggle('flip', dir < 0);
-      storyActorEl.classList.add('walking');
-    } else {
-      storyActorEl.classList.remove('walking');
+      // 素材の向きと進む向きが違うときだけ反転する
+      const faceLeft = (dir < 0);
+      storyActorEl.classList.toggle('flip', ADV_CONFIG.SPRITE.FACES_RIGHT ? faceLeft : !faceLeft);
     }
+    setStoryWalking(dir !== 0, dt);
     storyX = Math.max(12, Math.min(storyScene.width - 8, storyX));
 
     const exit = storyScene.exit;
@@ -527,6 +552,8 @@ function updateStory(dt) {
       else { storyX = exit.x - 2; openStoryLines(exit.blocked); }
     }
   }
+
+  if (storyLines) setStoryWalking(false, dt);   // 会話中は立ち止まる
 
   // --- 調べられるものが近くにあるか ---
   const target = (!storyLines) ? nearestStoryTarget() : null;
@@ -554,7 +581,9 @@ function updateStory(dt) {
   }
 
   // --- 人物を地面の上に置く ---
-  placeStoryActor(storyActorEl, storyX, charWidth(1), charHeight(1));
+  // カイトはコマの実寸(48×48)で置く。コマの底辺中央が接地点なので、
+  // 上端 = 地面 − コマの高さ、左端 = x − コマ幅の半分 でぴたりと合う。
+  placeStoryActor(storyActorEl, storyX, ADV_CONFIG.SPRITE.FRAME_W, ADV_CONFIG.SPRITE.FRAME_H);
   const n = storyScene.npc;
   placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
 
@@ -562,6 +591,40 @@ function updateStory(dt) {
   storyExitEl.style.left   = Math.round((storyScene.exit.x - storyCamX) * S) + 'px';
   storyExitEl.style.top    = Math.round((storyGroundY(storyScene.exit.x) - 60) * S) + 'px';
   storyExitEl.style.height = (60 * S) + 'px';
+}
+
+// ===================================================================
+// 歩き ⇄ 待機 の切り替えと、歩きのコマ送り
+//
+// 混ぜたり間を作ったりはしない。押した瞬間に歩き、離した瞬間に止まる ―
+// 操作にすぐ絵が付いてくるほうが、この手の画面は気持ちがよい。
+// ===================================================================
+function setStoryWalking(walking, dt) {
+  const SP = ADV_CONFIG.SPRITE;
+
+  if (walking !== storyWalking) {
+    storyWalking = walking;
+    storyActorEl.style.backgroundImage = 'url(' + (walking ? SP.WALK : SP.IDLE) + ')';
+    storyAnimTime  = 0;
+    storyAnimFrame = 0;
+  }
+
+  if (walking) {
+    storyAnimTime += dt;
+    const per = 1 / ADV_CONFIG.WALK_ANIM_FPS;      // 1コマぶんの秒数
+    while (storyAnimTime >= per) {
+      storyAnimTime -= per;
+      storyAnimFrame = (storyAnimFrame + 1) % SP.WALK_FRAMES;
+    }
+  } else {
+    storyAnimFrame = 0;
+  }
+
+  // シートの何コマ目を出すか。拡大率をかけた画素で指定する
+  const S = storyScale;
+  storyActorEl.style.backgroundSize =
+    (SP.FRAME_W * (walking ? SP.WALK_FRAMES : 1) * S) + 'px ' + (SP.FRAME_H * S) + 'px';
+  storyActorEl.style.backgroundPosition = (-storyAnimFrame * SP.FRAME_W * S) + 'px 0px';
 }
 
 // 人物を、その x の地面の高さに立たせる。
