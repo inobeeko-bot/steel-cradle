@@ -57,8 +57,12 @@ const ADV_CONFIG = {
 
   // --- 人物と操作(すべて仮想解像度の px)---
   WALK_SPEED:   72,    // 歩く速さ(1秒あたり)
-  ACTOR_W:      16,    // カイトの幅(まだ矩形のプレースホルダー)
-  ACTOR_H:      52,    // 同じく高さ。戸口の高さと見比べて決めてある
+  // 人物の身長。背景の家の戸口(約55px)を物差しにして決める。
+  // ここを変えると、カイトも祖父もまとめて大きさが変わる。
+  CHAR_HEIGHT:  44,
+  // 幅は身長からの比で出す。別々に持つと、身長だけ変えたとき
+  // 縦長・横長にひしゃげてしまう。
+  CHAR_ASPECT: 0.32,
   REACH:        34,    // 「調べる」が届く距離
   CAM_EDGE:   0.40,    // 画面のどこにカイトを置くか(0.5=中央)
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
@@ -75,7 +79,7 @@ const ADV_CONFIG = {
 //
 // 座標はすべて 640×360 の仮想解像度。背景の絵と同じ物差し。
 //   x … 左からの距離
-//   y … 上からの距離(地面の高さを表す groundLine で使う)
+//   y … 上からの距離(接地ラインを表す groundY で使う)
 // ===================================================================
 const STORY_SCENES = {
 
@@ -88,17 +92,23 @@ const STORY_SCENES = {
     width: ADV_CONFIG.BASE_W,
     start: 150,           // カイトの初期位置(家の戸口の前あたり)
 
-    // --- 地面の高さ ---
-    // 道が右下がりに傾いているので、1本の水平線では合わない。
-    // 「この x では上から何 px が地面」を数点だけ置き、間は直線で繋ぐ。
-    // 数字は背景の絵の上を実際に歩いている道の高さ。
-    groundLine: [
-      { x:   0, y: 318 },
-      { x: 120, y: 314 },
-      { x: 215, y: 308 },   // 木の根元
-      { x: 330, y: 314 },
-      { x: 460, y: 322 },
-      { x: 640, y: 330 },
+    // --- 接地ライン ---
+    // 小道は平らではないので、1本の水平線では足元が浮く/沈む。
+    // 「この x では上から何 px が地面か」を数点だけ置き、間は直線で繋ぐ。
+    // 数字は背景の絵の上に実際に線を描いて合わせた実測値。
+    // 形式は [x, y] の配列。
+    groundY: [
+      [   0, 333 ],
+      [  60, 327 ],
+      [ 120, 319 ],
+      [ 180, 314 ],
+      [ 215, 312 ],   // 木の根元。ここがいちばん高い
+      [ 280, 314 ],
+      [ 340, 318 ],
+      [ 420, 323 ],
+      [ 500, 329 ],
+      [ 570, 333 ],
+      [ 640, 337 ],
     ],
 
     // --- 調べられる物 ---
@@ -134,7 +144,10 @@ const STORY_SCENES = {
 
     // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
     npc: {
-      id: 'grandpa', x: 300, w: 13, h: 40,
+      id: 'grandpa', x: 300,
+      // 祖父は歳のぶん少し小さい。身長は CHAR_HEIGHT からの比で出すので、
+      // 基準を変えれば2人まとめて追従する
+      scale: 0.94,
       color: '#6b5240', label: '祖父',
 
       talks: [
@@ -257,23 +270,27 @@ window.addEventListener('resize', layoutStoryStage);
 // ===================================================================
 // 地面の高さを求める
 //
-// groundLine に置いた数点の間を直線で繋いで、その x での地面の高さを返す。
+// groundY に置いた数点の間を直線で繋いで、その x での地面の高さを返す。
 // 道が傾いているので、1本の水平線だと人物が浮いたり沈んだりする。
 // ===================================================================
 function storyGroundY(x) {
-  const line = storyScene && storyScene.groundLine;
+  const line = storyScene && storyScene.groundY;
   if (!line || !line.length) return ADV_CONFIG.BASE_H - 40;
 
-  if (x <= line[0].x) return line[0].y;
+  if (x <= line[0][0]) return line[0][1];
   for (let i = 1; i < line.length; i++) {
-    if (x <= line[i].x) {
+    if (x <= line[i][0]) {
       const a = line[i - 1], b = line[i];
-      const t = (x - a.x) / (b.x - a.x);      // 0〜1 の比率
-      return a.y + (b.y - a.y) * t;           // 直線で繋ぐ
+      const t = (x - a[0]) / (b[0] - a[0]);   // 0〜1 の比率
+      return a[1] + (b[1] - a[1]) * t;        // 直線で繋ぐ
     }
   }
-  return line[line.length - 1].y;
+  return line[line.length - 1][1];
 }
+
+// 人物の身長と幅。scale は「その人物が基準の何倍か」
+function charHeight(scale) { return ADV_CONFIG.CHAR_HEIGHT * (scale || 1); }
+function charWidth(scale)  { return Math.round(charHeight(scale) * ADV_CONFIG.CHAR_ASPECT); }
 
 // ===================================================================
 // シーンを開く
@@ -377,7 +394,7 @@ function nearestStoryTarget() {
   }
   const n = storyScene.npc;
   const dn = Math.abs(n.x - storyX);
-  if (dn < bestD) { bestD = dn; best = { kind: 'npc', data: n, x: n.x, markH: n.h }; }
+  if (dn < bestD) { bestD = dn; best = { kind: 'npc', data: n, x: n.x, markH: charHeight(n.scale) }; }
 
   return best;
 }
@@ -537,9 +554,9 @@ function updateStory(dt) {
   }
 
   // --- 人物を地面の上に置く ---
-  placeStoryActor(storyActorEl, storyX, ADV_CONFIG.ACTOR_W, ADV_CONFIG.ACTOR_H);
+  placeStoryActor(storyActorEl, storyX, charWidth(1), charHeight(1));
   const n = storyScene.npc;
-  placeStoryActor(storyNpcEl, n.x, n.w, n.h);
+  placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
 
   // --- 出口の目印 ---
   storyExitEl.style.left   = Math.round((storyScene.exit.x - storyCamX) * S) + 'px';
