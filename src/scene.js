@@ -781,14 +781,14 @@ const ENEMY_BOLT = {
 };
 
 // --- 敵機の管理 -----------------------------------------------------
-// 常に2機を保つ(仕様:撃墜されるたびリスポーンして1〜2機いる状態を維持)。
-// 機体を作り直すと重いので、2機ぶんを最初に作って「生きている/死んでいる」を
+// 常に3機を保つ(撃墜されるたびリスポーンして、常に交戦相手がいる状態を維持)。
+// 機体を作り直すと重いので、3機ぶんを最初に作って「生きている/死んでいる」を
 // 切り替えて使い回す。
 //
 // ※ これが「同時に出てくる敵の数の上限」でもある。
 //   10分で10撃墜という難度はこの数で釣り合いを取ってあるので、
 //   増やすときは撃墜数の目標(MISSION.KILL_GOAL)も一緒に見直すこと。
-const ENEMY_COUNT = 2;
+const ENEMY_COUNT = 3;
 
 // ===================================================================
 // 敵の3タイプ(アーキタイプ)
@@ -806,7 +806,7 @@ const AI_ARCHETYPES = {
 
   SOLDIER: {
     LABEL: 'SOLDIER', JP: 'ソルジャー',
-    WEIGHT: 50,            // 出現比率(3つの合計に対する重み)
+    WEIGHT: 1,             // 出現比率(3つの合計に対する重み)。3タイプ均等
     // 標準色。今までの敵機の色そのまま
     COLOR: { BODY: 0xa8452f, WING: 0x6d2a20, CANOPY: 0x3a1a16, EDGE: 0xff9d84,
              GLOW_COLOR: 0xff7a4d },
@@ -841,7 +841,7 @@ const AI_ARCHETYPES = {
 
   HOUND: {
     LABEL: 'HOUND', JP: 'ハウンド',
-    WEIGHT: 30,
+    WEIGHT: 1,
     // 暖色系(琥珀)。ソルジャーのくすんだ赤とはっきり離すため、黄色寄りにする。
     // 近づいてくる機体が視界の端に入った瞬間に分かることが大事
     COLOR: { BODY: 0xdd8a12, WING: 0x96560a, CANOPY: 0x40280c, EDGE: 0xffd98a,
@@ -850,13 +850,21 @@ const AI_ARCHETYPES = {
     // 短く詰まった機体。前後が薄いぶん、正面から見ると当てにくい
     HIT_HALF: { x: 2.3, y: 1.0, z: 1.4 },             // 脆い。突進中は的になる
     SPEED:  { APPROACH: 46, ATTACK: 34, EVADE: 42 },
-    RANGE:  { ATTACK: 46, BREAK: 95, TOO_CLOSE: 9 },       // ぐっと詰めてくる
+    // 交戦距離が短すぎると、離脱するたびに「撃たない距離」へ戻ってしまい、
+    // 近くにいるのに撃ってこない相手になる(実測で発射が想定の1/3以下だった)。
+    // 詰めながら撃つ機体なので、入った瞬間から撃てる距離にしてある。
+    RANGE:  { ATTACK: 72, BREAK: 120, TOO_CLOSE: 9 },
     TURN_RATE: 3.2,
-    WANDER: { AMP: 0.85, RATE: 1.6 },   // 大きく速く蛇行する。いちばん捉えにくい
-    FIRE:   { INTERVAL: 0.85, TELEGRAPH: 0.22, HEAT: 7 },  // 機関砲。速射・予告は短い
+    // 速く小刻みに揺れても位置はほとんどずれず、狙いは外せない。
+    // 振幅を大きく・周期を長くして、実際に横へ動く蛇行にする
+    WANDER: { AMP: 1.25, RATE: 1.05 },
+    // 機関砲。0.85秒間隔では「近くにいるのに撃ってこない」相手になっていた。
+    // 接近戦を挑む機体なので、詰めているあいだは撃ち続けるべき。
+    FIRE:   { INTERVAL: 0.62, TELEGRAPH: 0.15, HEAT: 5.5 },
     GLOW: { R: 1.0, G: 0.72, B: 0.12, PULSE: 0 },          // 黄。細かく光る
-    // ばらまく代わりに1発は軽い。数で圧をかけるタイプ
-    BOLT:   { SPEED: 74, LEAD_MULT: 0.85, SPREAD_MULT: 1.7, DAMAGE_MULT: 0.7 },
+    // 数で圧をかけるタイプ。1発は軽いが、散りすぎると当たらないだけの
+    // うるさい相手になるので、ばらつきは抑えてある
+    BOLT:   { SPEED: 74, LEAD_MULT: 0.85, SPREAD_MULT: 2.1, DAMAGE_MULT: 0.55 },
     HEAT:   { MAX: 100, VENT: 12.0, SHUTDOWN_SEC: 3.0 },   // 熱には強い
     // 近距離で撃つ短射程ミサイル。数は少ないが、後ろから来るので厄介
     MISSILE: { AMMO: 2, INTERVAL: 9.0, TELEGRAPH: 1.3, BLUFF: 0.25,
@@ -873,13 +881,13 @@ const AI_ARCHETYPES = {
       // 「しつこさ」が消える。噛みつく時間を長く、離す時間を短く。
       RUN_SEC:     8.0,    // 1回の突撃を続ける秒数。これを過ぎたら抜ける
       EXTEND_SEC:  1.2,    // 抜けている(離脱)秒数。この間は撃たない
-      EXTEND_SPEED: 62,    // 抜けるときの速度。突撃より速く、振り切るように離れる
+      EXTEND_SPEED: 54,    // 抜けるときの速度。突撃より速く、振り切るように離れる
     },
   },
 
   SNIPER: {
     LABEL: 'SNIPER', JP: 'スナイパー',
-    WEIGHT: 20,
+    WEIGHT: 1,
     // 寒色系(青)。遠くの点として見えたとき、色で「あれは狙撃機」と分かる
     COLOR: { BODY: 0x2f5f8a, WING: 0x1b3a56, CANOPY: 0x14283a, EDGE: 0x8fd2ff,
              GLOW_COLOR: 0x6fc0ff },
@@ -896,7 +904,9 @@ const AI_ARCHETYPES = {
     // 予兆が見えてから避けられることが、このタイプが成立する条件そのもの
     GLOW: { R: 0.55, G: 0.85, B: 1.0, PULSE: 16 },
     // 読みが深く、散らず、痛い。ただし予兆が長いので見てから避けられる
-    BOLT:   { SPEED: 96, LEAD_MULT: 1.25, SPREAD_MULT: 0.40, DAMAGE_MULT: 2.2 },
+    // 撃つ機会が4.6秒に1度しかないので、当たったときは決定的でよい。
+    // 1.1秒の充填光が出ている間に避けられる ― それが成立の条件
+    BOLT:   { SPEED: 96, LEAD_MULT: 1.25, SPREAD_MULT: 0.40, DAMAGE_MULT: 3.2 },
     HEAT:   { MAX: 110, VENT: 10.0, SHUTDOWN_SEC: 3.5 },
     // 長射程ミサイル。撃たれる前に「遠くの青い光がこちらを向いた」段階で
     // 気づけるかどうかの勝負になる
@@ -905,6 +915,12 @@ const AI_ARCHETYPES = {
     MOVE: 'standoff',      // 距離を保ち、詰められたら下がりながら横へ逃げる
   },
 };
+
+// 3タイプを1機ずつ、順番だけばらして並べた配列を返す(出撃時の初期編成用)。
+// sort に「毎回でたらめな正負」を返す比較を渡すのが、いちばん短い混ぜ方。
+function shuffledArchetypes() {
+  return Object.keys(AI_ARCHETYPES).sort(() => Math.random() - 0.5);
+}
 
 // 出現比率の抽選。WEIGHT の合計を出し、その中のどこに当たったかで決める。
 // 比率を変えたいときは、上の WEIGHT だけを触ればよい。
@@ -1103,8 +1119,10 @@ function initScene() {
     // 基準になる相手から始めて、そのあと抽選に任せる。
     assignArchetype(e, i === 0 ? 'SOLDIER' : pickArchetype());
     e.hp = e.arch.MAX_HP;
-    // 最初は自機の前方に少しずらして配置する
-    e.group.position.set((i - 0.5) * 26, 0, ENEMY.DISTANCE - i * 14);
+    // 最初は自機の前方に、左右へ広げて配置する。
+    // (i - 中央) で -1 / 0 / +1 のように並び、機数が変わっても勝手に散る
+    const spread = i - (ENEMY_COUNT - 1) / 2;
+    e.group.position.set(spread * 26, 0, ENEMY.DISTANCE - i * 14);
     enemies.push(e);
   }
 
@@ -2307,10 +2325,12 @@ function resetFlight() {
 
   // 敵を全機復活させて前方に置き直す
   // 出撃のたびに敵を初期化する。
-  // 1機目だけは必ず SOLDIER にしておく ― 出撃した瞬間に狙撃機と追撃機が
-  // 揃っていると、何が起きたのか分からないまま撃たれて終わってしまう。
-  // 基準になる相手を必ず1機置いて、そこから読ませる。
-  enemies.forEach((e, i) => respawnEnemy(e, i === 0 ? 'SOLDIER' : null));
+  // 最初の編成は抽選せず、3タイプを1機ずつ・順番だけ入れ替えて配る。
+  // 抽選に任せると同じタイプが3機並ぶ出撃が出てしまい、
+  // 「3種類いる」ということ自体が伝わらないため。
+  // (撃墜後のリスポーンは均等な抽選に任せる)
+  const lineup = shuffledArchetypes();
+  enemies.forEach((e, i) => respawnEnemy(e, lineup[i % lineup.length]));
 }
 
 // エンジンの電力配分(0〜100%)から速度を決める
@@ -3696,7 +3716,7 @@ function createEnemy() {
   // リスポーンのたびに作り直すと、そのたびに一瞬引っかかる。
   // 最初に3つ作って親にぶら下げ、表示を切り替えるだけにすれば、
   // タイプが変わっても作り直しは起きない。
-  // (2機 × 3タイプ = 6モデル。この規模なら持っていて問題ない)
+  // (3機 × 3タイプ = 9モデル。この規模なら持っていて問題ない)
   const group = new THREE.Group();
   group.scale.setScalar(ENEMY.SCALE);   // 大きさは親にまとめて掛ける
   scene.add(group);
@@ -3808,6 +3828,33 @@ function setEnemyState(e, next) {
   }
 }
 
+// ===================================================================
+// ハウンドが目指す向きを出す
+//
+// 「自機の後方 REAR_OFFSET・横 SIDE_OFFSET」の一点を目標にする。
+// 自機そのものを目標にすると進路が直線になってしまうので、
+// わざと的の脇後方を狙わせ、結果として弧を描いて入らせる。
+// out に向き(長さ1)を書き込む。
+// ===================================================================
+function houndAimDirection(e, A, out) {
+  const back  = new THREE.Vector3(0, 0, 1).applyQuaternion(playerShip.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(playerShip.quaternion);
+  const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(playerShip.quaternion);
+
+  // 上下にもずらす。真横だけだと、水平に回り込む同じ絵ばかりになる
+  const vertical = Math.sin(sceneTime * 0.5 + e.wanderPhase) * A.DIVE.SIDE_OFFSET * 0.45;
+
+  const rearPoint = playerShip.position.clone()
+    .addScaledVector(back,  A.DIVE.REAR_OFFSET)
+    .addScaledVector(right, A.DIVE.SIDE_OFFSET * e.diveSide)
+    .addScaledVector(up,    vertical);
+
+  out.copy(rearPoint).sub(e.group.position);
+  // 目標の点にほぼ着いてしまったら、そのまま自機へ向かう
+  if (out.lengthSq() < 4) out.copy(playerShip.position).sub(e.group.position);
+  out.normalize();
+}
+
 function updateEnemyAI(e, dt) {
   const A = e.arch;          // このタイプの数字の表(以降ずっと使う)
   e.stateTime += dt;
@@ -3917,18 +3964,8 @@ function updateEnemyAI(e, dt) {
 
   } else if (e.state === 'attack') {
     if (A.MOVE === 'dive') {
-      // --- ハウンド:自機の真後ろへ回り込む ---
-      // 自機の位置ではなく「自機の後方 REAR_OFFSET の点」を目指す。
-      // 正面から突っ込むと相手の照準の真ん中を通ることになるが、
-      // 後ろを取りにいくと、プレイヤーは首を振らないと捉えられない。
-      const back  = new THREE.Vector3(0, 0, 1).applyQuaternion(playerShip.quaternion);
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(playerShip.quaternion);
-      const rearPoint = playerShip.position.clone()
-        .addScaledVector(back,  A.DIVE.REAR_OFFSET)
-        .addScaledVector(right, A.DIVE.SIDE_OFFSET * e.diveSide);
-      move.copy(rearPoint).sub(e.group.position);
-      // 目標の後方点にほぼ着いてしまったら、そのまま自機へ向かう
-      if (move.lengthSq() < 4) move.copy(toPlayerDir); else move.normalize();
+      // --- ハウンド:自機の後方へ回り込む ---
+      houndAimDirection(e, A, move);
       // 近すぎるときだけは下がる(すり抜け防止)
       if (distance < A.RANGE.TOO_CLOSE) move.copy(toPlayerDir).negate();
 
@@ -3957,7 +3994,14 @@ function updateEnemyAI(e, dt) {
     speed = A.SPEED.ATTACK;
 
   } else {   // approach
-    move.copy(toPlayerDir);
+    // ハウンドは接近中も「自機の後方の一点」を目指す。
+    //
+    // ここで自機へ一直線に向かわせると、遠くから機首の正面へ
+    // まっすぐ入ってくることになり、いちばん狙いやすい的になる ―
+    // 実際「直進してくるから狙いやすい」と言われた原因がこれ。
+    // 最初から脇の後方を目指させると、進路が自然に弧を描く。
+    if (A.MOVE === 'dive' && seen) houndAimDirection(e, A, move);
+    else                           move.copy(toPlayerDir);
     // 見失っている間は「たぶんこのあたり」を探しているだけなので遅い
     speed = seen ? A.SPEED.APPROACH : ENEMY_SENSOR.SEARCH_SPEED;
   }
