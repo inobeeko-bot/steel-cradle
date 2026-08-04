@@ -211,6 +211,117 @@ function drawRadar(g, cx, cy, r, s) {
 }
 
 // ===================================================================
+// 部品:横棒のメーター(進捗や割合を1行で見せる)
+// ===================================================================
+function drawBar(g, x, y, w, h, ratio, color) {
+  g.fillStyle = 'rgba(2,4,7,0.85)';
+  g.fillRect(x, y, w, h);
+  const fill = Math.max(0, Math.min(ratio, 1)) * w;
+  if (fill > 0) { g.fillStyle = color; g.fillRect(x, y, fill, h); }
+  g.strokeStyle = CONSOLE3D.LINE;
+  g.lineWidth = 1;
+  g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
+// ===================================================================
+// 部品:上級者向けの数値欄(ラベル + 値 + 単位)
+// ===================================================================
+function drawReadout(g, x, y, label, value, unit, color) {
+  g.textAlign = 'left';
+  g.font = '13px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText(label, x, y);
+
+  g.font = 'bold 20px monospace';
+  g.fillStyle = color || CONSOLE3D.TEXT;
+  g.fillText(value, x + 108, y + 1);
+
+  if (unit) {
+    g.font = '12px monospace';
+    g.fillStyle = CONSOLE3D.DIM;
+    g.fillText(unit, x + 108 + g.measureText(value).width * 0.62 + 12, y + 1);
+  }
+}
+
+// ===================================================================
+// 上級者向け計器
+//
+// 7パラメーターの「現在値」は左右のゲージが見せている。
+// こちらはその一段上 ― 現在値からは読み取れない、
+// 「このままだとどうなるか」を出す欄。
+//
+//   OVERHEAT  … 今の熱収支のままで、あと何秒でシャットダウンするか
+//   LOCK      … ロックの進み具合(ミサイルを撃てるまで)
+//   DRIFT     … 機首と進行方向のずれ。振り向き撃ちの度合い
+//   RANGE     … いちばん近い敵との距離
+//   CLOSURE   … その敵との接近率。+なら詰まっている、−なら離されている
+//   BURST     … 推進剤で回避バーストがあと何回撃てるか
+//   AMMO      … 全兵装の残弾(選んでいない武器も含めて)
+// ===================================================================
+function drawAdvanced(g, x, y, s) {
+  // 枠の見出し
+  g.textAlign = 'left';
+  g.font = '12px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('FLIGHT DATA', x, y - 10);
+  g.strokeStyle = 'rgba(159,225,203,0.18)';
+  g.beginPath(); g.moveTo(x, y - 4.5); g.lineTo(x + 360, y - 4.5); g.stroke();
+
+  // --- OVERHEAT:何秒でシャットダウンするか ---
+  // 熱が下がっているときは「――」。上がっているときだけ意味を持つ。
+  let ohText = '――', ohColor = CONSOLE3D.DIM;
+  if (s.heatToShutdown !== null) {
+    ohText = s.heatToShutdown.toFixed(1);
+    ohColor = s.heatToShutdown < 8 ? CONSOLE3D.WARN
+            : (s.heatToShutdown < 20 ? CONSOLE3D.AMBER : CONSOLE3D.TEXT);
+  }
+  drawReadout(g, x, y + 18, 'OVERHEAT', ohText, s.heatToShutdown !== null ? 's' : '', ohColor);
+
+  // --- LOCK:ロックの進み具合 ---
+  const lockOn = (s.aimState === 'LOCKED');
+  drawReadout(g, x, y + 48, 'LOCK',
+    lockOn ? 'LOCKED' : (s.aimState === 'TRACKING' ? 'TRACK' : '----'),
+    '', lockOn ? CONSOLE3D.WARN : (s.aimState === 'TRACKING' ? CONSOLE3D.AMBER : CONSOLE3D.DIM));
+  drawBar(g, x + 218, y + 36, 140, 10, s.lockProgress,
+          lockOn ? CONSOLE3D.WARN : CONSOLE3D.AMBER);
+
+  // --- DRIFT:機首と進行方向のずれ ---
+  drawReadout(g, x, y + 78, 'DRIFT', Math.round(s.driftAngle) + '°', '',
+    s.driftAngle > 25 ? '#8fd8ff' : CONSOLE3D.TEXT);
+
+  // --- RANGE / CLOSURE ---
+  drawReadout(g, x + 190, y + 78, 'RANGE',
+    s.targetValid ? String(Math.round(s.targetDist)) : '----', '', CONSOLE3D.TEXT);
+
+  let clText = '----', clColor = CONSOLE3D.DIM;
+  if (s.targetValid) {
+    const c = Math.round(s.closure);
+    clText = (c > 0 ? '+' : '') + c;
+    clColor = c > 0 ? CONSOLE3D.AMBER : '#8fd8ff';   // 詰まっている/離されている
+  }
+  drawReadout(g, x, y + 108, 'CLOSURE', clText, '', clColor);
+
+  // --- BURST:あと何回噴射できるか ---
+  drawReadout(g, x + 190, y + 108, 'BURST', String(s.burstsLeft), '',
+    s.burstsLeft <= 2 ? CONSOLE3D.WARN : '#c77dff');
+
+  // --- AMMO:全兵装の残弾 ---
+  g.font = '12px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('AMMO', x, y + 136);
+  let ax = x + 108;
+  for (const a of s.allAmmo) {
+    g.font = '11px monospace';
+    g.fillStyle = a.selected ? CONSOLE3D.TEXT : CONSOLE3D.DIM;
+    g.fillText(a.name, ax, y + 130);
+    g.font = 'bold 15px monospace';
+    g.fillStyle = a.low ? CONSOLE3D.WARN : (a.selected ? CONSOLE3D.TEXT : '#6d818c');
+    g.fillText(a.value, ax, y + 148);
+    ax += 62;
+  }
+}
+
+// ===================================================================
 // 計器盤ぜんぶを1枚に描く
 // main.js が毎コマ、今の状態(s)を渡して呼ぶ。
 // ===================================================================
@@ -279,10 +390,14 @@ function drawConsole3D(s, dt) {
     });
   });
 
+  // --- 上級者向け計器 ---
+  // 画面中央(canvas座標でおよそ 980〜1060)には光像式照準器の土台が立っていて、
+  // その帯は隠れて読めない。飛行データも兵装欄も、そこを避けて右側に並べる。
+  drawAdvanced(g, 1090, 46, s);
+
   // --- 兵装(右寄り)---
-  // 画面中央には光像式照準器の土台が立っていて、そこは隠れてしまう。
-  // 兵装欄はその右へ逃がしてある。
-  const wx = 1210;
+  // 飛行データのさらに右。土台にも推進剤ゲージにもかからない位置。
+  const wx = 1500;
   g.textAlign = 'left';
   g.font = 'bold 22px monospace';
   g.fillStyle = s.weapon.isBeam ? CONSOLE3D.TEXT : CONSOLE3D.AMBER;

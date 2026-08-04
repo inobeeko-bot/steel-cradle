@@ -42,7 +42,7 @@ const FEEL = {
   //   抜け  (ROLL_DAMP)  … 長い = 離しても勢いが残り、ゆっくり収まる
   // 宇宙には空気抵抗がないので、止まらないほうがむしろ自然でもある。
   ROLL_SMOOTH:  0.07,
-  ROLL_DAMP:    0.75,
+  ROLL_DAMP:    1.40,
                         //   大きいほど重い機体。0にすると今までどおり即座に最高速
   BANK_ANGLE:   0.55,   // 旋回時に機体を傾ける最大角(ラジアン。約32度)
   BANK_SMOOTH:  0.30,   // 傾きの追従時間(秒)。大きいほどゆっくり倒れ、ゆっくり戻る
@@ -1773,6 +1773,48 @@ function resetFlight() {
 function speedFromEnginePower(enginePercent) {
   const ratio = Math.max(0, Math.min(100, enginePercent)) / 100;
   return PLAYER.MIN_SPEED + ratio * (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED);
+}
+
+// ===================================================================
+// 横滑り角(ドリフト角)
+//
+// 「機首が向いている向き」と「実際に進んでいる向き」のずれ。
+// 通常飛行では0に近く、ドリフト中に大きく開く。
+// 弾は機首方向へ飛ぶので、この角度が大きいほど
+// 「進行方向とは違うところを撃っている」ことになる ― 振り向き撃ちの手がかり。
+// ===================================================================
+function driftAngleDeg() {
+  if (!sceneReady) return 0;
+  const speed = shipVelocity.length();
+  if (speed < 0.5) return 0;             // 止まっているときは意味がない
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  const dir = shipVelocity.clone().divideScalar(speed);
+  const c = Math.max(-1, Math.min(1, forward.dot(dir)));
+  return Math.acos(c) * 180 / Math.PI;
+}
+
+// ===================================================================
+// いちばん近い敵との距離と接近率
+//
+// 接近率(closure)= 1秒あたり何メートル詰まっているか。
+// プラスなら近づいている、マイナスなら離されている。
+// 逃げ切れるのか、追いつけるのかが数字で分かる ― 上級者向けの読み。
+// ===================================================================
+function nearestTargetInfo() {
+  if (!sceneReady) return { dist: 0, closure: 0, valid: false };
+
+  let best = null, bestD = Infinity;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const d = e.group.position.distanceTo(playerShip.position);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  if (!best) return { dist: 0, closure: 0, valid: false };
+
+  // 自機から敵への単位ベクトルに、相対速度を投影する
+  const toE = best.group.position.clone().sub(playerShip.position).normalize();
+  const rel = shipVelocity.clone().sub(best.vel || new THREE.Vector3());
+  return { dist: bestD, closure: rel.dot(toE), valid: true };
 }
 
 // 今のロール角(ラジアン)。水平からどれだけ傾いているか。

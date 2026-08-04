@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-47 console in 3D';
+const BUILD = 'p1-48 flight data';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -1198,6 +1198,30 @@ function renderConsole3D(dt) {
       heat: isBroken('heat'), propellant: isBroken('propellant'),
       shieldhp: isBroken('shieldhp'),
     },
+
+    // --- 上級者向けの読み ---
+    // 現在値ではなく「このままだとどうなるか」を出す欄。
+    // シャットダウンまでの秒数は、今の熱収支がそのまま続いた場合の見積り。
+    // 熱が下がっているときは意味がないので null を渡して「――」にする。
+    heatToShutdown: (function () {
+      const rate = currentHeatRate();
+      if (rate <= 0.05 || shutdownLeft > 0) return null;
+      return (HEAT.MAX - heat) / rate;
+    })(),
+    aimState: currentAimState(),
+    lockProgress: currentLockProgress(),
+    driftAngle: driftAngleDeg(),
+    targetDist: nearestTargetInfo().dist,
+    closure: nearestTargetInfo().closure,
+    targetValid: nearestTargetInfo().valid,
+    burstsLeft: Math.floor(propellant / PROP.BURST_COST),
+    // 選んでいない武器の残弾も見せる。持ち替える前に残りが分かる
+    allAmmo: WEAPONS.map((wp, i) => ({
+      name: wp.label.slice(0, 4),
+      value: (ammo[i] === Infinity) ? '∞' : String(ammo[i]),
+      low: ammo[i] !== Infinity && ammo[i] <= Math.max(2, Math.ceil(wp.ammo * 0.25)),
+      selected: i === weaponIndex,
+    })),
 
     speed: Math.round(currentSpeed()),
     target: currentEnemyState(),
