@@ -56,7 +56,10 @@ const ADV_CONFIG = {
   ],
 
   // --- 人物と操作(すべて仮想解像度の px)---
-  WALK_SPEED:   72,    // 歩く速さ(1秒あたり)
+  // 歩く速さ(1秒あたり)。
+  // コマ送りは距離に連動するので、ここを変えると脚の回転も一緒に変わる。
+  // 55 なら 55 ÷ 7 ≒ 毎秒7.9コマ。端から端まで約12秒。
+  WALK_SPEED:   55,
   // 人物の身長。カイトのドット絵の中身がちょうど46pxあるので、
   // まだ矩形のままの人物(祖父)もこれに揃える。
   CHAR_HEIGHT:  46,
@@ -71,16 +74,22 @@ const ADV_CONFIG = {
     FRAME_W: 48,
     FRAME_H: 48,
     IDLE: 'assets/adv/kite_idle.png',
-    WALK: 'assets/adv/kite_walk.png',
+    WALK: 'assets/adv/kite_walk_v2.png',
     WALK_FRAMES: 6,
     // ドット絵は右向きに描かれている。左へ歩くときは水平反転して使う。
     // (もし素材が左向きだったら、ここを false にすれば反転が逆になる)
     FACES_RIGHT: true,
   },
-  // 歩きの毎秒コマ数。上げるとせかせか、下げるとのっそり歩く。
-  // 6コマで1周なので、6 なら1周=1.0秒(片足=0.5秒)。
-  // 10 では脚の動きが忙しく見えたので落としてある。
-  WALK_ANIM_FPS: 6,
+  // --- 歩きのコマ送り ---
+  //
+  // コマは「時間」ではなく「進んだ距離」で送る。
+  // 時間で送ると、移動速度を変えたとたんに脚の回転と進み方がずれ、
+  // 足を広げたまま横滑りしているように見えてしまう。
+  //
+  // WALK_STEP_PX = 何px進むごとに1コマ進めるか。
+  // 6コマで1周(=2歩)なので、1歩の歩幅は WALK_STEP_PX × 3。
+  // 身長46pxに対して1歩21px前後が自然に見える。
+  WALK_STEP_PX: 7,
   REACH:        34,    // 「調べる」が届く距離
   CAM_EDGE:   0.40,    // 画面のどこにカイトを置くか(0.5=中央)
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
@@ -163,9 +172,12 @@ const STORY_SCENES = {
     // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
     npc: {
       id: 'grandpa', x: 300,
-      // 祖父はまだ矩形のプレースホルダー。大きさは CHAR_HEIGHT に揃える
-      scale: 1,
-      color: '#6b5240', label: '祖父',
+      // 祖父も同じ48×48のシート。ただし彼は歩かないので、コマは送らない。
+      // 歩行シートには「立ち」のコマが無いため、脚がいちばん揃って見える
+      // 通過コマ(添字2)を立ち姿として1枚だけ出している。
+      sprite: 'assets/adv/grandpa_walk_v2.png',
+      standFrame: 2,
+      label: '祖父',
 
       talks: [
         // gp_talk_1
@@ -375,8 +387,9 @@ function buildStoryScene(scene) {
   // --- 祖父 ---
   const n = scene.npc;
   storyNpcEl = document.createElement('div');
-  storyNpcEl.className = 'story-actor npc';
-  storyNpcEl.style.background = n.color;
+  storyNpcEl.className = 'story-actor npc' + (n.sprite ? ' sprite' : '');
+  if (n.sprite) storyNpcEl.style.backgroundImage = 'url(' + n.sprite + ')';
+  else          storyNpcEl.style.background = n.color;
   storyNpcEl.innerHTML = '<span>' + n.label + '</span>';
   storyWorldEl.appendChild(storyNpcEl);
 
@@ -421,7 +434,11 @@ function nearestStoryTarget() {
   }
   const n = storyScene.npc;
   const dn = Math.abs(n.x - storyX);
-  if (dn < bestD) { bestD = dn; best = { kind: 'npc', data: n, x: n.x, markH: charHeight(n.scale) }; }
+  if (dn < bestD) {
+    bestD = dn;
+    best = { kind: 'npc', data: n, x: n.x,
+             markH: n.sprite ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
+  }
 
   return best;
 }
@@ -539,13 +556,15 @@ function updateStory(dt) {
     let dir = 0;
     if (storyKeys.has('arrowleft')  || storyKeys.has('a')) dir -= 1;
     if (storyKeys.has('arrowright') || storyKeys.has('d')) dir += 1;
+    let moved = 0;
     if (dir !== 0) {
-      storyX += dir * ADV_CONFIG.WALK_SPEED * dt;
+      moved = dir * ADV_CONFIG.WALK_SPEED * dt;
+      storyX += moved;
       // 素材の向きと進む向きが違うときだけ反転する
       const faceLeft = (dir < 0);
       storyActorEl.classList.toggle('flip', ADV_CONFIG.SPRITE.FACES_RIGHT ? faceLeft : !faceLeft);
     }
-    setStoryWalking(dir !== 0, dt);
+    setStoryWalking(dir !== 0, Math.abs(moved));
     storyX = Math.max(12, Math.min(storyScene.width - 8, storyX));
 
     const exit = storyScene.exit;
@@ -555,7 +574,7 @@ function updateStory(dt) {
     }
   }
 
-  if (storyLines) setStoryWalking(false, dt);   // 会話中は立ち止まる
+  if (storyLines) setStoryWalking(false, 0);   // 会話中は立ち止まる
 
   // --- 調べられるものが近くにあるか ---
   const target = (!storyLines) ? nearestStoryTarget() : null;
@@ -585,9 +604,18 @@ function updateStory(dt) {
   // --- 人物を地面の上に置く ---
   // カイトはコマの実寸(48×48)で置く。コマの底辺中央が接地点なので、
   // 上端 = 地面 − コマの高さ、左端 = x − コマ幅の半分 でぴたりと合う。
-  placeStoryActor(storyActorEl, storyX, ADV_CONFIG.SPRITE.FRAME_W, ADV_CONFIG.SPRITE.FRAME_H);
+  const SPW = ADV_CONFIG.SPRITE.FRAME_W, SPH = ADV_CONFIG.SPRITE.FRAME_H;
+  placeStoryActor(storyActorEl, storyX, SPW, SPH);
   const n = storyScene.npc;
-  placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
+  if (n.sprite) {
+    placeStoryActor(storyNpcEl, n.x, SPW, SPH);
+    // 立ち姿のコマを1枚だけ出す(歩かせない)
+    storyNpcEl.style.backgroundSize =
+      (SPW * ADV_CONFIG.SPRITE.WALK_FRAMES * S) + 'px ' + (SPH * S) + 'px';
+    storyNpcEl.style.backgroundPosition = (-(n.standFrame || 0) * SPW * S) + 'px 0px';
+  } else {
+    placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
+  }
 
   // --- 出口の目印 ---
   storyExitEl.style.left   = Math.round((storyScene.exit.x - storyCamX) * S) + 'px';
@@ -600,8 +628,12 @@ function updateStory(dt) {
 //
 // 混ぜたり間を作ったりはしない。押した瞬間に歩き、離した瞬間に止まる ―
 // 操作にすぐ絵が付いてくるほうが、この手の画面は気持ちがよい。
+//
+// distance = このコマで実際に進んだ距離(px)。
+// これを溜めて、WALK_STEP_PX ぶん溜まるたびに1コマ進める。
+// 進んだぶんだけ脚が動くので、速さをどう変えても足は滑らない。
 // ===================================================================
-function setStoryWalking(walking, dt) {
+function setStoryWalking(walking, distance) {
   const SP = ADV_CONFIG.SPRITE;
 
   if (walking !== storyWalking) {
@@ -612,8 +644,8 @@ function setStoryWalking(walking, dt) {
   }
 
   if (walking) {
-    storyAnimTime += dt;
-    const per = 1 / ADV_CONFIG.WALK_ANIM_FPS;      // 1コマぶんの秒数
+    storyAnimTime += distance;                     // ここには「距離」が溜まる
+    const per = ADV_CONFIG.WALK_STEP_PX;
     while (storyAnimTime >= per) {
       storyAnimTime -= per;
       storyAnimFrame = (storyAnimFrame + 1) % SP.WALK_FRAMES;
