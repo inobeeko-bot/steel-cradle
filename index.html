@@ -433,6 +433,39 @@
       letter-spacing: 0.24em;
       color: #4e7a70;
     }
+    /* --- 後方カメラが壊れたとき ---
+       3D側は描画をやめるので、ここで中身を塞がないと前方の景色が透けてしまう。
+       塗りつぶしたうえに走査線を流し、「NO SIGNAL」を明滅させる。 */
+    .no-signal { display: none; }
+    .rear-mirror.broken {
+      background: #05080b;
+      border-color: #4a3230;
+    }
+    .rear-mirror.broken > span { color: #6b4440; }
+    .rear-mirror.broken::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255, 120, 90, 0.10) 0px, rgba(255, 120, 90, 0.10) 1px,
+        transparent 1px, transparent 3px);
+      animation: noiseScroll 0.25s steps(3) infinite;
+    }
+    .rear-mirror.broken .no-signal {
+      display: block;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 13px;
+      font-weight: normal;
+      letter-spacing: 0.3em;
+      color: #ff5a3c;
+      animation: warnBlink 0.7s steps(2) infinite;
+      z-index: 1;
+    }
+
     /* 枠の上辺だけ少し明るくして、鏡が嵌まっている感じを出す */
     .rear-mirror::before {
       content: "";
@@ -882,7 +915,10 @@
 
     <!-- 後方確認ミラーの枠。中身(後方の景色)は scene.js が3Dで描く。
          ここは枠とラベルだけを担当する。コックピット視点のときだけ出す -->
-    <div class="rear-mirror" id="rear-mirror"><span>REAR</span></div>
+    <div class="rear-mirror" id="rear-mirror" data-system="mirror">
+      <span>REAR</span>
+      <b class="no-signal">NO SIGNAL</b>
+    </div>
 
     <!-- ロックオン表示。照準の位置に重ねる。三人称でもコックピットでも出す -->
     <div class="lock-ring" id="lock-ring">

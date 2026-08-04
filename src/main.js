@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-44 flare glare';
+const BUILD = 'p1-45 fx/no-signal';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -300,6 +300,7 @@ const BREAKAGE = {
   heat:       { label: '熱',       lost: '冷却不能' },
   propellant: { label: '推進剤',   lost: 'バースト不能' },
   shieldhp:   { label: 'シールド強度', lost: '表示不正確' },
+  mirror:     { label: '後方カメラ', lost: '映像喪失' },
 };
 
 // 壊れた系統の名前を入れておく集合。has() で「壊れているか」を調べる
@@ -1354,8 +1355,9 @@ function onPlayerHit() {
 // 機能そのものは止めない(見た目だけ)。壊した計器の名前を返す。
 // ===================================================================
 function breakRandomInstrument() {
-  // 画面上のゲージをすべて集め、まだ無事なものだけを残す
-  const all = Array.from(document.querySelectorAll('.gauge[data-system]'));
+  // 壊れうるものをすべて集め、まだ無事なものだけを残す。
+  // ゲージだけでなく後方カメラも対象なので、data-system が付いたもの全部を見る。
+  const all = Array.from(document.querySelectorAll('[data-system]'));
   const intact = all.filter((g) => !g.classList.contains('broken'));
   if (intact.length === 0) return null;   // もう全部壊れている
 
@@ -1364,6 +1366,9 @@ function breakRandomInstrument() {
 
   const key = picked.dataset.system;
   brokenSystems.add(key);   // ここから機能が失われる
+
+  // 後方カメラは3D側が描いているので、描画そのものを止めてもらう
+  if (key === 'mirror') setMirrorBroken(true);
 
   const info = BREAKAGE[key];
   return info ? (info.label + ' ' + info.lost) : null;
@@ -1485,10 +1490,11 @@ function restartMission() {
   // --- 損傷を消す ---
   hullDamage = 0;
   hitVignette = 0;
-  for (const gauge of document.querySelectorAll('.gauge.broken')) {
-    gauge.classList.remove('broken');
+  for (const el of document.querySelectorAll('[data-system].broken')) {
+    el.classList.remove('broken');
   }
   brokenSystems.clear();
+  setMirrorBroken(false);   // 後方カメラの映像を戻す
 
   // --- 戦果とログを消す ---
   killCount = 0;

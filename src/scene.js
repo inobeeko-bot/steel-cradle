@@ -654,6 +654,10 @@ const MIRROR = {
   FOV:       44,
 };
 let mirrorCamera = null;
+let mirrorBroken = false;   // 被弾で壊れると映像が出なくなる(HTML側が NO SIGNAL を出す)
+
+// main.js の計器破損から呼ばれる
+function setMirrorBroken(on) { mirrorBroken = !!on; }
 
 // 被弾時のカメラの揺れ。main.js が毎コマ setCameraShake() で渡してくる
 let camShakeX = 0;
@@ -979,7 +983,7 @@ function createEnemyFighter() {
   pod.scale.set(0.8, 0.8, 1.8);
   ship.add(pod);
 
-  // --- エンジンノズル(左右)---
+  // --- エンジンノズルと噴射光(左右)---
   // 5角柱。少ない面数のまま「機械的な塊」を足して、機体の後ろを重く見せる
   for (const side of [-1, 1]) {
     const nozzleGeo = new THREE.CylinderGeometry(0.3, 0.36, 1.0, 5);
@@ -987,6 +991,18 @@ function createEnemyFighter() {
     const nozzle = createFlatPart(nozzleGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
     nozzle.position.set(side * 0.62, -0.05, 1.3);
     ship.add(nozzle);
+
+    // 噴射光。自機だけが光っていると敵が「動かない模型」に見えるので、
+    // 敵にも付ける。色は自機の水色に対して赤 ― 遠目でも敵味方が分かる。
+    const glowGeo = new THREE.ConeGeometry(0.24, 1.5, 6);
+    glowGeo.rotateX(Math.PI / 2);        // 後ろ(+Z)へ尖らせる
+    glowGeo.translate(0, 0, 0.75);
+    const glow = new THREE.Mesh(glowGeo, new THREE.MeshBasicMaterial({
+      color: 0xff7a4d, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    glow.position.set(side * 0.62, -0.05, 1.8);
+    ship.add(glow);
   }
 
   // --- コックピット(八面体。角ばったキャノピー)---
@@ -2214,6 +2230,9 @@ function updateMissiles(dt) {
     // 敵のミサイルは自機に、自機のミサイルは敵に当たる
     if (m.fromEnemy) {
       if (m.mesh.position.distanceTo(playerShip.position) < MISSILE.HIT_RADIUS) {
+        spawnFlash(m.mesh.position, 22, 0xffffff, 0.28);
+        spawnBlast(m.mesh.position, 11, 0xffb060);
+        spawnDebris(m.mesh.position, 10, 0.28, 16, 0xffd9a0, true);
         spawnDebris(m.mesh.position, 16, 0.3, 13);
         scene.remove(m.mesh);
         // ※ 材質は見本と共有しているので破棄しない。
@@ -2248,6 +2267,8 @@ function updateMissiles(dt) {
         setEnemyState(struck, 'evade');
         onHit(struck.hp);
       }
+      spawnFlash(m.mesh.position, 20, 0xffffff, 0.26);
+      spawnDebris(m.mesh.position, 9, 0.26, 15, 0xffd9a0, true);
       spawnDebris(m.mesh.position, 14, 0.3, 12);
       scene.remove(m.mesh);
       missiles.splice(i, 1);
@@ -2551,7 +2572,10 @@ function detonateOrdnance(o) {
   const pos = o.mesh.position.clone();
 
   spawnBlast(pos, cfg.RADIUS, cfg.COLOR);
-  spawnDebris(pos, o.kind === 'pyro' ? 10 : 14, 0.30, o.kind === 'pyro' ? 16 : 22);
+  // 中心の閃光。範囲の広さに合わせて大きさを変える
+  spawnFlash(pos, cfg.RADIUS * 1.1, cfg.COLOR, o.kind === 'pyro' ? 0.22 : 0.34);
+  spawnDebris(pos, o.kind === 'pyro' ? 10 : 14, 0.30, o.kind === 'pyro' ? 16 : 22,
+              cfg.COLOR, true);
 
   let hitCount = 0;
   let killCountHere = 0;
@@ -2630,8 +2654,10 @@ function detonateOrdnance(o) {
 function spawnBlast(position, radius, color) {
   if (!blastGeometry) blastGeometry = new THREE.IcosahedronGeometry(1, 1);
 
+  // 加算合成にして、広がる輪が「光っている」ように見せる
   const material = new THREE.MeshBasicMaterial({
     color: color, transparent: true, opacity: 0.42, wireframe: true,
+    blending: THREE.AdditiveBlending, depthWrite: false,
   });
   const mesh = new THREE.Mesh(blastGeometry, material);
   mesh.position.copy(position);
@@ -2639,6 +2665,30 @@ function spawnBlast(position, radius, color) {
   scene.add(mesh);
 
   blasts.push({ mesh: mesh, radius: radius, life: 0.55, maxLife: 0.55 });
+}
+
+// ===================================================================
+// 閃光(フラッシュ)
+//
+// 爆発の中心で一瞬だけ白く飛ぶ光。フレアと同じ放射グラデーションの板を使う。
+// 破片だけだと「物が散った」で終わってしまい、爆発に見えない。
+// 開けた瞬間がいちばん明るく、あとは縮みながら消える。
+// ===================================================================
+function spawnFlash(position, size, color, seconds) {
+  if (!flareGlowTex) flareGlowTex = makeFlareGlowTexture();
+
+  const mat = new THREE.SpriteMaterial({
+    map: flareGlowTex, color: color, transparent: true, opacity: 1,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.copy(position);
+  sprite.scale.setScalar(size * 0.35);
+  scene.add(sprite);
+
+  const life = seconds || 0.30;
+  // flash: true = 「一気にふくらんでから消える」ほうの動き
+  blasts.push({ mesh: sprite, radius: size, life: life, maxLife: life, flash: true, mat: mat });
 }
 
 // ===================================================================
@@ -2651,18 +2701,8 @@ function spawnBlast(position, radius, color) {
 // と、同じ1つの光がどちらの視点でも「発射口はここ」を伝える。
 // ===================================================================
 function spawnMuzzleFlash(position, color) {
-  if (!blastGeometry) blastGeometry = new THREE.IcosahedronGeometry(1, 1);
-
-  const material = new THREE.MeshBasicMaterial({
-    color: color, transparent: true, opacity: 0.95,
-  });
-  const mesh = new THREE.Mesh(blastGeometry, material);
-  mesh.position.copy(position);
-  mesh.scale.setScalar(0.42);
-  scene.add(mesh);
-
-  // shrink: true = ふくらまずに、しぼみながら消える
-  blasts.push({ mesh: mesh, radius: 0.42, life: 0.09, maxLife: 0.09, shrink: true });
+  // 発射炎も光り物なので、加算合成の滲みで出す
+  spawnFlash(position, 2.2, color, 0.08);
 }
 
 function updateBlasts(dt) {
@@ -2671,7 +2711,12 @@ function updateBlasts(dt) {
     b.life -= dt;
     const t = 1 - Math.max(b.life / b.maxLife, 0);   // 0 → 1
 
-    if (b.shrink) {
+    if (b.flash) {
+      // 一気にふくらみ、そのあと急に暗くなる。
+      // 明るさを (1-t)² にすると、開けた瞬間の一撃が強く残る。
+      b.mesh.scale.setScalar(b.radius * (0.35 + Math.sqrt(t) * 0.9));
+      b.mesh.material.opacity = (1 - t) * (1 - t);
+    } else if (b.shrink) {
       b.mesh.scale.setScalar(b.radius * (1 - t * 0.7));
       b.mesh.material.opacity = 0.95 * (1 - t);
     } else {
@@ -2744,8 +2789,12 @@ function createEnemy() {
   // 被弾時に白く光らせるため、機体を構成する材質だけを集めておく。
   // traverse = そのグループの中身を隅々まで1つずつ見て回る命令。
   // isMesh で立体だけを選ぶ(輪郭線は LineSegments なので対象外)。
+  // ただし噴射光は MeshBasicMaterial で emissive を持たないので除く。
+  // 混ざると発光を塗るときに落ちる。
   const materials = [];
-  group.traverse((obj) => { if (obj.isMesh) materials.push(obj.material); });
+  group.traverse((obj) => {
+    if (obj.isMesh && obj.material && obj.material.emissive) materials.push(obj.material);
+  });
 
   return {
     group: group,
@@ -3292,8 +3341,10 @@ function hitEnemy(e, point, dealDamage) {
   e.hitFlash = ENEMY.FLASH_SEC;         // 白く光らせる
   e.heatSig  = SENSOR.HEAT_LINGER;      // 被弾直後も熱くて見つかりやすい
 
-  // 当たった場所から小さな破片を飛ばす
-  spawnDebris(point, DEBRIS.HIT_COUNT, DEBRIS.HIT_SIZE, DEBRIS.HIT_SPEED);
+  // 当たった場所で小さく閃光を出し、光る火花を飛ばす。
+  // 暗い破片だけだと、当たったのかどうかが遠目に分からない。
+  spawnFlash(point, 3.2, 0xfff0c0, 0.16);
+  spawnDebris(point, DEBRIS.HIT_COUNT, DEBRIS.HIT_SIZE, DEBRIS.HIT_SPEED, 0xffd9a0, true);
 
   if (!dealDamage) return;
 
@@ -3316,6 +3367,12 @@ function killEnemy(e) {
   e.group.visible = false;      // 空間からは消さず、見えなくするだけ(使い回すため)
   e.respawnLeft = ENEMY.RESPAWN_SEC;
 
+  // 閃光 → 広がる輪 → 破片 の順に重ねる。
+  // 3つとも同じ瞬間に出すが、消える速さが違うので目には順番に見える。
+  spawnFlash(e.group.position, 26, 0xffffff, 0.26);
+  spawnFlash(e.group.position, 15, 0xffb060, 0.46);
+  spawnBlast(e.group.position, 13, 0xffc070);
+  spawnDebris(e.group.position, 10, 0.30, DEBRIS.KILL_SPEED * 1.2, 0xffd9a0, true);   // 光る火花
   spawnDebris(e.group.position, DEBRIS.KILL_COUNT, DEBRIS.KILL_SIZE, DEBRIS.KILL_SPEED);
   onKill();
 }
@@ -3369,6 +3426,11 @@ function respawnEnemy(e) {
 // ===================================================================
 function explodePlayer() {
   if (!sceneReady) return;
+  // 敵の撃墜より一回り大きく、長く光らせる
+  spawnFlash(playerShip.position, 46, 0xffffff, 0.36);
+  spawnFlash(playerShip.position, 28, 0xffa050, 0.70);
+  spawnBlast(playerShip.position, 22, 0xffc070);
+  spawnDebris(playerShip.position, 16, 0.34, DEBRIS.KILL_SPEED * 1.6, 0xffd9a0, true);
   spawnDebris(playerShip.position, DEBRIS.KILL_COUNT * 2, DEBRIS.KILL_SIZE * 1.3,
               DEBRIS.KILL_SPEED * 1.4);
   for (const glow of engineGlows) glow.material.opacity = 0;   // 噴射を止める
@@ -3492,6 +3554,7 @@ function updateScene(dt, elapsed) {
 // ===================================================================
 function renderRearMirror() {
   if (!MIRROR.ENABLED || !cockpitView) return;
+  if (mirrorBroken) return;   // 壊れている = 何も描かない。枠の中はHTMLが塞ぐ
 
   const vw = window.innerWidth;
   const vh = window.innerHeight;
