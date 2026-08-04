@@ -161,8 +161,8 @@ GRANDPA_POS.LIFT_Y =
 const STORY_SCENES = {
 
   ch1_s1_hill: {
-    title: '第一部 一章 ― 林檎の丘',
-    place: 'アルカディア / 農業区',
+    titleKey: 'adv.title.hill',
+    placeKey: 'adv.place.arcadia',
     map: 'hill',          // 背景に使う絵(ADV_ASSETS.maps のどれか)
 
     // 当面はマップ論理幅 = near層の幅。つまり1画面ぶんで、横スクロールしない。
@@ -198,24 +198,24 @@ const STORY_SCENES = {
     //   markH … 印を物のどれくらい上に出すか
     props: [
       {
-        id: 'examine_house', x: 118, markX: 56, markH: 78, label: '家の戸口',
+        id: 'examine_house', x: 118, markX: 56, markH: 78, labelKey: 'adv.label.house',
         first: [
-          { who: 'カイト', text: '鍵なんてかけたことがない。この村で盗みをやる奴は、翌朝には村じゅうの朝飯当番にされる' },
+          { whoKey: 'adv.name.kaito', text: { ja: '鍵なんてかけたことがない。この村で盗みをやる奴は、翌朝には村じゅうの朝飯当番にされる', en: "We've never locked it. Steal anything in this village and by morning you're on breakfast duty for everyone." } },
         ],
       },
       {
-        id: 'examine_tree', x: 215, markX: 208, markH: 118, label: '林檎の木',
+        id: 'examine_tree', x: 215, markX: 208, markH: 118, labelKey: 'adv.label.tree',
         first: [
-          { who: 'カイト', text: '実はまだ固いな。……祭りには間に合わないか' },
+          { whoKey: 'adv.name.kaito', text: { ja: '実はまだ固いな。……祭りには間に合わないか', en: "Still hard. …They won't be ready for the festival." } },
         ],
         repeat: [
-          { who: 'カイト', text: 'じいちゃんが六十年かけた木だ。俺より年上の先輩ってわけ' },
+          { whoKey: 'adv.name.kaito', text: { ja: 'じいちゃんが六十年かけた木だ。俺より年上の先輩ってわけ', en: "Grandpa spent sixty years on this tree. It's my senior, technically." } },
         ],
       },
       {
-        id: 'examine_shears', x: 250, markX: 252, markH: 16, label: '剪定バサミ',
+        id: 'examine_shears', x: 250, markX: 252, markH: 16, labelKey: 'adv.label.shears',
         first: [
-          { who: 'カイト', text: 'じいちゃんの商売道具。……俺が触ると、なぜか翌日に刃が曇るらしい。濡れ衣だと思う' },
+          { whoKey: 'adv.name.kaito', text: { ja: 'じいちゃんの商売道具。……俺が触ると、なぜか翌日に刃が曇るらしい。濡れ衣だと思う', en: "Grandpa's tools. …He says the blades cloud over the day after I touch them. I maintain my innocence." } },
         ],
       },
     ],
@@ -254,40 +254,40 @@ const STORY_SCENES = {
       // このフラグが立ったら剪定をやめて立ち姿になる。
       // gp_talk_3 で「よし、上がりだ」と言って仕事を切り上げるため。
       doneFlag: 'gp3_done',
-      label: '祖父',
+      labelKey: 'adv.name.grandpa',
 
       talks: [
         // gp_talk_1
         { flag: 'gp1_done', lines: [
-          { who: '祖父',   text: 'おう、カイト。当番はどうした' },
-          { who: 'カイト', text: '旧式艇四機、異常なし。異常があったこともない' },
-          { who: '祖父',   text: '結構。暇な防衛隊は良い防衛隊だ' },
-          { who: 'カイト', text: 'じいちゃん、それ毎回言うね' },
-          { who: '祖父',   text: '毎回本当だからな。……ほれ、ぼさっとしてないで脚立を押さえろ。祭りの前に、こいつの寝癖を直しちまう', se: 'snip' },
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'おう、カイト。当番はどうした', en: "Kaito. How was the watch?" } },
+          { whoKey: 'adv.name.kaito', text: { ja: '旧式艇四機、異常なし。異常があったこともない', en: "Four old boats, nothing to report. There's never been anything to report." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '結構。暇な防衛隊は良い防衛隊だ', en: "Good. A bored defence force is a good defence force." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'じいちゃん、それ毎回言うね', en: "You say that every time." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '毎回本当だからな。……ほれ、ぼさっとしてないで脚立を押さえろ。祭りの前に、こいつの寝癖を直しちまう', en: "Because it's true every time. …Now stop standing there and hold the ladder. I'll get this one's hair straightened before the festival." }, se: 'snip' },
         ]},
         // gp_talk_2
         { flag: 'gp2_done', lines: [
-          { who: 'カイト', text: 'なあ。学校の端末でさ、建設者の年表を見たんだ。〈十二使徒〉。……五番目だけ、空欄だった' },
-          { who: '祖父',   text: 'ほう' },
-          { who: 'カイト', text: '事故死、記録焼失。名前も残ってない。……うちと同じ名字だって、昔言わなかったっけ' },
-          { who: '祖父',   text: '名前ってのはな、実の入ってない殻みたいなもんだ', note: '(剪定の手を止めずに)' },
-          { who: '祖父',   text: '――だが、殻がなけりゃ実は守れん' },
-          { who: 'カイト', text: '……つまり?' },
-          { who: '祖父',   text: 'つまり、手ぇ離すなよ。話は実が入ってからだ' },
+          { whoKey: 'adv.name.kaito', text: { ja: 'なあ。学校の端末でさ、建設者の年表を見たんだ。〈十二使徒〉。……五番目だけ、空欄だった', en: "Hey. I pulled up the founders' timeline on the school terminal. The Twelve Apostles. …The fifth one was blank." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'ほう', en: "Hm." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '事故死、記録焼失。名前も残ってない。……うちと同じ名字だって、昔言わなかったっけ', en: "Died in an accident, records burned. Not even a name left. …Didn't you once say it was our surname?" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '名前ってのはな、実の入ってない殻みたいなもんだ', en: "A name is a husk with no fruit in it." }, note: { ja: '(剪定の手を止めずに)', en: "(without stopping the shears)" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '――だが、殻がなけりゃ実は守れん', en: "—But without the husk, nothing protects the fruit." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……つまり?', en: "…Meaning?" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'つまり、手ぇ離すなよ。話は実が入ってからだ', en: "Meaning don't let go. We'll talk when there's fruit." } },
         ]},
         // gp_talk_3(ここで出口が開く)
         { flag: 'gp3_done', lines: [
-          { who: '祖父',   text: 'よし、上がりだ。今夜は祭りだぞ、カイト' },
-          { who: 'カイト', text: '収穫祭って言っても、林檎はまだ固いのにな' },
-          { who: '祖父',   text: '固い実を祝うのさ。育ってる最中ってことだからな。……ドックの格納庫、灯りを落としてこい。それでお前の当番も上がりだ' },
-          { who: 'カイト', text: 'はいよ。……じいちゃん、祭りで飲みすぎるなよ' },
-          { who: '祖父',   text: '約束はできん' },
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'よし、上がりだ。今夜は祭りだぞ、カイト', en: "Right, that's us done. Festival tonight, Kaito." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '収穫祭って言っても、林檎はまだ固いのにな', en: "Some harvest festival. The apples are still hard." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '固い実を祝うのさ。育ってる最中ってことだからな。……ドックの格納庫、灯りを落としてこい。それでお前の当番も上がりだ', en: "We celebrate the hard ones. It means they're still growing. …Go put the hangar lights out at the dock. Then your watch is done too." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'はいよ。……じいちゃん、祭りで飲みすぎるなよ', en: "Sure. …Don't drink too much tonight." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '約束はできん', en: "No promises." } },
         ]},
       ],
 
       // 3回目のあとに話しかけたとき
       repeat: [
-        { who: '祖父', text: '行け行け。灯りは落とせ、酒は俺が落とす' },
+        { whoKey: 'adv.name.grandpa', text: { ja: '行け行け。灯りは落とせ、酒は俺が落とす', en: "Go on, go on. You drop the lights, I'll drop the drink." } },
       ],
     },
 
@@ -296,16 +296,16 @@ const STORY_SCENES = {
       x: 628,             // near層の右端。ここを越えるとシーン2へ
       unlock: 'gp3_done',
       blocked: [
-        { who: 'カイト', text: '……先にじいちゃんの手伝いだな。呼ばれてる気がする' },
+        { whoKey: 'adv.name.kaito', text: { ja: '……先にじいちゃんの手伝いだな。呼ばれてる気がする', en: "…Better help Grandpa first. I get the feeling I'm being called." } },
       ],
-      nextTitle: 'シーン2 ― 収穫祭の夜',
+      nextTitleKey: 'adv.scene2',
     },
 
     // --- 開幕の地の文(自動再生)---
     opening: [
-      { text: 'アルカディアには、本物の林檎の木があった。' },
-      { text: '直径六キロの回転体の内壁に土を敷き、鏡で採った陽光を軸から降らせる。' },
-      { text: '――地図には、載っていない村。' },
+      { text: { ja: 'アルカディアには、本物の林檎の木があった。', en: "Arcadia had a real apple tree." } },
+      { text: { ja: '直径六キロの回転体の内壁に土を敷き、鏡で採った陽光を軸から降らせる。', en: "Soil laid on the inner wall of a six-kilometre drum, sunlight caught by mirrors and poured down the axis." } },
+      { text: { ja: '――地図には、載っていない村。', en: "—A village that was on no map." } },
     ],
   },
 };
@@ -499,7 +499,7 @@ function startStoryScene(id) {
   storyFadeEl.style.opacity = '1';   // 暗転から始めて、開幕でゆっくり明ける
 
   setTimeout(() => {
-    if (screenState === 'story') openStoryLines(scene.opening.map(l => ({ who: '', text: l.text })));
+    if (screenState === 'story') openStoryLines(scene.opening.map(l => ({ text: l.text })));
   }, 900);
 }
 
@@ -578,7 +578,7 @@ function buildStoryScene(scene) {
   for (const p of scene.props) {
     const el = document.createElement('div');
     el.className = 'story-hitbox';
-    el.innerHTML = '<span>' + p.label + '</span>';
+    el.innerHTML = '<span>' + t(p.labelKey) + '</span>';
     el.style.display = 'none';
     storyWorldEl.appendChild(el);
     storyHitboxEls.push({ el: el, x: p.x });
@@ -586,7 +586,7 @@ function buildStoryScene(scene) {
   {
     const el = document.createElement('div');
     el.className = 'story-hitbox';
-    el.innerHTML = '<span>' + n.label + '</span>';
+    el.innerHTML = '<span>' + t(n.labelKey) + '</span>';
     el.style.display = 'none';
     storyWorldEl.appendChild(el);
     storyHitboxEls.push({ el: el, x: n.x });
@@ -598,9 +598,9 @@ function buildStoryScene(scene) {
   storyWorldEl.appendChild(storyPlateLayerEl);
   storyPlates = [];
   // 祖父。いる高さは描画のたびに変わるので、そのつど取りに行く
-  addNamePlate(n.label, () => ({ x: n.x, topY: storyNpcTopY }));
+  addNamePlate(t(n.labelKey), () => ({ x: n.x, topY: storyNpcTopY }));
 
-  storyHintEl.textContent = scene.place + '　/　' + scene.title;
+  storyHintEl.textContent = t(scene.placeKey) + '　/　' + t(scene.titleKey);
   storyBoxEl.style.setProperty('--box-opacity', String(ADV_CONFIG.BOX_OPACITY));
 }
 
@@ -645,19 +645,26 @@ function openStoryLines(lines) {
   renderStoryLine();
 }
 
+// その行の話者名。地の文(whoKey なし)なら空
+function lineSpeaker(line) { return line.whoKey ? t(line.whoKey) : ''; }
+// その行の本文。note があれば前に付ける
+function lineText(line) {
+  return (line.note ? tv(line.note) + ' ' : '') + tv(line.text);
+}
+
 function renderStoryLine() {
   const line = storyLines[storyIndex];
-  storyBoxEl.classList.toggle('narration', !line.who);
-  storySpeakerEl.textContent = line.who || '';
-  storySpeakerEl.style.display = line.who ? '' : 'none';
+  const who = lineSpeaker(line);
+  storyBoxEl.classList.toggle('narration', !who);
+  storySpeakerEl.textContent = who;
+  storySpeakerEl.style.display = who ? '' : 'none';
   storyTextEl.textContent = '';
   storyTyped = 0;
 }
 
 function advanceStory() {
   if (!storyLines) return;
-  const line = storyLines[storyIndex];
-  const full = (line.note ? line.note + ' ' : '') + line.text;
+  const full = lineText(storyLines[storyIndex]);
 
   if (storyTyped < full.length) { storyTyped = full.length; storyTextEl.textContent = full; return; }
 
@@ -699,10 +706,10 @@ function interactStory() {
     storyFlags.add(talk.flag);
     openStoryLines(talk.lines);
 
-    if (step === 0) showStoryHint('enter', 'Enter:次へ');
+    if (step === 0) showStoryHint('enter', t('adv.next'));
     if (talk.flag === storyScene.exit.unlock) {
       storyExitEl.classList.add('open');
-      showStoryHint('exit', '右へ:ドックへ向かう');
+      showStoryHint('exit', t('adv.goRight'));
     }
   } else {
     openStoryLines(npc.repeat);
@@ -732,12 +739,11 @@ function updateStory(dt) {
   // --- 暗転から明ける ---
   storyFadeEl.style.opacity = String(Math.max(0, 1 - storyTime / 2.0));
 
-  if (storyTime > 2.0) showStoryHint('move', '← →  /  A D:移動');
+  if (storyTime > 2.0) showStoryHint('move', t('adv.move'));
 
   // --- 1文字ずつ出す ---
   if (storyLines && storyLines !== 'leaving') {
-    const line = storyLines[storyIndex];
-    const full = (line.note ? line.note + ' ' : '') + line.text;
+    const full = lineText(storyLines[storyIndex]);
     if (storyTyped < full.length) {
       storyTyped = Math.min(full.length, storyTyped + ADV_CONFIG.TYPE_SPEED * dt);
       storyTextEl.textContent = full.slice(0, Math.floor(storyTyped));
@@ -775,7 +781,7 @@ function updateStory(dt) {
     storyMarkEl.style.left   = (target.x * S) + 'px';
     storyMarkEl.style.top    = ((storyGroundY(target.x) - (target.markH || 40) - 12) * S) + 'px';
     storyMarkEl.classList.add('on');
-    showStoryHint('interact', 'E / Enter:調べる・話す');
+    showStoryHint('interact', t('adv.interact'));
   } else {
     storyMarkEl.classList.remove('on');
   }
@@ -926,7 +932,7 @@ function leaveStoryScene() {
   storyMarkEl.classList.remove('on');
 
   setTimeout(() => {
-    storyPromptEl.textContent = 'To be continued ―― ' + storyScene.exit.nextTitle;
+    storyPromptEl.textContent = t('adv.toBeContinued') + t(storyScene.exit.nextTitleKey);
     storyPromptEl.classList.add('on', 'big');
   }, 1600);
 

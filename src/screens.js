@@ -36,30 +36,28 @@ const MENU_PAGES = {
   root: {
     items: [
       {
-        label: 'TRAINING', jp: '訓練飛行', tag: 'READY', ready: true,
-        detail: '<b>10分 / 10撃墜</b>　演習空域での単機戦闘訓練。<br>' +
-                '電力配分・熱・推進剤の三つを同時に回す感覚をつかむための課程。' +
-                '撃墜数が規定に届けば任務達成、時間切れか機体喪失で失敗。',
+        label: 'TRAINING', jpKey: 'menu.training', tagKey: 'menu.training.tag',
+        ready: true, detailKey: 'menu.training.desc',
         run: () => launchTraining(),
       },
       {
-        label: 'GALLERY', jp: '機体資料', tag: 'READY', ready: true,
-        detail: '<b>機体プロファイル</b>　登場する機体を回して眺めながら、諸元を確認できる。<br>' +
-                '数値は実際の戦闘で使われている設定値をそのまま読み出しているので、' +
-                '調整が入ればこの資料も一緒に変わる。',
+        label: 'LANGUAGE', jpKey: 'menu.language', tagKey: 'menu.training.tag',
+        ready: true, detailKey: 'menu.language.desc',
+        // 決定するたびに 日本語 ⇄ English。メニューを組み直して即座に反映する
+        run: () => { toggleLanguage(); playPresetConfirm(); },
+      },
+      {
+        label: 'GALLERY', jpKey: 'menu.gallery', tagKey: 'menu.training.tag',
+        ready: true, detailKey: 'menu.gallery.desc',
         run: () => showGallery(),
       },
       {
-        label: 'STORY', jp: 'ストーリー', tag: '準備中', ready: false,
-        detail: '<b>三部作キャンペーン</b>　章立て形式。各章がひとつのコロニー攻略戦か防衛戦。<br>' +
-                '終盤は同盟の選択でエンディングが分岐し、第二部末の結婚を経て第三部は子世代が主役になる。',
-        go: 'story',
+        label: 'STORY', jpKey: 'menu.story', tagKey: 'menu.soon', ready: false,
+        detailKey: 'menu.story.desc', go: 'story',
       },
       {
-        label: 'MULTIPLAYER', jp: 'マルチ対戦', tag: '準備中', ready: false,
-        detail: '<b>4チーム×4人 + 海賊ボット / 1試合10分</b>　揺り籠戦争20年間のどこかの戦い。<br>' +
-                '資源が全チーム分ない設計のため、同盟と裏切りがルール抜きで自然に起きる。',
-        go: 'multi',
+        label: 'MULTIPLAYER', jpKey: 'menu.multi', tagKey: 'menu.soon', ready: false,
+        detailKey: 'menu.multi.desc', go: 'multi',
       },
     ],
   },
@@ -67,61 +65,34 @@ const MENU_PAGES = {
   // --- ストーリー:三部構成(仕様書8章)---
   story: {
     items: [
-      {
-        label: 'PART I', jp: '黄昏のアルカディア', tag: '一章', ready: true,
-        run: () => startStoryScene('ch1_s1_hill'),
-        detail: '企業連合軍によるアルカディア陥落。カイトは生存者と脱出艇で逃げ延び、' +
-                '傭兵チームとして各地を転戦する。<br>' +
-                '自分たちも「誰かの故郷」を落としていると気づく転換点を経て、' +
-                'セラと共闘し<b>託宣改竄の痕跡</b>を発見して幕。',
-      },
-      {
-        label: 'PART II', jp: 'バベルの墓標', tag: '準備中', ready: false,
-        detail: '各コロニーの紋章を集める旅。真実を突きつけたカイトのもとに史上初の全勢力同盟が成立する。<br>' +
-                'しかし20年の憎悪は消えず、内部から裏切りが発生。<b>紋章は強奪され、同盟は崩壊</b>する。',
-      },
-      {
-        label: 'PART III', jp: 'プロメテウスの火', tag: '準備中', ready: false,
-        detail: '親世代の子らが聖印と神器コアを継承し、散らばった紋章を奪還する巡礼へ。<br>' +
-                'オリュンポス攻略戦、そして<b>レヴィアタン覚醒</b>。' +
-                '人類が神の託宣に運命を委ねる時代を終わらせ、揺り籠を出る。',
-      },
-      { label: '← BACK', jp: '戻る', ready: true, detail: '', back: true },
+      { label: 'PART I',   jpKey: 'story.part1', tagKey: 'story.chapter1', ready: true,
+        detailKey: 'story.part1.desc', run: () => startStoryScene('ch1_s1_hill') },
+      { label: 'PART II',  jpKey: 'story.part2', tagKey: 'menu.soon', ready: false,
+        detailKey: 'story.part2.desc' },
+      { label: 'PART III', jpKey: 'story.part3', tagKey: 'menu.soon', ready: false,
+        detailKey: 'story.part3.desc' },
+      { label: '← BACK', jpKey: 'menu.back', ready: true, back: true },
     ],
   },
 
   // --- マルチ対戦:2モード制(仕様書9.4)---
   multi: {
     items: [
-      {
-        label: 'MODE A', jp: '託宣戦(トクセン)', tag: '準備中', ready: false,
-        detail: '<b>政治と経済のゲーム</b>　資源ポイントを奪い合う椅子取り戦。<br>' +
-                '0〜4分「拡張」で採取、4〜8分「均衡」で神器コアが中央に投下され同盟が形成される。' +
-                '残り2分の<b>託宣フェーズ</b>で「存続可能なのは○チーム」が宣告され、同盟は強制的に崩壊する。',
-      },
-      {
-        label: 'MODE B', jp: '旗艦戦(キカンセン)', tag: '準備中', ready: false,
-        detail: '<b>兵站と火力のゲーム</b>　各チームに旗艦1隻。敵旗艦の動力コア破壊で勝利。<br>' +
-                '旗艦は移動する拠点(リスポーン・補給・シールド傘)で、喪失は「兵站の死」を意味する。' +
-                '10分で未決着なら全旗艦のシールドが停止し、裸のコア同士で必ず決着する。',
-      },
-      { label: '← BACK', jp: '戻る', ready: true, detail: '', back: true },
+      { label: 'MODE A', jpKey: 'multi.a', tagKey: 'menu.soon', ready: false,
+        detailKey: 'multi.a.desc' },
+      { label: 'MODE B', jpKey: 'multi.b', tagKey: 'menu.soon', ready: false,
+        detailKey: 'multi.b.desc' },
+      { label: '← BACK', jpKey: 'menu.back', ready: true, back: true },
     ],
   },
 
   // --- 戦闘中に Esc を押したときの一時停止 ---
   pause: {
     items: [
-      {
-        label: 'RESUME', jp: '戦闘に戻る', tag: 'READY', ready: true,
-        detail: '一時停止を解除して、そのまま戦闘を続ける。',
-        run: () => resumeMission(),
-      },
-      {
-        label: 'ABORT', jp: '任務中断', tag: 'READY', ready: true,
-        detail: 'この出撃を打ち切ってメインメニューへ戻る。<b>戦果は記録されない。</b>',
-        run: () => abortMission(),
-      },
+      { label: 'RESUME', jpKey: 'pause.resume', tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'pause.resume.desc', run: () => resumeMission() },
+      { label: 'ABORT',  jpKey: 'pause.abort',  tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'pause.abort.desc',  run: () => abortMission() },
     ],
   },
 };
@@ -154,8 +125,8 @@ function buildMenu() {
     // 英字の見出し / 日本語の副題 / 右端の札 の3つを並べる
     row.innerHTML =
       '<span class="en">' + item.label + '</span>' +
-      '<span class="jp">' + item.jp + '</span>' +
-      (item.tag ? '<span class="tag">' + item.tag + '</span>' : '');
+      '<span class="jp">' + (item.jpKey ? t(item.jpKey) : (item.jp || '')) + '</span>' +
+      (item.tagKey ? '<span class="tag">' + t(item.tagKey) + '</span>' : '');
 
     // マウスでも選べるようにしておく(キーボードと同じ動きにする)
     row.addEventListener('mouseenter', () => { menuIndex = i; buildMenu(); });
@@ -164,7 +135,8 @@ function buildMenu() {
     menuListEl.appendChild(row);
   });
 
-  menuDetailEl.innerHTML = page.items[menuIndex].detail || '';
+  const cur = page.items[menuIndex];
+  menuDetailEl.innerHTML = cur.detailKey ? t(cur.detailKey) : (cur.detail || '');
 }
 
 // --- 選択を上下に動かす ---------------------------------------------
@@ -292,75 +264,52 @@ const CRAFT = [
   {
     key: 'player',
     name: 'PLAYER FIGHTER',
-    cls: '単座 汎用戦闘機 ― プレイヤー機',
+    clsKey: 'gal.player',
     build: () =>
-      galSec('STRUCTURE / 構造') +
-      galRow('制式名', '未設定', '(仕様書に記載なし)') +
-      galRow('HULL', HULL.MAX_DAMAGE + ' 段階', '(戦闘中の修復は不可)') +
-      galRow('シールド', SHIELD.MAX,
-             '(配分1%につき毎秒 ' + SHIELD.REGEN_PER_POWER + ' 回復)') +
+      galSec(t('gal.sec.structure')) +
+      galRow(t('gal.designation'), t('gal.unassigned'), t('gal.noSpec')) +
+      galRow(t('gal.hull'), HULL.MAX_DAMAGE + t('gal.hullStages'), t('gal.noRepair')) +
+      galRow(t('gal.shield'), SHIELD.MAX,
+             t('gal.shieldRegen') + SHIELD.REGEN_PER_POWER + t('gal.shieldRegen2')) +
 
-      galSec('POWER / 電力') +
-      galRow('出力配分', '4系統 合計 100%', '(武器 / シールド / エンジン / センサー)') +
-      galRow('プリセット', '攻撃 / 防御 / 巡航', '(1 / 2 / 3)') +
+      galSec(t('gal.sec.power')) +
+      galRow(t('gal.powerSplit'), t('gal.fourSystems'), t('gal.fourNames')) +
+      galRow(t('gal.presets'), t('gal.presetNames'), '(1 / 2 / 3)') +
 
-      galSec('THERMAL / 熱') +
-      galRow('熱容量', HEAT.MAX, '(警戒 ' + HEAT.WARN + ')') +
-      galRow('ラジエーター展開', '−' + HEAT.VENT_RADIATOR + ' /秒',
-             '(ただし敵センサーへの露出が増える)') +
-      galRow('ラジエーター収納', '−' + HEAT.VENT_BASE + ' /秒') +
-      galRow('強制冷却', '熱 ' + HEAT.MAX + ' で ' + HEAT.SHUTDOWN_SEC + '秒 停止',
-             '(この間は操作不能=無防備。−' + HEAT.VENT_SHUTDOWN + ' /秒で冷える)') +
+      galSec(t('gal.sec.thermal')) +
+      galRow(t('gal.heatCap'), HEAT.MAX, t('gal.warnAt') + HEAT.WARN + ')') +
+      galRow(t('gal.radOpen'), '−' + HEAT.VENT_RADIATOR + ' /s', t('gal.radOpenNote')) +
+      galRow(t('gal.radClosed'), '−' + HEAT.VENT_BASE + ' /s') +
+      galRow(t('gal.shutdown'),
+             t('gal.shutdownAt') + HEAT.MAX + t('gal.shutdownFor') + HEAT.SHUTDOWN_SEC + t('gal.secUnit'),
+             t('gal.helpless') + HEAT.VENT_SHUTDOWN + t('gal.perSecCool')) +
 
-      galSec('PROPULSION / 推進') +
-      galRow('推進剤', PROP.MAX, '(戦闘中の補給なし)') +
-      galRow('回避バースト', PROP.BURST_COST + ' /回',
-             '(熱 +' + PROP.BURST_HEAT + ' ・ 約' + Math.floor(PROP.MAX / PROP.BURST_COST) + '回)') +
-      galRow('ドリフト', '機首と進行方向を分離', '(Shift長押し)') +
+      galSec(t('gal.sec.propulsion')) +
+      galRow(t('gal.propellant'), PROP.MAX, t('gal.noResupply')) +
+      galRow(t('gal.burst'), PROP.BURST_COST + t('gal.perUse'),
+             t('gal.heatPlus') + PROP.BURST_HEAT + t('gal.approxTimes') +
+             Math.floor(PROP.MAX / PROP.BURST_COST) + t('gal.times')) +
+      galRow(t('gal.drift'), t('gal.driftDesc'), t('gal.driftKey')) +
 
-      galSec('ARMAMENT / 主兵装') +
-      WEAPONS.map((w) => galRow(w.label + ' / ' + w.jp,
-        galAmmo(w.ammo) + ' 発',
-        '熱 +' + w.heat + (w.minPower ? ' ・ 要 武器電力 ' + w.minPower + '%' : ''))).join('') +
+      galSec(t('gal.sec.armament')) +
+      WEAPONS.map((w) => galRow(w.label, galAmmo(w.ammo) + t('gal.rounds'),
+        t('gal.heatPlus') + w.heat + (w.minPower ? t('gal.needPower') + w.minPower + '%' : ''))).join('') +
 
-      galSec('ORDNANCE / 投下兵装') +
-      BOMBS.map((b) => galRow(b.label + ' / ' + b.jp,
-        galAmmo(b.ammo) + ' 発',
-        '熱 +' + b.heat + (b.minPower ? ' ・ 要 武器電力 ' + b.minPower + '%' : ''))).join('') +
+      galSec(t('gal.sec.ordnance')) +
+      BOMBS.map((b) => galRow(b.label, galAmmo(b.ammo) + t('gal.rounds'),
+        t('gal.heatPlus') + b.heat + (b.minPower ? t('gal.needPower') + b.minPower + '%' : ''))).join('') +
 
-      galSec('COUNTERMEASURES / 対抗装備') +
-      galRow('フレア', FLARE.COUNT + ' 発',
-             '(投下から ' + FLARE.LIFE + '秒 燃焼)') +
+      galSec(t('gal.sec.counter')) +
+      galRow(t('gal.flare'), FLARE.COUNT + t('gal.rounds'),
+             t('gal.flareBurn') + FLARE.LIFE + t('gal.flareBurn2')) +
 
-      '<div class="gal-note">' +
-      '<b>熱は居場所である。</b>　排熱すると冷えるが、その熱は敵のセンサーとミサイルのシーカーに' +
-      'そのまま見えている。ラジエーターを開けば冷却は ' +
-      (HEAT.VENT_RADIATOR / HEAT.VENT_BASE).toFixed(1) + '倍になるが、被発見距離も伸び、' +
-      'フレアで騙せる確率も落ちる。冷やすか、隠れるか ― 同時には選べない。' +
-      '</div>',
+      '<div class="gal-note">' + t('gal.playerNote') +
+      (HEAT.VENT_RADIATOR / HEAT.VENT_BASE).toFixed(1) + t('gal.playerNote2') + '</div>',
   },
 ];
 
-// ===================================================================
-// 敵の3タイプを、ギャラリーの項目として作る
-//
-// 3つは表の中身が同じ形なので、1機ずつ手で書かず、AI_ARCHETYPES から
-// 組み立てる。数字を書き写さないので、AIを調整すれば資料も一緒に変わる。
-// ===================================================================
-const ARCH_NOTES = {
-  SOLDIER: '<b>撃ちすぎて、自分で止まる。</b>　この機体は熱の扱いが下手で、' +
-           '撃ち続けると自分の熱で強制冷却に入り、数秒のあいだ無防備になる。' +
-           '青白く沈黙した瞬間が、こちらの取り分。' +
-           '3タイプで唯一まともなミサイルを積んでいるのもこの機体で、' +
-           'ロックされたときにフレアを切るかどうかの読み合いは主にここで起きる。',
-  HOUND:   '<b>後ろを取りに来る。</b>　正面から来ず、脇から回り込んで' +
-           '自機の後方に貼りつく。一定時間で必ず抜けるが、すぐ戻ってくる。' +
-           '前を向いたままでは捉えられないので、後方ミラーと回避バーストで' +
-           '推進剤を削られる。撃ち合いではなく、位置の勝負を挑んでくる相手。',
-  SNIPER:  '<b>こちらの熱を見て撃つ。</b>　遠距離を保ち、詰めると下がりながら' +
-           '横へ逃げる。命中弾は重いが、撃つ前に青白い充填光が' +
-           '長く光る ― 見てから避けられる。' +
-           '熱を下げれば探知距離の外に出られ、この機体は撃つことすらできない。',
+const ARCH_NOTE_KEYS = {
+  SOLDIER: 'arch.soldier.note', HOUND: 'arch.hound.note', SNIPER: 'arch.sniper.note',
 };
 
 for (const key of Object.keys(AI_ARCHETYPES)) {
@@ -368,46 +317,47 @@ for (const key of Object.keys(AI_ARCHETYPES)) {
   CRAFT.push({
     key: key,
     name: A.LABEL,
-    cls: '企業連合軍 ― ' + A.JP,
+    clsKey: null,
+    cls: () => t('gal.enemyOf') + t('arch.' + key.toLowerCase()),
     build: () =>
-      galSec('PROFILE / 概要') +
-      galRow('出現比率', archWeightPercent(key) + ' %', '(撃墜されるたびに抽選)') +
-      galRow('HULL', A.MAX_HP) +
-      galRow('識別色', '#' + A.COLOR.BODY.toString(16).padStart(6, '0'),
-             '(遠くからでもタイプが分かる)') +
+      galSec(t('gal.sec.profile')) +
+      galRow(t('gal.spawnRate'), archWeightPercent(key) + ' %', t('gal.spawnNote')) +
+      galRow(t('gal.hull'), A.MAX_HP) +
+      galRow(t('gal.colour'), '#' + A.COLOR.BODY.toString(16).padStart(6, '0'), t('gal.colourNote')) +
 
-      galSec('ARMAMENT / 兵装') +
-      galRow('射撃間隔', A.FIRE.INTERVAL + ' 秒') +
-      galRow('発射予告', A.FIRE.TELEGRAPH + ' 秒', '(光ってから避ける余地)') +
-      galRow('弾速', A.BOLT.SPEED) +
-      galRow('1発の威力', '×' + A.BOLT.DAMAGE_MULT, '(自機のシールドを削る量の倍率)') +
-      galRow('弾道の散り', '×' + A.BOLT.SPREAD_MULT, '(小さいほど正確)') +
-      galRow('偏差の深さ', '×' + A.BOLT.LEAD_MULT, '(大きいほど置き撃ちしてくる)') +
-      galRow('ミサイル', A.MISSILE.AMMO + ' 発',
-             '(射程 ' + A.MISSILE.RANGE + ' ・ 間隔 ' + A.MISSILE.INTERVAL + '秒 ・ ' +
-             Math.round(A.MISSILE.BLUFF * 100) + '% はブラフ)') +
+      galSec(t('gal.sec.armament')) +
+      galRow(t('gal.fireInterval'), A.FIRE.INTERVAL + ' s') +
+      galRow(t('gal.telegraph'), A.FIRE.TELEGRAPH + ' s', t('gal.telegraphNote')) +
+      galRow(t('gal.boltSpeed'), A.BOLT.SPEED) +
+      galRow(t('gal.damage'), '×' + A.BOLT.DAMAGE_MULT, t('gal.damageNote')) +
+      galRow(t('gal.spread'), '×' + A.BOLT.SPREAD_MULT, t('gal.spreadNote')) +
+      galRow(t('gal.lead'), '×' + A.BOLT.LEAD_MULT, t('gal.leadNote')) +
+      galRow(t('gal.missile'), A.MISSILE.AMMO + t('gal.rounds'),
+             '(' + t('gal.range') + A.MISSILE.RANGE + t('gal.interval') + A.MISSILE.INTERVAL + 's · ' +
+             Math.round(A.MISSILE.BLUFF * 100) + t('gal.bluff')) +
 
-      galSec('THERMAL / 熱') +
-      galRow('熱容量', A.HEAT.MAX) +
-      galRow('1射の発熱', '+' + A.FIRE.HEAT) +
-      galRow('排熱', '−' + A.HEAT.VENT + ' /秒',
-             '(差引 ' + ((A.FIRE.HEAT - A.HEAT.VENT * A.FIRE.INTERVAL) >= 0 ? '+' : '') +
-             (A.FIRE.HEAT - A.HEAT.VENT * A.FIRE.INTERVAL).toFixed(1) + ' /射)') +
-      galRow('強制冷却', A.HEAT.SHUTDOWN_SEC + ' 秒', '(この間は無防備)') +
+      galSec(t('gal.sec.thermal')) +
+      galRow(t('gal.heatCap'), A.HEAT.MAX) +
+      galRow(t('gal.heatPerShot'), '+' + A.FIRE.HEAT) +
+      galRow(t('gal.vent'), '−' + A.HEAT.VENT + ' /s',
+             t('gal.net') + ((A.FIRE.HEAT - A.HEAT.VENT * A.FIRE.INTERVAL) >= 0 ? '+' : '') +
+             (A.FIRE.HEAT - A.HEAT.VENT * A.FIRE.INTERVAL).toFixed(1) + t('gal.perShot')) +
+      galRow(t('gal.shutdown'), A.HEAT.SHUTDOWN_SEC + t('gal.forcedFor'), t('gal.defenceless')) +
 
-      galSec('BEHAVIOUR / 機動') +
-      galRow('接近 / 交戦 / 回避',
-             A.SPEED.APPROACH + ' / ' + A.SPEED.ATTACK + ' / ' + A.SPEED.EVADE) +
-      galRow('旋回性能', A.TURN_RATE + ' rad/秒') +
-      galRow('交戦距離', A.RANGE.ATTACK, '(' + A.RANGE.TOO_CLOSE + ' より近いと下がる)') +
-      galRow('蛇行', '振幅 ' + A.WANDER.AMP + ' / 周期 ' + A.WANDER.RATE,
-             '(軌道を読ませないための揺らぎ)') +
+      galSec(t('gal.sec.behaviour')) +
+      galRow(t('gal.speeds'), A.SPEED.APPROACH + ' / ' + A.SPEED.ATTACK + ' / ' + A.SPEED.EVADE) +
+      galRow(t('gal.turnRate'), A.TURN_RATE + ' rad/s') +
+      galRow(t('gal.engageRange'), A.RANGE.ATTACK,
+             t('gal.closerThan') + A.RANGE.TOO_CLOSE + t('gal.backsOff')) +
+      galRow(t('gal.wander'), t('gal.amp') + A.WANDER.AMP + t('gal.rate') + A.WANDER.RATE,
+             t('gal.wanderNote')) +
       (A.DIVE
-        ? galRow('一撃離脱', A.DIVE.RUN_SEC + '秒 噛みつき → ' + A.DIVE.EXTEND_SEC + '秒 離脱',
-                 '(自機の後方 ' + A.DIVE.REAR_OFFSET + ' を狙う)')
+        ? galRow(t('gal.diveRun'),
+                 A.DIVE.RUN_SEC + t('gal.diveBite') + A.DIVE.EXTEND_SEC + t('gal.diveBreak'),
+                 t('gal.diveRear') + A.DIVE.REAR_OFFSET + t('gal.diveRear2'))
         : '') +
 
-      '<div class="gal-note">' + ARCH_NOTES[key] + '</div>',
+      '<div class="gal-note">' + t(ARCH_NOTE_KEYS[key]) + '</div>',
   });
 }
 
@@ -442,7 +392,7 @@ function buildGallery() {
   galIndexEl.textContent =
     String(galleryIndex + 1).padStart(2, '0') + ' / ' + String(CRAFT.length).padStart(2, '0');
   galNameEl.textContent  = c.name;
-  galClassEl.textContent = c.cls;
+  galClassEl.textContent = c.clsKey ? t(c.clsKey) : c.cls();
   galBodyEl.innerHTML    = c.build();
   galBodyEl.scrollTop    = 0;   // 機体を変えたら資料も先頭に戻す
 }
@@ -510,6 +460,17 @@ window.addEventListener('keydown', (event) => {
   if (k === 'Enter' || k === ' ')                   { event.preventDefault(); confirmMenu(); return; }
   if (k === 'Escape')                               { event.preventDefault(); backMenu(); return; }
 });
+
+// ===================================================================
+// 言語が変わったときに呼ばれる(lang.js から)
+//
+// HTMLに書いてある文字は lang.js が直してくれるが、
+// ここで組み立てている画面は作り直さないと古い言語のまま残る。
+// ===================================================================
+function onLanguageChanged() {
+  if (screenState === 'menu' || screenState === 'paused') buildMenu();
+  if (screenState === 'gallery') buildGallery();
+}
 
 // --- 起動 -----------------------------------------------------------
 menuBuildEl.textContent = BUILD;

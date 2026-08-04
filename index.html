@@ -1456,6 +1456,8 @@
     /* キャラの子にはしない。子にすると左向きのときの水平反転(scaleX(-1))を
        一緒に受けて、文字が鏡文字になる。
        別の層に置いて、位置だけ毎コマ合わせる。 */
+    html[lang="en"] .gauge-label .en { display: none; }
+
     .story-plate {
       position: absolute;
       transform: translateX(-50%);
@@ -1629,53 +1631,9 @@
 
     <!-- 操作説明。ふだんは隠しておき、Tab を押している間だけ画面上部に出す -->
     <div class="help" id="help">
-      <div class="help-grid">
-        <b>操縦</b>
-        <div>
-          <span class="help-key">S</span> 機首上げ &nbsp; <span class="help-key">W</span> 機首下げ &nbsp;
-          <span class="help-key">A / D</span> 左右へヨー &nbsp;
-          <span class="help-key">Q / E</span> スナップロール &nbsp;
-          <span class="help-key">Shift</span> ドリフト<span class="help-note">(長押し・機首と進行方向を切り離す)</span>
-        </div>
-
-        <b>射撃</b>
-        <div>
-          <span class="help-key">F</span> または <span class="help-key">P</span> 発射<span class="help-note">(右手用。機関砲は押しっぱなしで連射)</span> &nbsp;
-          <span class="help-key">R</span> 主兵装切替<span class="help-note">(ビーム / 機関砲 / ミサイル)</span>
-        </div>
-
-        <b>投下</b>
-        <div>
-          <span class="help-key">B</span> 投下 &nbsp; <span class="help-key">N</span> BOMBS切替<span class="help-note">(パイロ / ボム / EMP)</span> &nbsp;
-          <span class="help-key">C</span> フレア<span class="help-note">(ミサイルの熱を騙す。熱いほど効きにくい)</span>
-        </div>
-
-        <b>機動</b>
-        <div>
-          <span class="help-key">Space</span> 回避バースト<span class="help-note">(推進剤を焚いて真横へ跳ぶ)</span> &nbsp;
-          <span class="help-key">Z</span> AUTO TRACK 入切<span class="help-note">(照準の自動追尾)</span>
-        </div>
-
-        <b>電力配分</b>
-        <div>
-          <span class="help-key">↑</span>武器 <span class="help-key">←</span>シールド <span class="help-key">→</span>エンジン <span class="help-key">↓</span>センサー<span class="help-note">(押すたび +10%。他から均等に奪う)</span> &nbsp;
-          <span class="help-key">1</span> 攻撃 <span class="help-key">2</span> 防御 <span class="help-key">3</span> 巡航<span class="help-note">(プリセット)</span>
-        </div>
-
-        <b>熱管理</b>
-        <div>
-          <span class="help-key">V</span> ラジエーター<span class="help-note">(展開 → 収納 → AUTO の順に切替。展開すると冷えるが敵に見つかりやすい)</span>
-        </div>
-
-        <b>その他</b>
-        <div>
-          <span class="help-key">X</span> 視点切替<span class="help-note">(三人称 ⇄ コックピット)</span> &nbsp;
-          <span class="help-key">Tab</span> この説明 &nbsp;
-          <span class="help-key">Enter</span> 再出撃<span class="help-note">(ミッション終了後)</span> &nbsp;
-          <span class="help-key">Esc</span> 一時停止<span class="help-note">(戦闘に戻る / 任務中断)</span>
-        </div>
+      <div class="help-grid" data-i18n-html="help.grid"></div>
       </div>
-      <span class="help-hint">Tab で開閉</span>
+      <span class="help-hint" data-i18n="hud.helpToggle">Tab で開閉</span>
     </div>
 
     <!-- 後方確認ミラーの枠。中身(後方の景色)は scene.js が3Dで描く。
@@ -1711,7 +1669,7 @@
       <div class="wp-name" id="wp-name">BEAM</div>
       <div class="wp-jp" id="wp-jp">ビーム砲</div>
       <div class="wp-ammo"><b id="wp-ammo">∞</b></div>
-      <div class="wp-sub">熱 <span id="wp-heat">+3×3</span> &nbsp; R 切替</div>
+      <div class="wp-sub"><span data-i18n="hud.heat">熱</span> <span id="wp-heat">+3×3</span> &nbsp; R <span data-i18n="hud.switch">切替</span></div>
       <!-- 投下兵装 BOMBS(パイロ/ボム/EMP)。B=投下 / N=切替 -->
       <div class="wp-flare" id="wp-bomb-row">BOMBS <span id="wp-bomb-name">PYRO</span> <b id="wp-bomb-ammo">24</b> &nbsp; B/N</div>
       <div class="wp-flare" id="wp-flare-row">FLARE <b id="wp-flare">48</b> &nbsp; C</div>
@@ -1737,7 +1695,7 @@
           <div class="gauge-key">V</div>
           <div class="gauge-tube"><div class="gauge-bar" id="heat-bar"></div></div>
           <div class="gauge-value"><span class="num" id="heat-num">0</span><span class="unit">%</span></div>
-          <div class="gauge-label">熱<br><span class="en">HEAT</span></div>
+          <div class="gauge-label"><span data-i18n="hud.heat">熱</span><br><span class="en">HEAT</span></div>
           <div class="rad open" id="rad">RAD OPEN</div>
         </div>
       </div>
@@ -1750,14 +1708,14 @@
           <div class="gauge-key">Space</div>
           <div class="gauge-tube"><div class="gauge-bar" id="prop-bar"></div></div>
           <div class="gauge-value" id="prop-value"><span class="num" id="prop-num">100</span><span class="unit">%</span></div>
-          <div class="gauge-label">推進剤<br><span class="en">PROPELLANT</span></div>
+          <div class="gauge-label"><span data-i18n="hud.propellant">推進剤</span><br><span class="en">PROPELLANT</span></div>
           <div class="sub-label">BURST −8</div>
         </div>
         <div class="gauge" data-system="shieldhp">
           <div class="gauge-key">&nbsp;</div>
           <div class="gauge-tube"><div class="gauge-bar" id="shield-bar"></div></div>
           <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
-          <div class="gauge-label">シールド<br><span class="en">SHIELD HP</span></div>
+          <div class="gauge-label"><span data-i18n="hud.shield">シールド</span><br><span class="en">SHIELD HP</span></div>
           <div class="sub-label" id="shield-regen">+0.0/s</div>
         </div>
       </div>
@@ -1770,25 +1728,25 @@
           <div class="gauge-key">↑</div>
           <div class="gauge-tube"><div class="gauge-bar"></div></div>
           <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-          <div class="gauge-label">武器<br><span class="en">WEAPON</span></div>
+          <div class="gauge-label"><span data-i18n="hud.weapon">武器</span><br><span class="en">WEAPON</span></div>
         </div>
         <div class="gauge" data-system="shield">
           <div class="gauge-key">←</div>
           <div class="gauge-tube"><div class="gauge-bar"></div></div>
           <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-          <div class="gauge-label">シールド<br><span class="en">SHIELD</span></div>
+          <div class="gauge-label"><span data-i18n="hud.shield">シールド</span><br><span class="en">SHIELD</span></div>
         </div>
         <div class="gauge" data-system="engine">
           <div class="gauge-key">→</div>
           <div class="gauge-tube"><div class="gauge-bar"></div></div>
           <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-          <div class="gauge-label">エンジン<br><span class="en">ENGINE</span></div>
+          <div class="gauge-label"><span data-i18n="hud.engine">エンジン</span><br><span class="en">ENGINE</span></div>
         </div>
         <div class="gauge" data-system="sensor">
           <div class="gauge-key">↓</div>
           <div class="gauge-tube"><div class="gauge-bar"></div></div>
           <div class="gauge-value"><span class="num">25</span><span class="unit">%</span></div>
-          <div class="gauge-label">センサー<br><span class="en">SENSOR</span></div>
+          <div class="gauge-label"><span data-i18n="hud.sensor">センサー</span><br><span class="en">SENSOR</span></div>
         </div>
       </div>
 
@@ -1805,7 +1763,7 @@
         <div id="emp-badge" class="emp-badge">EMP <b>0.0</b>s</div>
         <div>A-TRK <b id="auto-track">ON</b></div>
         <!-- 操作説明の出し方だけは常に見えるようにしておく -->
-        <div style="color:#35474f">TAB 操作説明</div>
+        <div style="color:#35474f">TAB <span data-i18n="hud.help">操作説明</span></div>
       </div>
 
     </div>
@@ -1852,14 +1810,14 @@
       <div class="result-rows">
         <div>撃墜 <b id="r-kills">0</b> / <span id="r-goal">10</span></div>
         <div>被弾 <b id="r-hits">0</b></div>
-        <div>残り時間 <b id="r-time">00:00</b></div>
+        <div><span data-i18n="hud.timeLeft">残り時間</span> <b id="r-time">00:00</b></div>
       </div>
-      <div class="result-hint">Enter 再出撃　/　Esc メニューへ戻る</div>
+      <div class="result-hint" data-i18n="hud.resultHint">Enter 再出撃　/　Esc メニューへ戻る</div>
     </div>
 
     <div class="shutdown-overlay">
       <div class="big">⚠ SYSTEM SHUTDOWN</div>
-      <div class="sub">強制冷却中 ― 操作不能 <span id="shutdown-timer">0.0</span>s</div>
+      <div class="sub"><span data-i18n="hud.shutdownMsg">強制冷却中 ― 操作不能</span> <span id="shutdown-timer">0.0</span>s</div>
     </div>
 
   </div>
@@ -1870,17 +1828,13 @@
        ================================================================ -->
   <div class="menu" id="menu">
     <div class="menu-title">STEEL CRADLE</div>
-    <div class="menu-sub">―鋼の揺り籠―</div>
+    <div class="menu-sub" data-i18n="menu.subtitle">―鋼の揺り籠―</div>
     <div class="menu-rule"></div>
 
     <div class="menu-list" id="menu-list"></div>
     <div class="menu-detail" id="menu-detail"></div>
 
-    <div class="menu-hint">
-      <span>W / S</span> または <span>↑ ↓</span> で選択
-      <span>Enter</span> で決定
-      <span>Esc</span> で戻る
-    </div>
+    <div class="menu-hint" data-i18n-html="menu.hint"></div>
     <div class="menu-build" id="menu-build"></div>
   </div>
 
@@ -1891,9 +1845,7 @@
     <div class="gal-class" id="gal-class"></div>
     <div class="gal-rule"></div>
     <div class="gal-body"  id="gal-body"></div>
-    <div class="gal-hint">
-      <span>W / S</span> または <span>↑ ↓</span> で機体切替　<span>Esc</span> で戻る
-    </div>
+    <div class="gal-hint" data-i18n-html="gal.hint"></div>
   </div>
 
   <!-- ストーリー(サイドビューADVパート)。中身は story.js が組み立てる -->
@@ -1918,6 +1870,9 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
 
   <!-- 音(Web Audio API で合成。素材ファイルは使わない) -->
+  <!-- 言語の表。いちばん最初に読む -->
+  <script src="src/lang.js"></script>
+
   <script src="src/audio.js"></script>
   <script src="src/console3d.js"></script>
 
