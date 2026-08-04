@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-63 long-range missile / radiator';
+const BUILD = 'p1-64 main menu';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -417,6 +417,11 @@ let hitsTaken     = 0;       // 被弾した回数(リザルト用)
 //   'complete' … 勝利(規定数を撃墜した)
 //   'failed'   … 敗北(HULL損傷が限界)
 //   'timeup'   … 敗北(時間切れ)
+// いま見せている画面。切り替えるのは screens.js の役目で、
+// ここでは「戦闘の計算を回してよいか」を判断するために持っている。
+//   'menu' … タイトル画面 / 'mission' … 戦闘中 / 'paused' … 一時停止
+let screenState   = 'menu';
+
 let missionState  = 'active';
 let missionTime   = MISSION.DURATION;   // 残り秒数
 
@@ -825,6 +830,10 @@ const KEY_TO_SYSTEM = {
 
 // addEventListener = 「キーが押されたら、この関数を呼んでくれ」という予約
 window.addEventListener('keydown', (event) => {
+  // メニュー中・一時停止中は、操縦系のキーをいっさい受け付けない。
+  // メニューの上下移動と決定は screens.js が別に引き受けている。
+  if (screenState !== 'mission') return;
+
   keysHeld.add(event.key.toLowerCase());   // 押しっぱなし判定用に記録
   resumeAudio();   // ブラウザの規則で、最初のキー入力があるまで音は鳴らせない
 
@@ -2166,6 +2175,28 @@ function tick(now) {
   lastTime = now;
 
   elapsed += dt;
+
+  // --- タイトル画面:自機をゆっくり漂わせるだけ。時間も戦闘も進まない ---
+  if (screenState === 'menu') {
+    updateMenuBackdrop(dt);   // screens.js:ゆるい旋回と巡航
+    updateScene(dt, elapsed);
+    requestAnimationFrame(tick);
+    return;
+  }
+
+  // --- ギャラリー:機体を1機だけ置いて、ゆっくり回して見せる ---
+  if (screenState === 'gallery') {
+    updateGalleryView(dt, CRAFT[galleryIndex].key);   // scene.js が描画まで行う
+    requestAnimationFrame(tick);
+    return;
+  }
+
+  // --- 一時停止:景色をそのまま止めて置く(背景も動かさない)---
+  if (screenState === 'paused') {
+    updateScene(dt, elapsed);
+    requestAnimationFrame(tick);
+    return;
+  }
 
   if (missionState !== 'active') {
     // --- リザルト表示中:操作も戦闘も止める。R キー待ち ---

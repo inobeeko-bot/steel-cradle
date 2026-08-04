@@ -1898,6 +1898,91 @@ function setCombatFrozen(on) {
 }
 
 // ===================================================================
+// 敵機をまとめて隠す/戻す(メインメニューの背景用)
+//
+// メニュー中は combatFrozen で敵AIを止めているが、止めただけだと
+// 敵機が宇宙に静止したまま映り込んで「壊れている」ように見える。
+// タイトル画面では自機と星空だけにしたいので、丸ごと隠せるようにする。
+// alive の状態そのものは触らない ― 出撃時にそのまま戦闘へ戻せるように。
+// ===================================================================
+// ===================================================================
+// ギャラリー(機体プロファイル閲覧)の描画
+//
+// 戦闘用のカメラ制御をいっさい使わず、ここだけで完結させている。
+// やっていることは3つだけ:
+//   1. 見せたい機体を原点に置いて、ゆっくり回す
+//   2. カメラを斜め上から一定距離に固定する
+//   3. 見ていないほうの機体は隠す
+//
+// カメラの注視点を機体より左にずらしてあるのは、画面左に説明文を置くため。
+// 左を見る = 機体は画面の右側に映る、という関係になる。
+// ===================================================================
+let galleryAngle = 0;         // 機体をどれだけ回したか(ラジアン)
+const GALLERY = {
+  SPIN: 0.42,      // 回る速さ(ラジアン/秒)。速いと形が読み取れない
+  DIST: 15.0,      // カメラまでの距離
+  ENEMY_DIST: 1.3, // 敵機は一回り大きい(ENEMY.SCALE)ので、その分だけ引く
+  HEIGHT: 4.6,     // カメラの高さ。少し上から見ると立体感が出る
+  FOV: 40,         // 視野角。狭いほど望遠レンズ的で歪みが少ない
+  LOOK_X: -4.2,    // 注視点を左へずらす量(= 機体が画面右に寄る)
+};
+
+function updateGalleryView(dt, which) {
+  if (!sceneReady) return;
+
+  galleryAngle += dt * GALLERY.SPIN;
+
+  // --- 見せる機体を決めて、もう一方を隠す ---
+  const showEnemy = (which === 'enemy');
+  playerShip.visible = !showEnemy;
+  if (playerModel) playerModel.visible = !showEnemy;   // 三人称用の外見モデル
+  enemies.forEach((e, i) => { e.group.visible = showEnemy && i === 0; });
+
+  // --- 機体は「真上を軸に回す」だけにする ---
+  // ここで前傾(X軸)も一緒に掛けると、回転の順番の都合で
+  // 横を向いた瞬間に前傾がロール(横倒し)に化けてしまう。
+  // 上から見下ろす角度はカメラの高さで作る。
+  const obj = showEnemy ? enemies[0].group : playerShip;
+  obj.position.set(0, 0, 0);
+  obj.rotation.set(0, galleryAngle, 0);
+  if (playerModel) playerModel.rotation.z = 0;   // 戦闘中のロール傾きを戻す
+
+  // --- カメラを固定位置に置いて、機体の左側を見る ---
+  const dist = GALLERY.DIST * (showEnemy ? GALLERY.ENEMY_DIST : 1);
+  camera.position.set(0, GALLERY.HEIGHT, dist);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(GALLERY.LOOK_X, 0, 0);
+  if (Math.abs(camera.fov - GALLERY.FOV) > 0.01) {
+    camera.fov = GALLERY.FOV;
+    camera.updateProjectionMatrix();
+  }
+
+  // 星空は自機について来る作りなので、原点へ寄せておく
+  stars.position.set(0, 0, 0);
+
+  renderer.render(scene, camera);
+}
+
+// ギャラリーを抜けるとき、いじった状態を戦闘用に戻す
+function exitGalleryView() {
+  if (!sceneReady) return;
+  galleryAngle = 0;
+  playerShip.visible = true;
+  playerShip.rotation.set(0, 0, 0);
+  camera.fov = FEEL.FOV_BASE;
+  camera.updateProjectionMatrix();
+  enemies.forEach((e) => { e.group.rotation.set(0, 0, 0); });
+}
+
+function setEnemiesHidden(on) {
+  if (!sceneReady) return;
+  for (const e of enemies) {
+    // 隠すときは無条件に消す。戻すときは「生きている敵だけ」出す
+    e.group.visible = on ? false : e.alive;
+  }
+}
+
+// ===================================================================
 // 再出撃:自機と敵を初期状態に戻す
 // ===================================================================
 function resetFlight() {
