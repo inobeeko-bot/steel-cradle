@@ -107,6 +107,11 @@ const ADV_CONFIG = {
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
   TYPE_SPEED:   45,    // 1秒に何文字出すか
 
+  // --- 開発用 ---
+  // true にすると、調べられるものの判定範囲を四角で表示する。
+  // 通常は false。遊んでいる最中は F3 で切り替えられる。
+  DEBUG_SHOW_HITBOXES: false,
+
   // --- 会話ウィンドウ ---
   // 背景のドット絵が明るいので、枠が透けると文字が読めない。
   // 不透明度はここで調整する。
@@ -327,6 +332,9 @@ let storyNpcEl    = null;
 let storyExitEl   = null;
 let storyMarkEl   = null;
 let storyLadderEl = null;
+let storyPlateLayerEl = null;   // 名前板を置く層(キャラの変換を受けない)
+let storyPlates   = null;       // { el, at() } の配列。at() が位置を返す
+let storyHitboxEls = null;      // 開発用の判定表示
 
 let storyHintShown = null;
 
@@ -338,6 +346,7 @@ let storyWalking   = false;
 // NPCの作業アニメの状態
 let storyWorkTime  = 0;
 let storyWorkFrame = 0;
+let storyNpcTopY   = 0;   // 名前板を出す高さ(そのコマでのNPCの頭の位置)
 
 // ===================================================================
 // 拡大率を決めて、舞台の大きさを合わせる
@@ -395,6 +404,53 @@ function storyGroundY(x) {
     }
   }
   return line[line.length - 1][1];
+}
+
+// ===================================================================
+// 頭上の名前板(全キャラ共通)
+//
+// キャラの要素の子にすると、左を向いたときの水平反転(scaleX(-1))を
+// 一緒に受けて文字が鏡文字になる。
+// そこで名前板は別の層に置き、キャラの位置だけを毎コマ写して、
+// 文字自体はいつも正立で描く。
+//
+// at() は「いまその人物がどこにいるか」を返す関数。
+// キャラが動いても増えても、この仕組みひとつで足りる。
+// ===================================================================
+function addNamePlate(text, at) {
+  if (!text) return;
+  const el = document.createElement('div');
+  el.className = 'story-plate';
+  el.textContent = text;
+  storyPlateLayerEl.appendChild(el);
+  storyPlates.push({ el: el, at: at });
+}
+
+function updateNamePlates(S) {
+  for (const p of storyPlates) {
+    const pos = p.at();
+    if (!pos) { p.el.style.display = 'none'; continue; }
+    p.el.style.display = '';
+    p.el.style.left = Math.round((pos.x - storyCamX) * S) + 'px';
+    p.el.style.top  = Math.round((pos.topY - 12) * S) + 'px';
+  }
+}
+
+// ===================================================================
+// 開発用:調べられるものの判定範囲を四角で描く
+// ===================================================================
+function renderStoryHitboxes(S) {
+  const on = ADV_CONFIG.DEBUG_SHOW_HITBOXES;
+  for (const h of storyHitboxEls) {
+    h.el.style.display = on ? '' : 'none';
+    if (!on) continue;
+    const R = ADV_CONFIG.REACH;
+    const gy = storyGroundY(h.x);
+    h.el.style.left   = Math.round((h.x - R - storyCamX) * S) + 'px';
+    h.el.style.width  = (R * 2 * S) + 'px';
+    h.el.style.top    = Math.round((gy - 54) * S) + 'px';
+    h.el.style.height = (54 * S) + 'px';
+  }
 }
 
 // ===================================================================
@@ -487,7 +543,6 @@ function buildStoryScene(scene) {
   storyNpcEl = document.createElement('div');
   storyNpcEl.className = 'story-actor npc' + ((n.sprite || n.work) ? ' sprite' : '');
   if (!n.sprite && !n.work) storyNpcEl.style.background = n.color;
-  storyNpcEl.innerHTML = '<span>' + n.label + '</span>';
   storyWorldEl.appendChild(storyNpcEl);
   storyWorkTime  = 0;
   storyWorkFrame = 0;
@@ -514,6 +569,33 @@ function buildStoryScene(scene) {
   storyMarkEl.className = 'story-mark';
   storyMarkEl.textContent = '▲';
   storyWorldEl.appendChild(storyMarkEl);
+
+  // --- 開発用の判定表示 ---
+  storyHitboxEls = [];
+  for (const p of scene.props) {
+    const el = document.createElement('div');
+    el.className = 'story-hitbox';
+    el.innerHTML = '<span>' + p.label + '</span>';
+    el.style.display = 'none';
+    storyWorldEl.appendChild(el);
+    storyHitboxEls.push({ el: el, x: p.x });
+  }
+  {
+    const el = document.createElement('div');
+    el.className = 'story-hitbox';
+    el.innerHTML = '<span>' + n.label + '</span>';
+    el.style.display = 'none';
+    storyWorldEl.appendChild(el);
+    storyHitboxEls.push({ el: el, x: n.x });
+  }
+
+  // --- 名前板の層。キャラより手前、かつキャラの変換を受けない場所に置く ---
+  storyPlateLayerEl = document.createElement('div');
+  storyPlateLayerEl.className = 'story-plate-layer';
+  storyWorldEl.appendChild(storyPlateLayerEl);
+  storyPlates = [];
+  // 祖父。いる高さは描画のたびに変わるので、そのつど取りに行く
+  addNamePlate(n.label, () => ({ x: n.x, topY: storyNpcTopY }));
 
   storyHintEl.textContent = scene.place + '　/　' + scene.title;
   storyBoxEl.style.setProperty('--box-opacity', String(ADV_CONFIG.BOX_OPACITY));
@@ -715,6 +797,8 @@ function updateStory(dt) {
   const SPW = ADV_CONFIG.SPRITE.FRAME_W, SPH = ADV_CONFIG.SPRITE.FRAME_H;
   placeStoryActor(storyActorEl, storyX, SPW, SPH);
   renderStoryNpc(storyScene.npc, dt, S);
+  updateNamePlates(S);
+  renderStoryHitboxes(S);
 
   // --- 出口の目印 ---
   storyExitEl.style.left   = Math.round((storyScene.exit.x - storyCamX) * S) + 'px';
@@ -789,6 +873,7 @@ function renderStoryNpc(n, dt, S) {
       storyWorkFrame = (storyWorkFrame + 1) % n.work.frames;
     }
     placeStoryActor(storyNpcEl, n.x, n.work.w, n.work.h, n.liftY);
+    storyNpcTopY = storyGroundY(n.x) - (n.liftY || 0) - n.work.h;
     storyNpcEl.style.backgroundImage = 'url(' + n.work.src + ')';
     storyNpcEl.style.backgroundSize =
       (n.work.w * n.work.frames * S) + 'px ' + (n.work.h * S) + 'px';
@@ -798,6 +883,7 @@ function renderStoryNpc(n, dt, S) {
     // --- 会話中(手を止めてこちらを向いている)---
     const W = ADV_CONFIG.SPRITE.FRAME_W, H = ADV_CONFIG.SPRITE.FRAME_H;
     placeStoryActor(storyNpcEl, n.x, W, H, n.liftY);
+    storyNpcTopY = storyGroundY(n.x) - (n.liftY || 0) - H;
     storyNpcEl.style.backgroundImage = 'url(' + n.sprite + ')';
     storyNpcEl.style.backgroundSize =
       (W * ADV_CONFIG.WALK_FRAME_COUNT * S) + 'px ' + (H * S) + 'px';
@@ -805,6 +891,7 @@ function renderStoryNpc(n, dt, S) {
 
   } else {
     placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
+    storyNpcTopY = storyGroundY(n.x) - charHeight(n.scale);
   }
 }
 
@@ -853,6 +940,14 @@ window.addEventListener('keydown', (event) => {
   resumeAudio();
 
   if (event.key === 'Escape') { event.preventDefault(); exitStory(); return; }
+
+  // F3 … 開発用。判定範囲の表示を切り替える
+  if (event.key === 'F3') {
+    event.preventDefault();
+    ADV_CONFIG.DEBUG_SHOW_HITBOXES = !ADV_CONFIG.DEBUG_SHOW_HITBOXES;
+    console.log('当たり判定の表示: ' + (ADV_CONFIG.DEBUG_SHOW_HITBOXES ? 'ON' : 'OFF'));
+    return;
+  }
 
   if (event.key === 'Enter' || k === 'e' || event.key === ' ') {
     event.preventDefault();

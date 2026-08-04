@@ -1447,14 +1447,36 @@
       image-rendering: crisp-edges;
       image-rendering: pixelated;
     }
-    /* スプライトになったので、矩形時代の塗りと影は付けない */
-    .story-actor.kaito { background-color: transparent; box-shadow: none; }
-    .story-actor.npc { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
-    .story-actor span {
-      position: absolute; left: -40px; right: -40px; top: -15px;
-      text-align: center; font-size: 9px; letter-spacing: 0.14em;
+    /* スプライトになったので、矩形時代の塗りと枠線は付けない。
+       この枠線が「当たり判定の四角が出ている」ように見えていた */
+    .story-actor.kaito,
+    .story-actor.npc { background-color: transparent; box-shadow: none; }
+
+    /* --- 頭上の名前板 --- */
+    /* キャラの子にはしない。子にすると左向きのときの水平反転(scaleX(-1))を
+       一緒に受けて、文字が鏡文字になる。
+       別の層に置いて、位置だけ毎コマ合わせる。 */
+    .story-plate {
+      position: absolute;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      font-size: 9px; letter-spacing: 0.14em;
       color: rgba(255, 240, 220, 0.85);
-      text-shadow: 0 1px 2px #000;
+      text-shadow: 0 1px 2px #000, 0 0 4px #000;
+      pointer-events: none;
+    }
+
+    /* --- 開発用:当たり判定の可視化 --- */
+    /* ADV_CONFIG.DEBUG_SHOW_HITBOXES が true のときだけ出す */
+    .story-hitbox {
+      position: absolute;
+      border: 1px solid rgba(120, 255, 180, 0.65);
+      background: rgba(120, 255, 180, 0.10);
+      pointer-events: none;
+    }
+    .story-hitbox span {
+      position: absolute; left: 0; right: 0; top: -13px;
+      text-align: center; font-size: 8px; color: rgba(150, 255, 200, 0.9);
     }
     /* 左へ歩くときの水平反転。左向きの素材は用意せず、これで賄う */
     .story-actor.flip { transform: scaleX(-1); }
