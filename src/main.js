@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-58 track toggle';
+const BUILD = 'p1-60 rad auto v3';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -285,21 +285,83 @@ let radiatorOpen = true;    // ラジエーターを展開しているか(出撃
 // ===================================================================
 let radiatorMode = 'open';
 const RADIATOR_AUTO = {
-  OPEN_AT:   60,
-  CLOSE_AT:  28,
-  CRITICAL:  85,
+  // 目標にする上限。シャットダウン(100)ではなく、ここを守りに行く。
+  // 100を基準にすると「あと少しで焼ける」まで動かないので、
+  // 気づくと常に高温で、撃ちたいときの余裕が残っていない。
+  // 65を天井にしておけば、いつでも一撃ぶんの余白がある。
+  CEILING:    65,
+  // 「閉じたままだと、あと何秒で天井に届くか」がこれを下回ったら開く。
+  // 熱の“今の値”ではなく“この先どうなるか”で決めるのが要点。
+  // 短めにしてあるのは、展開している時間そのものが危険だから ―
+  // 早めに開くほど熱は低く保てるが、そのぶんずっと見つかっている。
+  // 「ぎりぎりまで閉じ、必要なぶんだけ開く」に寄せてある。
+  LOOKAHEAD:   4.0,
+  // 安全と見なせるまでの余裕(開いた直後にすぐ閉じ直さないため)
+  SAFE_AHEAD:  6.0,
+  CLOSE_AT:   45,   // これを下回っていて、かつ当面上がらないなら閉じる
+  CRITICAL:   70,   // ここを超えたら、隠れるより冷やすほうが先
+
+  // 一度動かしたら、最低この秒数は動かさない。
+  // これが無いと、敵のロックが点いたり消えたりするたびに開閉して
+  // 毎秒のようにパタパタする ― 見ていて壊れているようにしか思えない。
+  MIN_HOLD:  2.5,
+  // ロックされたときに隠れるのは、熱に余裕があるときだけ。
+  // 熱いのに閉じても、すぐ開け直すことになって意味がない。
+  HIDE_BELOW: 45,
 };
 
-function updateRadiatorAuto() {
+let radiatorHold = 0;   // 次に開閉してよくなるまでの残り秒
+
+// ラジエーターの開閉を変えたときの熱収支(毎秒)。
+// 「今このまま閉じていたらどうなるか」を先に計算するために使う。
+function heatRateIfRadiator(open) {
+  const gain = power.weapon * HEAT.PER_WEAPON
+             + (isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE);
+  const vent = HEAT.VENT_BASE * (driftInput ? HEAT.DRIFT_VENT_MULT : 1)
+             + (open ? HEAT.VENT_RADIATOR : 0);
+  return gain - vent;
+}
+
+// 閉じたままなら、あと何秒で天井(CEILING)に届くか。
+// 冷えていく、またはもう超えているなら 0 / Infinity を返す。
+function secondsToCeilingClosed() {
+  const rate = heatRateIfRadiator(false);
+  if (rate <= 0.01) return Infinity;          // 閉じていても冷える
+  const room = RADIATOR_AUTO.CEILING - heat;
+  return room <= 0 ? 0 : room / rate;
+}
+
+function updateRadiatorAuto(dt) {
   if (radiatorMode !== 'auto') { radiatorOpen = (radiatorMode === 'open'); return; }
 
-  const locked = (threatStatus().level !== 'CLEAR' && threatStatus().level !== 'TRACK');
+  if (radiatorHold > 0) radiatorHold -= (dt || 0);
 
-  if (heat >= RADIATOR_AUTO.CRITICAL)      radiatorOpen = true;   // 焼けるほうが困る
-  else if (locked)                          radiatorOpen = false;  // 今は隠れる
-  else if (heat >= RADIATOR_AUTO.OPEN_AT)   radiatorOpen = true;
-  else if (heat <= RADIATOR_AUTO.CLOSE_AT)  radiatorOpen = false;
-  // その間は今の状態を保つ(境目で開閉を繰り返さないため)
+  const ahead = secondsToCeilingClosed();
+  const lvl = threatStatus().level;
+  const locked = (lvl === 'LOCK' || lvl === 'MISSILE');
+
+  // 「こうしたい」をまず決める
+  let want = radiatorOpen;
+  if (heat >= RADIATOR_AUTO.CRITICAL) {
+    want = true;                          // 焼けるほうが困る。ロック中でも開く
+  } else if (ahead < RADIATOR_AUTO.LOOKAHEAD) {
+    // このまま閉じていると天井に届く。ロックされていても開ける ―
+    // 見つかるより、動けなくなるほうが重い。
+    want = true;
+  } else if (locked && heat < RADIATOR_AUTO.HIDE_BELOW) {
+    want = false;                         // 熱に余裕がある今だけ隠れる
+  } else if (heat <= RADIATOR_AUTO.CLOSE_AT && ahead > RADIATOR_AUTO.SAFE_AHEAD) {
+    want = false;                         // 冷えていて、当面上がる心配もない
+  }
+
+  // 実際に動かすのは、前回から MIN_HOLD 秒あいてから。
+  // ただし焼けそうなときだけは待たずに開ける。
+  if (want === radiatorOpen) return;
+  const urgent = (heat >= RADIATOR_AUTO.CRITICAL) || (want && ahead < 3.0);
+  if (!urgent && radiatorHold > 0) return;
+
+  radiatorOpen = want;
+  radiatorHold = RADIATOR_AUTO.MIN_HOLD;
 }
 let shutdownLeft = 0;       // 強制シャットダウンの残り秒数(0 なら通常状態)
 
@@ -2123,7 +2185,7 @@ function tick(now) {
 
   updateAutoFire(dt);               // 機関砲の連射
   updateBurst(dt);                  // ビーム砲の3点バーストの残り条
-  updateRadiatorAuto();             // ラジエーターの自動開閉
+  updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
   updateView(dt);                   // W/A/S/D による機首操作
