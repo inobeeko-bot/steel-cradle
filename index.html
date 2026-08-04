@@ -40,7 +40,10 @@
     }
     #scene canvas { display: block; }
 
-    /* Three.jsが読めなかったときに出る案内 */
+    /* Three.jsが読めなかったときに出る案内。
+       z-index は全部の画面(メニュー=40台)より上にしておくこと。
+       以前は 1 だったのでメニューの裏に隠れてしまい、
+       「3Dが死んでいる」ことに気づけないまま遊べてしまっていた。 */
     #scene-error {
       position: fixed;
       inset: 0;
@@ -49,9 +52,10 @@
       justify-content: center;
       text-align: center;
       font-size: 12px;
-      color: #7a4a4a;
+      color: #ffb0b0;
+      background: rgba(6, 10, 12, 0.92);
       line-height: 2;
-      z-index: 1;
+      z-index: 90;
     }
 
     /* ---- キャノピー枠。画面の四隅を暗く落として「窓から見ている」感を出す ---- */
@@ -1608,9 +1612,9 @@
   <!-- Three.js が描画するキャンバスがここに入る -->
   <div id="scene"></div>
   <div id="scene-error">
-    3D空間を読み込めませんでした。<br>
-    インターネット接続を確認して、Ctrl+F5 で再読み込みしてください。<br>
-    (計器パネルはそのまま動作します)
+    3D空間を読み込めませんでした(vendor/three.min.js)。<br>
+    Ctrl+F5 で再読み込みしてください。<br>
+    この状態では自機・敵機・計器パネルが表示されません。
   </div>
 
   <!-- キャノピーの枠(四隅を暗く落とすだけの飾り) -->
@@ -1864,10 +1868,25 @@
     <div class="story-fade" id="story-fade"></div>
   </div>
 
-  <!-- Three.js 本体(CDN)。バージョンを固定しておくと、ある日突然壊れることがない。
+  <!-- Three.js 本体。バージョンは 0.150.1 に固定してある。
        0.150.1 は「普通の<script>タグで読める」最後の系列。
-       ダブルクリックで index.html を開く運用を保つために、この版を選んでいる。 -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+       ダブルクリックで index.html を開く運用を保つために、この版を選んでいる。
+
+       ★ファイルはリポジトリ内(vendor/)に置いてある。
+         以前はネット上のCDNから読んでいたが、読み込みに失敗すると
+         3D空間がまるごと動かず、「機体が出ない」「敵機が出ない」
+         「コックピットの計器パネルが出ない」が同時に起きていた。
+         手元に置けば、通信が不安定でも必ず読める。 -->
+  <script src="vendor/three.min.js"></script>
+
+  <!-- 保険。vendor/ が何かの拍子に読めなかったときだけCDNを試す。
+       document.write はここでは意図的に使っている。
+       この書き方だけが「次のスクリプトより先に読み終える」ことを保証できる。 -->
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<scr' + 'ipt src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"><\/scr' + 'ipt>');
+    }
+  </script>
 
   <!-- 音(Web Audio API で合成。素材ファイルは使わない) -->
   <!-- 言語の表。いちばん最初に読む -->

@@ -112,15 +112,19 @@ let menuRootIndex = 0;
 // innerHTML = 「この要素の中身を、このHTMLで丸ごと書き換える」指定。
 // 項目は数が少ないので、選ぶたびに作り直しても速さは問題にならない。
 // ===================================================================
+// 行そのものを作り直す。ページを開いたときと、言語を変えたときだけ呼ぶ。
+//
+// ※ 選択が動くたびにここを呼んではいけない。
+//   マウスを乗せた拍子に行を作り直すと、押している最中に要素が
+//   入れ替わってクリックが成立しなくなる(実際そうなっていた)。
+//   選択が動いただけのときは updateMenuSelection を使う。
 function buildMenu() {
   const page = MENU_PAGES[menuPage];
   menuListEl.innerHTML = '';
 
   page.items.forEach((item, i) => {
     const row = document.createElement('div');
-    row.className = 'menu-item'
-      + (i === menuIndex ? ' sel' : '')
-      + (item.ready ? ' ready' : ' locked');
+    row.className = 'menu-item' + (item.ready ? ' ready' : ' locked');
 
     // 英字の見出し / 日本語の副題 / 右端の札 の3つを並べる
     row.innerHTML =
@@ -128,12 +132,22 @@ function buildMenu() {
       '<span class="jp">' + (item.jpKey ? t(item.jpKey) : (item.jp || '')) + '</span>' +
       (item.tagKey ? '<span class="tag">' + t(item.tagKey) + '</span>' : '');
 
-    // マウスでも選べるようにしておく(キーボードと同じ動きにする)
-    row.addEventListener('mouseenter', () => { menuIndex = i; buildMenu(); });
+    // マウスでも選べるようにしておく(キーボードと同じ動きにする)。
+    // 乗せたときは見た目だけ更新し、行は作り直さない。
+    row.addEventListener('mouseenter', () => { menuIndex = i; updateMenuSelection(); });
     row.addEventListener('click', () => { menuIndex = i; confirmMenu(); });
 
     menuListEl.appendChild(row);
   });
+
+  updateMenuSelection();
+}
+
+// 選択中の見た目と説明文だけを更新する。行の作り直しはしない
+function updateMenuSelection() {
+  const page = MENU_PAGES[menuPage];
+  const rows = menuListEl.children;
+  for (let i = 0; i < rows.length; i++) rows[i].classList.toggle('sel', i === menuIndex);
 
   const cur = page.items[menuIndex];
   menuDetailEl.innerHTML = cur.detailKey ? t(cur.detailKey) : (cur.detail || '');
@@ -144,7 +158,7 @@ function buildMenu() {
 function moveMenu(delta) {
   const n = MENU_PAGES[menuPage].items.length;
   menuIndex = (menuIndex + delta + n) % n;
-  buildMenu();
+  updateMenuSelection();   // 行は作り直さない(クリックが壊れるため)
   playViewClick();
 }
 
