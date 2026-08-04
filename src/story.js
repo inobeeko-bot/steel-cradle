@@ -74,8 +74,7 @@ const ADV_CONFIG = {
     FRAME_W: 48,
     FRAME_H: 48,
     IDLE: 'assets/adv/kite_idle.png',
-    WALK: 'assets/adv/kite_walk_v2.png',
-    WALK_FRAMES: 6,
+    WALK: 'assets/adv/kite_walk_v4.png',
     // ドット絵は右向きに描かれている。左へ歩くときは水平反転して使う。
     // (もし素材が左向きだったら、ここを false にすれば反転が逆になる)
     FACES_RIGHT: true,
@@ -86,10 +85,13 @@ const ADV_CONFIG = {
   // 時間で送ると、移動速度を変えたとたんに脚の回転と進み方がずれ、
   // 足を広げたまま横滑りしているように見えてしまう。
   //
+  // 歩行シートのコマ数。1周(=2歩)がこの枚数。
+  WALK_FRAME_COUNT: 4,
+
   // WALK_STEP_PX = 何px進むごとに1コマ進めるか。
-  // 6コマで1周(=2歩)なので、1歩の歩幅は WALK_STEP_PX × 3。
-  // 身長46pxに対して1歩21px前後が自然に見える。
-  WALK_STEP_PX: 7,
+  // 4コマで1周(=2歩)なので、1歩は2コマ = WALK_STEP_PX × 2。
+  // 身長46pxに対して1歩21px前後が自然なので、10px/コマで噛み合う。
+  WALK_STEP_PX: 10,
   REACH:        34,    // 「調べる」が届く距離
   CAM_EDGE:   0.40,    // 画面のどこにカイトを置くか(0.5=中央)
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
@@ -174,9 +176,9 @@ const STORY_SCENES = {
       id: 'grandpa', x: 300,
       // 祖父も同じ48×48のシート。ただし彼は歩かないので、コマは送らない。
       // 歩行シートには「立ち」のコマが無いため、脚がいちばん揃って見える
-      // 通過コマ(添字2)を立ち姿として1枚だけ出している。
-      sprite: 'assets/adv/grandpa_walk_v2.png',
-      standFrame: 2,
+      // 通過コマを立ち姿として1枚だけ出している(4コマ版では添字1)。
+      sprite: 'assets/adv/grandpa_walk_v4.png',
+      standFrame: 1,
       label: '祖父',
 
       talks: [
@@ -611,7 +613,7 @@ function updateStory(dt) {
     placeStoryActor(storyNpcEl, n.x, SPW, SPH);
     // 立ち姿のコマを1枚だけ出す(歩かせない)
     storyNpcEl.style.backgroundSize =
-      (SPW * ADV_CONFIG.SPRITE.WALK_FRAMES * S) + 'px ' + (SPH * S) + 'px';
+      (SPW * ADV_CONFIG.WALK_FRAME_COUNT * S) + 'px ' + (SPH * S) + 'px';
     storyNpcEl.style.backgroundPosition = (-(n.standFrame || 0) * SPW * S) + 'px 0px';
   } else {
     placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
@@ -648,7 +650,7 @@ function setStoryWalking(walking, distance) {
     const per = ADV_CONFIG.WALK_STEP_PX;
     while (storyAnimTime >= per) {
       storyAnimTime -= per;
-      storyAnimFrame = (storyAnimFrame + 1) % SP.WALK_FRAMES;
+      storyAnimFrame = (storyAnimFrame + 1) % ADV_CONFIG.WALK_FRAME_COUNT;
     }
   } else {
     storyAnimFrame = 0;
@@ -657,7 +659,8 @@ function setStoryWalking(walking, distance) {
   // シートの何コマ目を出すか。拡大率をかけた画素で指定する
   const S = storyScale;
   storyActorEl.style.backgroundSize =
-    (SP.FRAME_W * (walking ? SP.WALK_FRAMES : 1) * S) + 'px ' + (SP.FRAME_H * S) + 'px';
+    (SP.FRAME_W * (walking ? ADV_CONFIG.WALK_FRAME_COUNT : 1) * S) + 'px ' +
+    (SP.FRAME_H * S) + 'px';
   storyActorEl.style.backgroundPosition = (-storyAnimFrame * SP.FRAME_W * S) + 'px 0px';
 }
 
