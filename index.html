@@ -1147,12 +1147,12 @@
       top: 96px;
       transform: translateX(-50%);
       max-width: 92%;
-      padding: 10px 20px;
+      padding: 12px 22px;
       font-size: 10px;
-      line-height: 2.0;
+      line-height: 1.9;
       letter-spacing: 0.04em;
       color: #58707d;                    /* 薄い文字。読めるが主張しない */
-      text-align: center;
+      text-align: left;
       background: rgba(3, 6, 10, 0.72);
       border: 1px solid #1d2b33;
       border-radius: 3px;
@@ -1162,6 +1162,26 @@
     .help.on { display: block; }
     .help b { color: #7f95a3; font-weight: normal; }
     .help-hint { color: #35474f; letter-spacing: 0.2em; }
+
+    /* 見出し(左列)と中身(右列)の2列に並べる。
+       grid = 表のように升目で並べる指定。左列は見出しぶんの幅で固定し、
+       右列に残り全部を渡す(auto = 中身に合わせる)。 */
+    .help-grid {
+      display: grid;
+      grid-template-columns: 5.2em auto;
+      column-gap: 14px;
+      row-gap: 1px;
+    }
+    /* 見出し(操縦・射撃…)。区切りとして左に細い線を添える */
+    .help-grid > b {
+      color: #6d8794;
+      border-left: 2px solid #2b4450;
+      padding-left: 7px;
+    }
+    /* キー名そのもの。本文より明るくして拾い読みできるようにする */
+    .help-key { color: #9fb6c2; }
+    /* 補足(押しっぱなし、など)。いちばん暗くして流し読みで飛ばせるように */
+    .help-note { color: #40555f; }
 
     /* コックピットでは画面上部にミラーと残り時間があるので、その下へずらす */
     .hud.cockpit .help { top: 28%; }
@@ -1218,8 +1238,51 @@
 
     <!-- 操作説明。ふだんは隠しておき、Tab を押している間だけ画面上部に出す -->
     <div class="help" id="help">
-      <b>左手(操縦)</b> S 機首上げ / W 機首下げ &nbsp; A/D ヨー &nbsp; Q/E ロール &nbsp; F 発射 &nbsp; R 武器切替 &nbsp; B 投下 / N 切替 &nbsp; Space 回避バースト &nbsp; C フレア &nbsp; Shift長押し ドリフト &nbsp; X 視点切替<br>
-      <b>右手(配分)</b> ↑武器 ←シールド →エンジン ↓センサー … +10% &nbsp; 1 攻撃 &nbsp; 2 防御 &nbsp; 3 巡航 &nbsp; V ラジエーター<br>
+      <div class="help-grid">
+        <b>操縦</b>
+        <div>
+          <span class="help-key">S</span> 機首上げ &nbsp; <span class="help-key">W</span> 機首下げ &nbsp;
+          <span class="help-key">A / D</span> 左右へヨー &nbsp;
+          <span class="help-key">Q / E</span> スナップロール &nbsp;
+          <span class="help-key">Shift</span> ドリフト<span class="help-note">(長押し・機首と進行方向を切り離す)</span>
+        </div>
+
+        <b>射撃</b>
+        <div>
+          <span class="help-key">F</span> または <span class="help-key">P</span> 発射<span class="help-note">(右手用。機関砲は押しっぱなしで連射)</span> &nbsp;
+          <span class="help-key">R</span> 主兵装切替<span class="help-note">(ビーム / 機関砲 / ミサイル)</span>
+        </div>
+
+        <b>投下</b>
+        <div>
+          <span class="help-key">B</span> 投下 &nbsp; <span class="help-key">N</span> BOMBS切替<span class="help-note">(パイロ / ボム / EMP)</span> &nbsp;
+          <span class="help-key">C</span> フレア<span class="help-note">(ミサイルの熱を騙す。熱いほど効きにくい)</span>
+        </div>
+
+        <b>機動</b>
+        <div>
+          <span class="help-key">Space</span> 回避バースト<span class="help-note">(推進剤を焚いて真横へ跳ぶ)</span> &nbsp;
+          <span class="help-key">Z</span> AUTO TRACK 入切<span class="help-note">(照準の自動追尾)</span>
+        </div>
+
+        <b>電力配分</b>
+        <div>
+          <span class="help-key">↑</span>武器 <span class="help-key">←</span>シールド <span class="help-key">→</span>エンジン <span class="help-key">↓</span>センサー<span class="help-note">(押すたび +10%。他から均等に奪う)</span> &nbsp;
+          <span class="help-key">1</span> 攻撃 <span class="help-key">2</span> 防御 <span class="help-key">3</span> 巡航<span class="help-note">(プリセット)</span>
+        </div>
+
+        <b>熱管理</b>
+        <div>
+          <span class="help-key">V</span> ラジエーター<span class="help-note">(展開 → 収納 → AUTO の順に切替。展開すると冷えるが敵に見つかりやすい)</span>
+        </div>
+
+        <b>その他</b>
+        <div>
+          <span class="help-key">X</span> 視点切替<span class="help-note">(三人称 ⇄ コックピット)</span> &nbsp;
+          <span class="help-key">Tab</span> この説明 &nbsp;
+          <span class="help-key">Enter</span> 再出撃<span class="help-note">(ミッション終了後)</span>
+        </div>
+      </div>
       <span class="help-hint">Tab で開閉</span>
     </div>
 

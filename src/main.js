@@ -932,10 +932,16 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  // F キー … 主兵装発射(仕様書9.6)
+  // F キー / P キー … 主兵装発射(仕様書9.6)
   // 押しっぱなしでは連射しない。撃つ回数=熱の上がり方をプレイヤーが自分で決める形にする。
   // 仕様書9.3「攻撃的なプレイヤーほどリスクを背負う」を、この1行が担っている。
-  if (event.key.toLowerCase() === 'f' && !event.repeat) {
+  //
+  // Pキーを足した理由:
+  //   左手はW/S・A/D・Q/Eで指が埋まっているので、Dで旋回しながらFを押すと
+  //   同じ人差し指の取り合いになる。右手は矢印キー(電力配分)にしか使わず、
+  //   配分は交戦の合間の操作なので、旋回中の右手は空いている。
+  //   そこに発射を置けば、指の取り合いそのものが無くなる。
+  if ((event.key.toLowerCase() === 'f' || event.key.toLowerCase() === 'p') && !event.repeat) {
     // 連射武器も最初の1発はここで撃つ。以降は updateAutoFire が続ける
     if (fireCooldown <= 0) fire();
     return;
@@ -2237,9 +2243,10 @@ function updateAutoFire(dt) {
   if (fireCooldown > 0) fireCooldown -= dt;
   if (missionState !== 'active' || shutdownLeft > 0) return;
 
-  // --- 主兵装(Fキー)---
+  // --- 主兵装(Fキー / Pキー)---
   const w = currentWeapon();
-  if (w.auto && keysHeld.has('f') && fireCooldown <= 0) fire();
+  const firing = keysHeld.has('f') || keysHeld.has('p');
+  if (w.auto && firing && fireCooldown <= 0) fire();
 
   // --- BOMBS(Bキー)。パイロ弾だけが連射に対応している ---
   const b = currentBomb();
