@@ -397,8 +397,18 @@ const AIM = {
 //      「勝手に動いた」と分かるようになる。
 const ASSIST = {
   ENABLED:   true,
-  CONE:      0.090,  // 効き始める角度(ラジアン)。約5.2度
-  MAX_RATE:  0.30,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)の約1/2.7
+  CONE:      0.160,  // 効き始める角度(ラジアン)。約9.2度
+  MAX_RATE:  0.70,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)に近い強さ
+  // 縁のどれだけを「弱まる帯」にするか(0〜1)。
+  // 以前は縁から中心へ向かって直線的に強くしていたが、それだと
+  // ずれが大きいほど弱くなる ― いちばん助けが要る場面で効かない。
+  // 内側は一定の強さで効かせ、縁の 25% だけで抜くようにした。
+  // 境目で急に効き始めないための帯なので、狭くしすぎないこと。
+  EDGE_FADE:  0.25,
+  // 操縦入力中にどれだけ効きを落とすか(0〜1)。
+  // 1.0 で「操縦中は追尾しない」。0.7 なら3割だけ残る。
+  // これが無いと、別の的へ振りたいのに引き戻されて操縦を邪魔される。
+  INPUT_RELAX: 0.75,
   RANGE:      220,   // これより遠い敵には効かない
   MIN_RANGE:    8,   // 近すぎる敵には効かない(すれ違いで振り回されるため)
 };
@@ -466,7 +476,11 @@ let missileFlameMaterial = null;
 // 自機の今の熱。main.js が毎コマ setPlayerHeat() で渡してくる。
 // シーカーが自機を熱源として評価するのに使う。
 let playerHeatNow = 0;
-function setPlayerHeat(h) { playerHeatNow = h; }
+let playerRadiatorOpen = false;
+function setPlayerHeat(h, radiatorOpen) {
+  playerHeatNow = h;
+  playerRadiatorOpen = !!radiatorOpen;
+}
 
 // --- フレア(武器仕様書4章:回避装備はこれ一本)------------------------
 // 熱源のデコイ。
@@ -649,6 +663,62 @@ const ENEMY_MISSILE = {
   FLARE_RANGE:  46,    // 自機のミサイルがこの距離まで迫ったら撒く
   FLARE_COOL:  2.5,    // 連続で撒かないための間隔(秒)
 };
+
+// ===================================================================
+// 敵のセンサー ― 自機の熱で「見つかりやすさ」が変わる
+//
+// 仕様書9.3:熱は溜まると自分が撃てなくなるだけでなく、
+// 相手に見つかる原因にもなる。冷えていれば見つかりにくい。
+//
+// ここまで、自機の熱が効いていたのはミサイルのシーカーだけだった。
+// 敵の目と銃は自機の位置を常に正確に知っていて、熱を下げても何も変わらなかった。
+// その2つを熱に結びつける。
+//
+//   探知距離 … 熱0なら BASE_RANGE まで。熱100で HEAT_RANGE ぶん伸びる
+//   先読み   … 冷えているほど読みが甘くなる(当たらない)
+//   散り     … 冷えているほど散る(当たらない)
+//
+// 探知できていない間、敵は攻撃態勢に入れず、撃ってこない。
+// ただし居場所の見当は付けて近づいてくる ― 完全に消えるわけではない。
+// ===================================================================
+const ENEMY_SENSOR = {
+  BASE_RANGE:   65,   // 熱0でも、これだけ近ければ見つかる
+  HEAT_RANGE:  195,   // 熱100%で足される距離(最大260)
+
+  LEAD_COLD:  0.25,   // 熱0のときの先読み率(当たらない)
+  LEAD_HOT:   0.80,   // 熱100のときの先読み率
+  SPREAD_COLD: 0.18,  // 熱0のときの弾道の散り(大きいほど当たらない)
+  SPREAD_HOT:  0.05,  // 熱100のときの散り
+
+  SEARCH_SPEED: 16,   // 見失っている間の移動速度(攻撃時より遅い)
+
+  // ラジエーター展開中に上乗せされる「見つけやすさ」(0〜1)。
+  // 熱を捨てている最中は、そこが強い熱源になって遠くから見える。
+  // 熱55%ぶんに相当する ― 冷やすために目立つ、という取引になる。
+  RADIATOR_SIG: 0.55,
+};
+
+// 自機の「見つけやすさ」(0〜1)。敵の目と銃の精度は、これ1つで決まる。
+//
+// 2つの足し算でできている:
+//   1. 溜まっている熱      … 機体そのものが熱い
+//   2. ラジエーターの展開  … 熱を宇宙へ捨てている最中は、そこが強く光る
+//
+// 2つ目が肝。ラジエーターは熱を下げる代わりに自分を目立たせる。
+// これが無いと「開けっぱなしが常に最善」になってしまい、
+// 展開/収納という操作そのものが選択でなくなる。
+// 冷やしたいのに冷やすと見つかる、という板挟みがこの装備の中身。
+function playerSignature() {
+  const fromHeat = Math.max(0, Math.min(playerHeatNow / 100, 1));
+  const fromRad  = playerRadiatorOpen ? ENEMY_SENSOR.RADIATOR_SIG : 0;
+  return Math.min(fromHeat + fromRad, 1);
+}
+
+// 敵が自機を探知できているか
+function enemyCanSee(distance) {
+  const sig = playerSignature();
+  return distance <= ENEMY_SENSOR.BASE_RANGE + sig * ENEMY_SENSOR.HEAT_RANGE;
+}
 
 // --- 敵の弾の設定 ---------------------------------------------------
 const ENEMY_BOLT = {
@@ -2216,7 +2286,12 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
     new THREE.Euler(pitchRate * dt, yawRate * dt, rollRate * dt, 'XYZ'));
   shipQuat.multiply(step);
 
-  applyAimAssist(dt);     // ごくわずかに敵へ機首を寄せる(下で説明)
+  // 操縦している最中は追尾を弱める。
+  // 強い追尾は「狙いを定めたい」ときには助かるが、
+  // 別の的へ振りたいときに引き戻されると、操縦を邪魔されたと感じる。
+  // 入力しているぶんだけ効きを下げると、寄せたいときだけ効くようになる。
+  const inputAmt = Math.min(Math.abs(pitchDir) + Math.abs(yawDir), 1);
+  applyAimAssist(dt, 1 - inputAmt * ASSIST.INPUT_RELAX);
 
   shipQuat.normalize();   // 計算誤差が溜まって歪むのを防ぐ
 
@@ -2233,8 +2308,10 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
 //   ・照準の縁ほど弱く、中心に近いほど強い(境目で「吸い付いた」と感じさせない)
 // の3つで、気づかない強さに抑えている。
 // ===================================================================
-function applyAimAssist(dt) {
+function applyAimAssist(dt, authority) {
   if (!ASSIST.ENABLED) return;
+  const gain = (authority === undefined) ? 1 : authority;
+  if (gain <= 0.001) return;
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(shipQuat);
 
@@ -2263,10 +2340,14 @@ function applyAimAssist(dt) {
 
   if (!best) return;
 
-  // 縁で 0、中心で 1。境目をなめらかにして「入った瞬間」を感じさせない
-  const weight = 1 - bestAngle / ASSIST.CONE;
+  // 効き具合。内側は一定、縁の EDGE_FADE ぶんだけで 0 まで落とす。
+  //   例)範囲9.2度・帯25% なら、6.9度より内側は全力、そこから外は弱まる。
+  // 中心へ行くほど強くすると、ずれが大きいときに効かない = 助けにならない。
+  const t = 1 - bestAngle / ASSIST.CONE;          // 縁で0、中心で1
+  const weight = Math.min(t / Math.max(ASSIST.EDGE_FADE, 0.01), 1);
+
   // 今コマで寄せる角度。残りのずれ以上には動かさない(行き過ぎ防止)
-  const stepAngle = Math.min(bestAngle, ASSIST.MAX_RATE * dt) * weight;
+  const stepAngle = Math.min(bestAngle, ASSIST.MAX_RATE * dt * weight * gain);
   if (stepAngle <= 0.00001) return;
 
   // 回す軸 = 「今の機首」と「敵の方向」の両方に直角な向き(外積)
@@ -2451,6 +2532,14 @@ function shipHeatValue(heatPct) {
   return SEEKER.BASE_HEAT + Math.max(heatPct || 0, 0) * SEEKER.HEAT_SCALE;
 }
 
+// 自機の熱源の強さ。ラジエーターを開いていればそのぶん明るくなる ―
+// 敵の目に対してと同じ理屈を、ミサイルのシーカーにも通す。
+// つまり展開中はフレアで騙しにくい。
+function playerHeatValue() {
+  const extra = playerRadiatorOpen ? ENEMY_SENSOR.RADIATOR_SIG * 100 : 0;
+  return shipHeatValue(playerHeatNow + extra);
+}
+
 // ===================================================================
 // シーカーが今いちばん強く見ている熱源を選ぶ
 //
@@ -2501,7 +2590,7 @@ function seekerAim(m) {
 
   // 撃った本人だけは対象から外す。実物のシーカーも発射母機には反応しない。
   if (m.owner !== 'player') {
-    const v = shipHeatValue(playerHeatNow);
+    const v = playerHeatValue();
     if (m.fromEnemy || v > lockedHeat) consider(playerShip.position, v, !!m.fromEnemy, false);
   }
   for (const e of enemies) {
@@ -2515,7 +2604,7 @@ function seekerAim(m) {
 
 // このミサイルが今狙っている相手の熱量。乗り換えの基準になる
 function lockedHeatValue(m) {
-  if (m.fromEnemy) return shipHeatValue(playerHeatNow);
+  if (m.fromEnemy) return playerHeatValue();
   if (m.target && m.target.alive) return shipHeatValue(m.target.heat);
   return 0;   // 目標を失っている = どんな熱源でも乗り換えてよい
 }
@@ -3135,6 +3224,7 @@ function createEnemy() {
     // 熱の痕跡。発射や被弾で跳ね上がり、時間とともに冷める。
     // 仕様書9.3「敵のHEATが探知手段(撃ちまくる敵ほどよく見える)」の初歩版。
     heatSig: 0,
+    seesPlayer: true,   // 自機を探知できているか(自機の熱で変わる)
 
     // 熱(パイロ弾で上がる)。100超えで強制シャットダウン
     heat: 0,
@@ -3226,8 +3316,20 @@ function updateEnemyAI(e, dt) {
   const distance = toPlayer.length();
   const toPlayerDir = toPlayer.clone().normalize();
 
+  // --- 探知できているか ---
+  // 自機が冷えていれば、近づかれるまで見つからない。
+  // 見つかっていない間は攻撃態勢に入れず、撃ってもこない。
+  const seen = enemyCanSee(distance);
+  e.seesPlayer = seen;
+
   // --- 状態の切り替え ---
-  if (e.state === 'approach' && distance < AI.ATTACK_RANGE) {
+  if (!seen) {
+    // 見失った。攻撃をやめ、だいたいの方角へゆっくり詰める。
+    // 完全に消えるわけではないので、冷やしても永久には撒けない。
+    if (e.state === 'attack') setEnemyState(e, 'approach');
+    e.telegraph = 0;
+    e.missileTele = 0;
+  } else if (e.state === 'approach' && distance < AI.ATTACK_RANGE) {
     setEnemyState(e, 'attack');
   } else if (e.state === 'attack' && distance > AI.BREAK_RANGE) {
     setEnemyState(e, 'approach');
@@ -3255,7 +3357,8 @@ function updateEnemyAI(e, dt) {
 
   } else {   // approach
     move.copy(toPlayerDir);
-    speed = AI.APPROACH_SPEED;
+    // 見失っている間は「たぶんこのあたり」を探しているだけなので遅い
+    speed = seen ? AI.APPROACH_SPEED : ENEMY_SENSOR.SEARCH_SPEED;
   }
 
   e.group.position.addScaledVector(move, speed * dt);
@@ -3329,6 +3432,7 @@ function updateEnemyMissileLogic(e, dt, distance) {
   }
 
   if (e.state !== 'attack') return;
+  if (!e.seesPlayer) return;      // 見つけていない相手はロックできない
   if (e.missileAmmo <= 0) return;
   if (distance > ENEMY_MISSILE.RANGE || distance < ENEMY_MISSILE.MIN_RANGE) return;
 
@@ -3467,8 +3571,19 @@ function updateEnemyGlow(e, dt) {
 // ===================================================================
 function predictedPlayerPoint(fromPos) {
   const flightTime = fromPos.distanceTo(playerShip.position) / ENEMY_BOLT.SPEED;
+  // 先読みの精度は自機の熱で決まる。冷えているほど読みが甘い。
+  const sig = playerSignature();
+  const lead = ENEMY_SENSOR.LEAD_COLD
+             + (ENEMY_SENSOR.LEAD_HOT - ENEMY_SENSOR.LEAD_COLD) * sig;
   return playerShip.position.clone()
-    .addScaledVector(shipVelocity, flightTime * ENEMY_BOLT.LEAD);
+    .addScaledVector(shipVelocity, flightTime * lead);
+}
+
+// 弾道の散り。こちらも熱で決まる ― 冷えているほど散って当たらない
+function enemyBoltSpread() {
+  const sig = playerSignature();
+  return ENEMY_SENSOR.SPREAD_COLD
+       + (ENEMY_SENSOR.SPREAD_HOT - ENEMY_SENSOR.SPREAD_COLD) * sig;
 }
 
 function fireEnemyBolt(e) {
@@ -3501,9 +3616,10 @@ function fireEnemyBolt(e) {
     const direction = aimPoint.sub(mesh.position).normalize();
 
     // 左右へわずかに散らす。毎回きっちり同じ点へ来ないようにする
-    direction.x += (Math.random() - 0.5) * ENEMY_BOLT.SPREAD;
-    direction.y += (Math.random() - 0.5) * ENEMY_BOLT.SPREAD;
-    direction.z += (Math.random() - 0.5) * ENEMY_BOLT.SPREAD;
+    const spread = enemyBoltSpread();
+    direction.x += (Math.random() - 0.5) * spread;
+    direction.y += (Math.random() - 0.5) * spread;
+    direction.z += (Math.random() - 0.5) * spread;
     direction.normalize();
     // 弾の見た目も進行方向に合わせて倒す
     mesh.quaternion.setFromRotationMatrix(
@@ -3578,6 +3694,25 @@ function nearestEnemy() {
     if (d < bestD) { bestD = d; best = e; }
   }
   return best;
+}
+
+// ===================================================================
+// 自機の被探知状況(計器用)
+//
+// 自分の熱が、敵にどれだけ見つかりやすくしているかを返す。
+//   range … 今の熱で、この距離まで見つかる
+//   seen  … 実際に今、誰かに見つかっているか
+// ===================================================================
+function playerDetection() {
+  const sig = playerSignature();
+  const range = ENEMY_SENSOR.BASE_RANGE + sig * ENEMY_SENSOR.HEAT_RANGE;
+  let seen = false;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.heatDown > 0 || e.empLeft > 0) continue;
+    if (e.seesPlayer) { seen = true; break; }
+  }
+  return { signature: sig, range: range, seen: seen };
 }
 
 // ===================================================================

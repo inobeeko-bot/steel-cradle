@@ -383,6 +383,23 @@ function drawHeatBudget(g, x, y, s) {
 function drawThreat(g, x, y, s) {
   drawHeading(g, x, y, 190, 'THREAT');
 
+  // --- 被探知 ---
+  // 自機の熱が、敵にどこまで見つかるかを決める。
+  // 冷やせば近づかれるまで見つからない ― 熱を下げる意味がここにも出る。
+  g.textAlign = 'left';
+  g.font = '11px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('DETECT', x, y + 88);
+  g.font = 'bold 15px monospace';
+  g.fillStyle = s.detect.seen ? CONSOLE3D.WARN : '#8fd8ff';
+  g.fillText(s.detect.seen ? 'SEEN' : 'COLD', x + 62, y + 88);
+  // 何メートルまで見つかるか
+  g.font = '13px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.textAlign = 'right';
+  g.fillText(Math.round(s.detect.range) + 'm', x + 186, y + 88);
+  g.textAlign = 'left';
+
   const t = s.threat;
   const map = {
     CLEAR:   { text: 'CLEAR',   color: CONSOLE3D.DIM,   blink: false },
