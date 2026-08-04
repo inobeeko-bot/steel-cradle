@@ -28,10 +28,21 @@ let sceneReady = false;   // 3Dの準備ができたか
 const FEEL = {
   // --- 1. 機体の慣性 ---
   TURN_SPEED:   0.80,   // 最大の旋回速度(ラジアン/秒。約46度/秒)
-  ROLL_SPEED:   1.30,   // Q/E のロール速度(ラジアン/秒。約75度/秒)
+  // Q/E は「傾ける」ではなく「急旋回」。一気にグイッと回る速さにしてある。
+  // ピッチ・ヨー(0.80 = 約46度/秒)の4倍以上あり、機首を振るのとは別物の操作。
+  ROLL_SPEED:   3.60,   // Q/E のロール速度(ラジアン/秒。約206度/秒)
                         //   ロールは視界が回るぶん酔いやすいので、
                         //   速すぎると気持ち悪くなる。上げるときは少しずつ
   TURN_SMOOTH:  0.18,   // 旋回速度の立ち上がり・減衰にかかる時間(秒)
+
+  // --- ロールだけは「かかり」と「抜け」で時間を変える ---
+  // 同じ時間にすると、キビキビ回るが手を離した瞬間ピタッと止まり、
+  // 重い機体を回している感じが出ない。
+  //   かかり(ROLL_SMOOTH)… 短い = 押した瞬間にグイッと回り出す
+  //   抜け  (ROLL_DAMP)  … 長い = 離しても勢いが残り、ゆっくり収まる
+  // 宇宙には空気抵抗がないので、止まらないほうがむしろ自然でもある。
+  ROLL_SMOOTH:  0.07,
+  ROLL_DAMP:    0.75,
                         //   大きいほど重い機体。0にすると今までどおり即座に最高速
   BANK_ANGLE:   0.55,   // 旋回時に機体を傾ける最大角(ラジアン。約32度)
   BANK_SMOOTH:  0.30,   // 傾きの追従時間(秒)。大きいほどゆっくり倒れ、ゆっくり戻る
@@ -313,17 +324,24 @@ const ENEMY = {
 };
 
 // --- 敵AIの設定(3状態:接近 / 攻撃 / 回避)-------------------------
+// 速度について:
+//   自機はエンジン配分で 6〜50 の間を動く(配分25%でおよそ17)。
+//   敵の接近速度がこれを下回ると、敵は永久に追いつけず、
+//   自機の後方130前後をただ流れるだけになる ― 攻撃距離(下記)に
+//   一度も入れないので、いくら弾を強くしても何も起きない。
+//   接近速度は「中くらいの出力の自機には追いつける」ところに置いてある。
+//   全開(50)で逃げれば振り切れる ― エンジンへ配ることの意味はそこで担保する。
 const AI = {
-  APPROACH_SPEED: 15,    // 接近しているときの移動速度
-  ATTACK_SPEED:   11,    // 攻撃中の移動速度(横へ回り込む)
-  EVADE_SPEED:    24,    // 逃げるときの移動速度(いちばん速い)
+  APPROACH_SPEED: 30,    // 接近しているときの移動速度
+  ATTACK_SPEED:   20,    // 攻撃中の移動速度(横へ回り込む)
+  EVADE_SPEED:    34,    // 逃げるときの移動速度(いちばん速い)
 
-  ATTACK_RANGE:   60,    // この距離まで詰めたら「攻撃」へ
-  BREAK_RANGE:    95,    // これより離されたら「接近」へ戻る
+  ATTACK_RANGE:   85,    // この距離まで詰めたら「攻撃」へ
+  BREAK_RANGE:   130,    // これより離されたら「接近」へ戻る
   TOO_CLOSE:      22,    // これより近いと下がる(自機をすり抜けないため)
 
   TURN_RATE:     2.2,    // 機首を自機へ向ける速さ
-  FIRE_INTERVAL: 2.4,    // 攻撃中に何秒おきに撃つか
+  FIRE_INTERVAL: 2.3,    // 攻撃中に何秒おきに撃つか
   TELEGRAPH:     0.5,    // 発射の何秒前から光り始めるか(避ける余地)
   EVADE_SEC:     3.0,    // 被弾後に逃げ回る秒数
 };
@@ -609,6 +627,14 @@ const ENEMY_MISSILE = {
 const ENEMY_BOLT = {
   SPEED:      60,        // 自機の弾(90)の2/3。見てから避けられるが、ぬるくない速さ
   LIFE:      3.0,        // 射程 = 60 × 3.0 = 180(速くしたぶん寿命を縮めて射程は据え置き)
+
+  // 自機の動きをどれだけ先読みするか。1.0 = 完全に読む(避けようがない)
+  // 0 = まったく読まない(絶対に当たらない)。その間で当たり具合を決める。
+  // 0.80 では接近戦が続くと60秒で29発被弾し、手が付けられなかった。
+  LEAD:      0.65,
+  // 弾道の散り。大きいほど当たりにくくなる。
+  // 先読みが効きすぎるときは、まずこちらを上げて散らすのが安全
+  SPREAD:    0.075,
   COLOR: 0xff6a4d,       // 敵の兵装色(赤)。自機の緑と混ざらないようにする
   OFFSET_X:  1.2,        // 発射口の左右位置
   OFFSET_Z: -2.0,        // 発射口の前後位置(機首側)
@@ -662,6 +688,41 @@ function setMirrorBroken(on) { mirrorBroken = !!on; }
 // 被弾時のカメラの揺れ。main.js が毎コマ setCameraShake() で渡してくる
 let camShakeX = 0;
 let camShakeY = 0;
+
+// --- HTMLの計器を機体と一緒に揺らすための値 -------------------------
+// updateFlight が毎コマ書き込み、main.js が読んで計器盤に反映する。
+let lastHeadYaw = 0;
+let lastHeadPitch = 0;
+let lastVisualRoll = 0;
+
+// 計器盤をどれだけ動かすか。ここを 0 にすれば従来どおり画面に貼り付く。
+const HUD_SWAY = {
+  SHAKE_PX:  26,   // 被弾の揺れを何ピクセルに換算するか
+  ROLL_DEG: 3.2,   // 旋回で計器盤が何度まで傾くか
+};
+
+// ===================================================================
+// 計器盤の揺れ(コックピット視点用)
+//
+// 戻り値:{ x, y, rot } … 画面上で何ピクセル動かし、何度傾けるか
+//
+// 頭の振れ(ラジアン)を画面のピクセルに直す。
+// 視野角と画面幅から「1ラジアンが何ピクセルか」を出して掛けるだけ。
+// カメラが右を向けば、機体に付いている計器は画面の左へ流れる ― 符号は逆。
+// ===================================================================
+function cockpitHudSway() {
+  if (!sceneReady) return { x: 0, y: 0, rot: 0 };
+
+  const vFov = camera.fov * Math.PI / 180;
+  const pxPerRadY = window.innerHeight / vFov;          // 縦:1ラジアンぶんの画素数
+  const pxPerRadX = pxPerRadY;                          // 横も同じ尺度でよい(等方)
+
+  return {
+    x: -lastHeadYaw * pxPerRadX + camShakeX * HUD_SWAY.SHAKE_PX,
+    y:  lastHeadPitch * pxPerRadY + camShakeY * HUD_SWAY.SHAKE_PX,
+    rot: -lastVisualRoll * HUD_SWAY.ROLL_DEG,
+  };
+}
 
 // ミッション失敗中は戦闘を止める(敵AIと敵弾の判定を休ませる)
 let combatFrozen = false;
@@ -1431,6 +1492,14 @@ function updateFlight(dt, enginePercent) {
   const headYaw   = (Math.sin(a * 0.71 + 2.4) * 0.6 + Math.sin(b * 1.13 + 0.9) * 0.4) * headAmp;
   const headPitch = (Math.sin(a * 0.94 + 0.3) * 0.6 + Math.sin(b * 1.31 + 2.2) * 0.4) * headAmp;
 
+  // HTMLの計器を同じだけ動かすために覚えておく。
+  // 計器は「機体に付いている物」なので、頭が振れたぶんだけ画面の中で
+  // 逆向きに流れなければならない。3Dの内装はそうなっているのに
+  // HTMLの計器だけ画面に貼り付いたままだと、そこだけ浮いて見える。
+  lastHeadYaw   = headYaw;
+  lastHeadPitch = headPitch;
+  lastVisualRoll = visualRoll;
+
   // 機体の「前方」。もとの前方 (0,0,-1) を機体の向きで回して求める
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
 
@@ -1801,6 +1870,64 @@ function hasLock() {
 }
 
 // ===================================================================
+// 敵の速度を測る
+//
+// 敵AIは位置を直接動かしていて速度を持っていないので、
+// 「1コマで何メートル動いたか」から毎コマ割り出す。
+// 偏差照準(下の getLeadNdc)がこれを使う。
+// ===================================================================
+function updateEnemyVelocity(dt) {
+  const k = Math.max(dt, 0.0001);
+  for (const e of enemies) {
+    if (!e.vel) { e.vel = new THREE.Vector3(); e.prevPos = e.group.position.clone(); }
+    if (!e.alive) { e.vel.set(0, 0, 0); e.prevPos.copy(e.group.position); continue; }
+    e.vel.subVectors(e.group.position, e.prevPos).divideScalar(k);
+    e.prevPos.copy(e.group.position);
+  }
+}
+
+// ===================================================================
+// 偏差照準(リードパイパー)の画面上の位置
+//
+// 動いている敵に真っすぐ撃っても、弾が届くころには敵はもういない。
+// 「弾が届くまでの時間 × 敵の速度」だけ先の点を出し、そこに小さな印を置く。
+// その印に機首を合わせて撃てば当たる ― という読み方をする道具。
+//
+// 弾の飛翔時間は距離で決まり、その距離は先読みした位置で変わるので、
+// 一度では決まらない。2回くり返して近い値に寄せている(これで十分な精度が出る)。
+// ===================================================================
+function getLeadNdc() {
+  if (!sceneReady) return null;
+
+  // 狙う相手:ロック中ならその敵、いなければ前方でいちばん近い敵
+  let target = (aimTarget && aimTarget.alive) ? aimTarget : null;
+  if (!target) {
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+    let bestDot = 0.55;   // 前方およそ56度の内側だけ
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const to = e.group.position.clone().sub(playerShip.position);
+      const d = to.length();
+      if (d > BOLT.SPEED * BOLT.LIFE) continue;   // 弾が届かない距離
+      const dot = to.normalize().dot(forward);
+      if (dot > bestDot) { bestDot = dot; target = e; }
+    }
+  }
+  if (!target || !target.vel) return null;
+
+  const muzzle = playerShip.position;
+  let aim = target.group.position.clone();
+  for (let i = 0; i < 2; i++) {
+    const t = muzzle.distanceTo(aim) / BOLT.SPEED;
+    aim.copy(target.group.position).addScaledVector(target.vel, t);
+  }
+
+  const inFront = camera.worldToLocal(aim.clone()).z < 0;
+  const ndc = aim.project(camera);
+  return { x: ndc.x, y: ndc.y, visible: inFront };
+}
+
+// ===================================================================
 // 照準の画面上の位置
 //
 // カメラが機首より遅れて追うようにしたため、画面のど真ん中は
@@ -1891,7 +2018,16 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
   const k = 1 - Math.exp(-dt / Math.max(FEEL.TURN_SMOOTH, 0.0001));
   yawRate   += (targetYawRate   - yawRate)   * k;
   pitchRate += (targetPitchRate - pitchRate) * k;
-  rollRate  += (targetRollRate  - rollRate)  * k;
+
+  // ロールだけは別の追従時間を使い、しかも「かかり」と「抜け」で変える。
+  //
+  // 回そうとしている(目標のほうが速い)ときは短い時間で立ち上げる = グイッと回る。
+  // 手を離した(目標が今より遅い)ときは長い時間をかけて落とす = 勢いが残る。
+  // 同じ時間で上げ下げすると、キビキビはするが機体が軽く感じる。
+  const spinningUp = Math.abs(targetRollRate) > Math.abs(rollRate);
+  const rollTau = spinningUp ? FEEL.ROLL_SMOOTH : FEEL.ROLL_DAMP;
+  const kRoll = 1 - Math.exp(-dt / Math.max(rollTau, 0.0001));
+  rollRate  += (targetRollRate  - rollRate)  * kRoll;
 
   // --- 「機体から見た軸」で少しだけ回す ---
   // multiply は「今の向きに、さらにこの回転を足す」という意味になる。
@@ -3119,6 +3255,18 @@ function updateEnemyGlow(e, dt) {
 // 自機の「今いる位置」を狙う(先読みしない)。
 // 先読みさせると当たりすぎて避けられなくなるため、あえて素直に撃たせる。
 // ===================================================================
+// ===================================================================
+// 「弾が届くころ、自機はどこにいるか」を見積もる
+//
+// 距離 ÷ 弾速 で飛翔時間を出し、そのぶんだけ自機の速度で先へ進めた点を返す。
+// ただし丸ごと読むと当たりすぎるので、ENEMY_BOLT.LEAD の割合しか読まない。
+// ===================================================================
+function predictedPlayerPoint(fromPos) {
+  const flightTime = fromPos.distanceTo(playerShip.position) / ENEMY_BOLT.SPEED;
+  return playerShip.position.clone()
+    .addScaledVector(shipVelocity, flightTime * ENEMY_BOLT.LEAD);
+}
+
 function fireEnemyBolt(e) {
   if (!enemyBoltGeometry) {
     enemyBoltGeometry = new THREE.BoxGeometry(0.2, 0.2, 2.4);
@@ -3135,8 +3283,24 @@ function fireEnemyBolt(e) {
     offset.applyQuaternion(e.group.quaternion);
     mesh.position.copy(e.group.position).add(offset);
 
-    // 発射口から自機へ向かう向き
-    const direction = playerShip.position.clone().sub(mesh.position).normalize();
+    // 発射口から「自機が着くころにいる場所」へ向かう向き。
+    //
+    // 自機の“今いる場所”へ撃つと、弾が届くころには自機はもうそこにいない。
+    // 距離100・弾速60なら飛翔に1.7秒、その間に自機は30近く動くので、
+    // どれだけ撃っても当たらない ― 実際、先読み無しでは30発中0発だった。
+    //
+    // かといって完全に先読みさせると避けようがなくなるので、
+    // わざと LEAD ぶんしか読まず、さらに SPREAD で散らしてある。
+    // 発射の 0.5 秒前から光る(TELEGRAPH)ので、
+    // 光ってから進路を変えれば読みは外れる ― 避ける余地はそこで確保している。
+    const aimPoint = predictedPlayerPoint(mesh.position);
+    const direction = aimPoint.sub(mesh.position).normalize();
+
+    // 左右へわずかに散らす。毎回きっちり同じ点へ来ないようにする
+    direction.x += (Math.random() - 0.5) * ENEMY_BOLT.SPREAD;
+    direction.y += (Math.random() - 0.5) * ENEMY_BOLT.SPREAD;
+    direction.z += (Math.random() - 0.5) * ENEMY_BOLT.SPREAD;
+    direction.normalize();
     // 弾の見た目も進行方向に合わせて倒す
     mesh.quaternion.setFromRotationMatrix(
       new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), direction.clone().negate(), new THREE.Vector3(0, 1, 0))
@@ -3362,7 +3526,8 @@ function hitEnemy(e, point, dealDamage) {
 // ===================================================================
 // 撃墜:機体を消し、破片をまき散らし、数秒後に別の位置へリスポーンさせる
 // ===================================================================
-function killEnemy(e) {
+// credit を false にすると撃墜数に数えない(敵どうしの衝突など)
+function killEnemy(e, credit) {
   e.alive = false;
   e.group.visible = false;      // 空間からは消さず、見えなくするだけ(使い回すため)
   e.respawnLeft = ENEMY.RESPAWN_SEC;
@@ -3374,7 +3539,62 @@ function killEnemy(e) {
   spawnBlast(e.group.position, 13, 0xffc070);
   spawnDebris(e.group.position, 10, 0.30, DEBRIS.KILL_SPEED * 1.2, 0xffd9a0, true);   // 光る火花
   spawnDebris(e.group.position, DEBRIS.KILL_COUNT, DEBRIS.KILL_SIZE, DEBRIS.KILL_SPEED);
-  onKill();
+  if (credit !== false) onKill();
+}
+
+// ===================================================================
+// 機体どうしの衝突
+//
+// これまで機体はすり抜けていた。宇宙で正面からぶつかって何も起きないのは
+// さすがに嘘なので、当たったら両方とも爆散するようにする。
+//
+// 自機が巻き込まれた場合は即死にはしない ― シールドを吹き飛ばして
+// HULLを1つ削る、という重い被弾として扱う。事故で一瞬で終わるより、
+// 「やってしまった」と分かって立て直せるほうが操作の手応えが残る。
+// ===================================================================
+const COLLIDE = {
+  PLAYER_RADIUS: 3.0,    // 自機の当たり半径
+  SHIELD_DAMAGE:  70,    // 衝突で自機のシールドが受ける量
+  SHAKE:         1.4,    // 衝突時の画面の揺れ
+};
+
+function updateCollisions() {
+  // --- 自機 対 敵機 ---
+  const reach = COLLIDE.PLAYER_RADIUS + ENEMY.HIT_RADIUS;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.group.position.distanceTo(playerShip.position) > reach) continue;
+
+    // 中間の点で爆発させる。どちらの機体でもない「ぶつかった場所」
+    const mid = e.group.position.clone().add(playerShip.position).multiplyScalar(0.5);
+    spawnFlash(mid, 40, 0xffffff, 0.34);
+    spawnBlast(mid, 18, 0xffc070);
+    spawnDebris(mid, 14, 0.32, DEBRIS.KILL_SPEED * 1.5, 0xffd9a0, true);
+
+    killEnemy(e);            // 敵は撃墜として数える(自機がぶつけに行ったのだから)
+    onPlayerCollide();       // main.js:自機側の被害
+    return;                  // 1コマに1回で十分
+  }
+
+  // --- 敵機どうし ---
+  // 撃墜数には数えない。こちらが仕留めたわけではないため。
+  for (let i = 0; i < enemies.length; i++) {
+    const a = enemies[i];
+    if (!a.alive) continue;
+    for (let j = i + 1; j < enemies.length; j++) {
+      const b = enemies[j];
+      if (!b.alive) continue;
+      if (a.group.position.distanceTo(b.group.position) > ENEMY.HIT_RADIUS * 2) continue;
+
+      const mid = a.group.position.clone().add(b.group.position).multiplyScalar(0.5);
+      spawnFlash(mid, 34, 0xffffff, 0.30);
+      spawnBlast(mid, 15, 0xffc070);
+      killEnemy(a, false);
+      killEnemy(b, false);
+      onEnemyCollide();      // main.js:ログと音
+      return;
+    }
+  }
 }
 
 // ===================================================================
@@ -3540,6 +3760,9 @@ function updateScene(dt, elapsed) {
     }
     updateEnemyAI(e, dt);
   }
+
+  updateCollisions();   // 機体どうしがぶつかっていないか
+  updateEnemyVelocity(dt);   // 偏差照準に使う「敵が今どっちへ動いているか」
 
   renderer.render(scene, camera);
   renderRearMirror();

@@ -111,19 +111,65 @@
 
     /* 計器台に載る高さに収めるため、縦ゲージを短くする */
     .hud.cockpit .panel-heat .gauge-tube,
-    .hud.cockpit .panel-status .gauge-tube { height: 74px; }
-    .hud.cockpit .panel .gauge-tube { height: 74px; }
-    .hud.cockpit .panel { padding: 8px 16px; gap: 16px; }
-    .hud.cockpit .gauge { gap: 3px; }
-    .hud.cockpit .gauge-value { font-size: 15px; }
+    .hud.cockpit .panel-status .gauge-tube { height: 62px; }
+    .hud.cockpit .panel .gauge-tube { height: 62px; width: 26px; }
+    .hud.cockpit .panel { padding: 6px 14px 4px; gap: 13px; }
+    .hud.cockpit .gauge { gap: 3px; width: 62px; }
+    .hud.cockpit .gauge-value { font-size: 14px; }
+    .hud.cockpit .gauge-label { font-size: 10px; }
+    .hud.cockpit .gauge-key { font-size: 9px; padding: 1px 4px; }
 
-    /* 計器台に彫り込まれたように見せる。浮いた箱に見せない */
+    /* 計器盤ひとまとまり。
+       コックピットではこの入れ物ごと動かして、機体の揺れに追従させる。
+       中身は今までどおり絶対配置なので、この入れ物が画面全体を覆っている限り
+       位置は1ピクセルも変わらない。 */
+    .console-frame {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      will-change: transform;   /* 毎コマ動かすので、先に知らせておく */
+    }
+
+    /* =================================================================
+       コックピットでは「計器盤に彫り込まれている」ように見せる
+       =================================================================
+       箱として浮いて見えるのは、背景・枠・角の丸みが揃って
+       「手前に貼られた別の板」を主張してしまうため。
+       そこで箱をやめ、計器台(3Dの黒いシルエット)の上に
+       目盛りと文字だけが載っている状態にする。
+
+       さらに、面をわずかに手前へ倒す(rotateX)。
+       計器台は奥へ向かって傾いているので、平らなままだと
+       そこだけ画面に貼り付いて見える。少し倒すだけで面がなじむ。 */
     .hud.cockpit .panel {
-      background: rgba(4, 7, 10, 0.92);
-      border-color: #243b44;
-      border-radius: 2px;
-      box-shadow: inset 0 1px 0 rgba(159, 225, 203, 0.10),
-                  inset 0 0 26px rgba(0, 0, 0, 0.9);
+      background: none;
+      border: none;
+      box-shadow: none;
+      clip-path: none;
+      /* 計器台の傾きに合わせて、面を少しだけ寝かせる */
+      transform: perspective(760px) rotateX(15deg);
+      transform-origin: 50% 100%;
+    }
+    /* 走査線も箱ありきの表現なので、こちらでは消す */
+    .hud.cockpit .panel::after { display: none; }
+
+    /* 箱の代わりに、上辺だけ細い光の線を引く。
+       3D側の計器台の縁取り(COCKPIT.DASH_TRIM)と同じ役目で、
+       「ここから下が機械の面」という境目を作る */
+    .hud.cockpit .panel::before {
+      content: "";
+      position: absolute;
+      left: 6%; right: 6%; top: 0;
+      height: 1px;
+      background: linear-gradient(to right,
+        transparent, rgba(159, 225, 203, 0.40), transparent);
+    }
+
+    /* 筒も彫り込みに見えるよう、枠を弱めて内側の影を強くする */
+    .hud.cockpit .gauge-tube {
+      border-color: #16252c;
+      background: rgba(2, 4, 7, 0.85);
+      box-shadow: inset 0 0 12px rgba(0, 0, 0, 1);
     }
 
     /* コックピットでは計器がすべて下段に降りるので、ログは右上へ戻せる */
@@ -496,6 +542,39 @@
     }
 
     /* =================================================================
+       偏差照準(リードパイパー)
+       「弾が届くころ敵がいる場所」を示す、ごく小さな緑の印。
+       ここに機首を合わせて撃てば当たる。
+       本来の照準より必ず小さく・薄くすること ― 主役を食わせない。
+       ================================================================= */
+    .lead-pip {
+      position: absolute;
+      display: none;
+      width: 9px;
+      height: 9px;
+      margin: -4.5px 0 0 -4.5px;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .lead-pip.on { display: block; }
+    /* 小さな四角の枠。中心に点を1つ置く */
+    .lead-pip::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(159, 225, 203, 0.75);
+    }
+    .lead-pip::after {
+      content: "";
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 1px; height: 1px;
+      margin: -0.5px 0 0 -0.5px;
+      background: #9fe1cb;
+      box-shadow: 0 0 4px rgba(159, 225, 203, 0.9);
+    }
+
+    /* =================================================================
        ロックオン表示(ミサイルを撃てる状態)
        照準の位置に重ねるので、位置は main.js が毎コマ書き込む。
        ================================================================= */
@@ -567,8 +646,23 @@
 
     /* コックピットでは、右の推進剤/シールド計器の「左どなり」に置く。
        以前は同じ場所に重なっていて、あとから描かれる右計器の下に隠れていた。
-       計器台の一列に並べることで、隠れず、かつ計器盤に組み込まれて見える。 */
-    .hud.cockpit .weapon-panel { right: 246px; bottom: 14px; }
+       計器台の一列に並べることで、隠れず、かつ計器盤に組み込まれて見える。
+       箱をやめて他の計器と同じ「彫り込み」の見え方に揃え、面も同じだけ倒す。 */
+    .hud.cockpit .weapon-panel {
+      right: 232px;
+      bottom: 14px;
+      background: none;
+      border: none;
+      box-shadow: none;
+      clip-path: none;
+      transform: perspective(760px) rotateX(15deg);
+      transform-origin: 50% 100%;
+    }
+    /* レーダーも同じだけ倒して、計器台の面に並んでいるように見せる */
+    .hud.cockpit .radar-wrap {
+      transform: perspective(760px) rotateX(15deg);
+      transform-origin: 50% 100%;
+    }
 
     /* =================================================================
        レーダースコープ(仕様書9.6「下段左:自機中心・精度は電力依存」)
@@ -1025,6 +1119,11 @@
       <b class="no-signal">NO SIGNAL</b>
     </div>
 
+    <!-- 偏差照準(リードパイパー)。
+         「動いている敵に当てるには、ここへ撃てばよい」という点。
+         主役はあくまで本来の照準なので、ごく小さく控えめに出す -->
+    <div class="lead-pip" id="lead-pip"></div>
+
     <!-- ロックオン表示。照準の位置に重ねる。三人称でもコックピットでも出す -->
     <div class="lock-ring" id="lock-ring">
       <div class="lock-ring-outer"></div>
@@ -1034,6 +1133,9 @@
 
     <!-- 撃墜数 -->
     <div class="kill-counter">KILLS <b id="kill-count">0</b><span style="font-size:11px">/<span id="kill-goal">10</span></span></div>
+
+    <!-- 計器盤ひとまとまり。コックピットでは機体と一緒に揺れる -->
+    <div class="console-frame" id="console-frame">
 
     <!-- 兵装パネル(仕様書9.6 下段右) -->
     <div class="weapon-panel beam" id="weapon-panel">
@@ -1148,6 +1250,8 @@
       </div>
 
     </div>
+
+    </div><!-- /console-frame -->
 
     <!-- ミッション終了時のリザルト -->
     <div class="mission-failed" id="result-panel">

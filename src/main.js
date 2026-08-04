@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-45 fx/no-signal';
+const BUILD = 'p1-46 collide/dash';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -99,7 +99,7 @@ const MISSION = {
 
 // --- 敵の攻撃を受けたときの設定 -------------------------------------
 const INCOMING = {
-  SHIELD_DAMAGE:    15,   // 敵弾1発でシールドが減る量
+  SHIELD_DAMAGE:    17,   // 敵弾1発でシールドが減る量
   SHAKE_STRENGTH: 0.55,   // 画面の揺れの強さ
   SHAKE_HULL:     1.30,   // HULL損傷時はもっと大きく揺らす
   SHAKE_SEC:      0.35,   // 揺れが収まるまでの秒数
@@ -390,6 +390,8 @@ const markerLayer   = document.getElementById('marker-layer');
 const crosshairEl   = document.querySelector('.crosshair');
 const lockRingEl    = document.getElementById('lock-ring');
 const helpEl        = document.getElementById('help');
+const consoleFrameEl = document.getElementById('console-frame');
+const leadPipEl      = document.getElementById('lead-pip');
 const viewModeEl    = document.getElementById('view-mode');
 const weaponPanelEl = document.getElementById('weapon-panel');
 const weaponNameEl  = document.getElementById('wp-name');
@@ -873,6 +875,36 @@ function onEnemyOverheat() {
   speakVoice('TARGET_OVERHEAT');
 }
 
+// 自機が敵機に激突した。scene.js から呼ばれる
+function onPlayerCollide() {
+  if (missionState !== 'active') return;
+  playPlayerExplosion();
+  startShake(COLLIDE.SHAKE);
+  hitVignette = 0.6;
+  addCombatLog('接触 ― 機体損傷', 'hull');
+  speakVoice('CRITICAL_DAMAGE');
+
+  // シールドを大きく削り、抜けたぶんはHULLへ。ぶつかれば無事では済まない
+  const before = shieldHp;
+  shieldHp = Math.max(shieldHp - COLLIDE.SHIELD_DAMAGE, 0);
+  hitsTaken += 1;
+  if (before <= 0 || shieldHp <= 0) {
+    hullDamage += 1;
+    playHullDamage();
+    const brokenName = breakRandomInstrument();
+    addCombatLog('HULL DAMAGE ' + hullDamage + '/' + HULL.MAX_DAMAGE, 'hull');
+    if (brokenName) addCombatLog(brokenName + ' 損傷', 'hull');
+    if (hullDamage >= HULL.MAX_DAMAGE) endMission('failed');
+  }
+}
+
+// 敵機どうしが激突した(こちらの戦果にはしない)
+function onEnemyCollide() {
+  if (missionState !== 'active') return;
+  playExplosion();
+  addCombatLog('敵機 接触 ― 相討ち', 'kill');
+}
+
 // 敵がフレアを撒いた
 function onEnemyFlare(tooHot) {
   playFlare();
@@ -1093,6 +1125,43 @@ function renderLockRing() {
   lockRingEl.classList.add('on');
   lockRingEl.style.left = ((aim.x * 0.5 + 0.5) * 100) + '%';
   lockRingEl.style.top  = ((-aim.y * 0.5 + 0.5) * 100) + '%';
+}
+
+// ===================================================================
+// 偏差照準(リードパイパー)
+//
+// 「弾が届くころ、敵はここにいる」という点に小さな印を出す。
+// 印に機首を合わせて撃てば当たる ― 動く敵に当てるための道具。
+// 判定は3D側(scene.js の getLeadNdc)。ここは置くだけ。
+// ===================================================================
+function renderLeadPip() {
+  // センサーが壊れていると、そもそも精密な予測は出せない
+  const lead = isBroken('sensor') ? null : getLeadNdc();
+  if (!lead || !lead.visible) { leadPipEl.classList.remove('on'); return; }
+
+  leadPipEl.classList.add('on');
+  leadPipEl.style.left = ((lead.x * 0.5 + 0.5) * 100) + '%';
+  leadPipEl.style.top  = ((-lead.y * 0.5 + 0.5) * 100) + '%';
+}
+
+// ===================================================================
+// 計器盤を機体と一緒に揺らす(コックピット視点のみ)
+//
+// 計器は機体に付いている物なので、機体が揺れれば計器も画面の中で動く。
+// 動かないと、そこだけ画面に貼られた別物に見えてしまう ―
+// 「浮いて見える」の正体はこれ。
+//
+// 三人称では計器はコックピットの外の表示なので、動かさない。
+// ===================================================================
+function renderConsoleSway() {
+  if (!isCockpitView()) {
+    if (consoleFrameEl.style.transform) consoleFrameEl.style.transform = '';
+    return;
+  }
+  const s = cockpitHudSway();
+  consoleFrameEl.style.transform =
+    'translate(' + s.x.toFixed(2) + 'px,' + s.y.toFixed(2) + 'px) ' +
+    'rotate(' + s.rot.toFixed(3) + 'deg)';
 }
 
 function renderRadar() {
@@ -1776,6 +1845,8 @@ function tick(now) {
   renderWeapon();      // 兵装パネル(残弾)
   renderCrosshair();   // 照準(弾道の向きに合わせる)
   renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
+  renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
+  renderConsoleSway(); // 計器盤を機体の揺れに追従させる
 
   requestAnimationFrame(tick);   // 次のコマを予約(これで無限に回り続ける)
 }
