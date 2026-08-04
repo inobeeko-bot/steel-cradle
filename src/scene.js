@@ -127,7 +127,10 @@ const COCKPIT = {
   // 速度による視野角の変化があっても、画面上の比率が保たれる。
   PANEL_DIST:    2.0,   // 内装を置く距離
 
-  DASH_TOP:     0.26,   // 計器台が覆う画面下部の割合(HTML計器を載せる高さぶん確保)
+  // 計器台が覆う画面下部の割合。
+  // コックピットではここに計器の絵をそのまま貼るので、
+  // この帯の高さがそのまま計器盤の高さになる。
+  DASH_TOP:     0.30,
   DASH_TAPER:   0.66,   // 台形の上辺 ÷ 下辺。小さいほど台形がはっきりする
 
   DASH_TRIM:   0.009,   // 計器台の上辺に走る明るい縁取りの太さ(画面高さの割合)
@@ -1352,13 +1355,37 @@ function createCockpitInterior() {
   );
   g.add(trim);
 
+  // --- 計器の面(canvasを貼った板)---
+  // ここが「重ねる」のをやめた本体。計器の絵を canvas に描き、
+  // それを計器台の手前に1枚の板として置く。
+  // 板は内装の一部なので、機体が揺れれば一緒に揺れ、傾ければ一緒に傾く。
+  // 遠近も勝手に付く ― HTMLを重ねていたときは、どれも自前で作る必要があった。
+  const faceTex = new THREE.CanvasTexture(initConsole3D());
+  faceTex.minFilter = THREE.LinearFilter;   // 縮小時のちらつきを抑える
+  faceTex.generateMipmaps = false;
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({
+      map: faceTex, transparent: true, depthWrite: false,
+    })
+  );
+  g.add(face);
+
   // 毎コマの配置計算で使うので、部品を覚えておく
   g.userData = {
     dash: dash, pillars: pillars, topBar: topBar, trim: trim, nose: nose,
     sightBase: sightBase, sightPlane: sightPlane, sightGlass: sightGlass,
     reticle: reticle, reticleMat: reticleMat,
+    face: face, faceTex: faceTex,
   };
   return g;
+}
+
+// 計器の絵を「描き直した」と3Dへ知らせる。main.js が毎コマ呼ぶ
+function markConsoleTextureDirty() {
+  if (cockpitInterior && cockpitInterior.userData.faceTex) {
+    cockpitInterior.userData.faceTex.needsUpdate = true;
+  }
 }
 
 // ===================================================================
@@ -1385,6 +1412,25 @@ function layoutCockpitInterior() {
   const dashW = halfW * 2 * 1.30;
   parts.dash.scale.set(dashW, dashH, 1);
   parts.dash.position.set(0, dashTopY - dashH / 2, -d);
+
+  // --- 計器の面 ---
+  // 計器台のうち「実際に見えている帯」に収める。
+  // 台そのものは画面の下へずっと伸ばしてあるので(隙間を作らないため)、
+  // 台の高さに合わせると絵の下半分が画面外へ落ちて切れてしまう。
+  // 見えているのは上辺から画面下端までなので、そこへ収める。
+  const bandH = dashTopY + halfH;              // 見えている帯の高さ
+  const aspect = CONSOLE3D.W / CONSOLE3D.H;
+
+  let faceH = bandH * 0.94;
+  let faceW = faceH * aspect;
+  // 横がはみ出すなら幅で決め直す(縦横比は保つ)
+  const maxW = halfW * 2 * 0.99;
+  if (faceW > maxW) { faceW = maxW; faceH = faceW / aspect; }
+
+  parts.face.scale.set(faceW, faceH, 1);
+  // 上辺を計器台の上辺に合わせて吊るす。ほんの少し手前(+0.02)に出して、
+  // 台の面と重なってちらつくのを防ぐ。
+  parts.face.position.set(0, dashTopY - faceH / 2, -d + 0.02);
 
   // --- 機首:計器台の上辺から NOSE_RISE ぶん突き出す ---
   // 計器台より少し「奥」に置くのがポイント。こうすると根元が計器台に隠れ、

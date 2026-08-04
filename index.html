@@ -1148,8 +1148,6 @@
       <div class="wp-flare" id="wp-flare-row">FLARE <b id="wp-flare">48</b> &nbsp; C</div>
     </div>
 
-    <!-- 戦闘ログ(HIT / KILL) -->
-    <div class="combat-log" id="combat-log"></div>
 
     <!-- レーダースコープ(自機中心・機首方向が常に上) -->
     <div class="radar-wrap">
@@ -1161,16 +1159,7 @@
       <div class="radar-label">RANGE <b id="radar-range">0</b> &nbsp; SENSOR <b id="radar-sensor">25</b>%</div>
     </div>
 
-    <!-- 敵マーカーの置き場。中身は main.js が敵の数だけ作る -->
-    <div id="marker-layer" style="position:absolute; inset:0; pointer-events:none;"></div>
 
-    <div class="hud-top">
-      <!-- 残り時間(仕様書9.1:1ゲーム最長10分) -->
-      <div class="mission-timer" id="mission-timer">10:00</div>
-      <div class="header">
-        <div>PHASE 1 ― COMBAT CORE &nbsp;<span id="build" style="color:#33424d"></span></div>
-      </div>
-    </div>
 
     <!-- 左:熱(仕様書9.6「左縦:HEATゲージ」) -->
     <div class="hud-left">
@@ -1253,6 +1242,22 @@
 
     </div><!-- /console-frame -->
 
+    <!-- ここから下は計器盤ではないので console-frame の外。
+         コックピットで計器盤を隠しても、これらは出し続ける -->
+    <!-- 戦闘ログ(HIT / KILL) -->
+    <div class="combat-log" id="combat-log"></div>
+
+    <!-- 敵マーカーの置き場。中身は main.js が敵の数だけ作る -->
+    <div id="marker-layer" style="position:absolute; inset:0; pointer-events:none;"></div>
+
+    <div class="hud-top">
+      <!-- 残り時間(仕様書9.1:1ゲーム最長10分) -->
+      <div class="mission-timer" id="mission-timer">10:00</div>
+      <div class="header">
+        <div>PHASE 1 ― COMBAT CORE &nbsp;<span id="build" style="color:#33424d"></span></div>
+      </div>
+    </div>
+
     <!-- ミッション終了時のリザルト -->
     <div class="mission-failed" id="result-panel">
       <div class="mf-title" id="result-title">MISSION FAILED</div>
@@ -1279,6 +1284,7 @@
 
   <!-- 音(Web Audio API で合成。素材ファイルは使わない) -->
   <script src="src/audio.js"></script>
+  <script src="src/console3d.js"></script>
 
   <!-- コックピット音声(ブラウザ内蔵の読み上げ機能) -->
   <script src="src/voice.js"></script>

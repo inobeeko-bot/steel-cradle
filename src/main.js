@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-46 collide/dash';
+const BUILD = 'p1-47 console in 3D';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -1145,6 +1145,73 @@ function renderLeadPip() {
 }
 
 // ===================================================================
+// 計器盤を3Dの計器台に描く(コックピット視点のみ)
+//
+// HTMLの計器を上に重ねるのをやめ、計器の絵を canvas に描いて
+// 3Dの板に貼る。板は機体の一部なので、揺れも傾きも遠近も
+// こちらで何もしなくても付いてくる。
+//
+// ここでは「今の状態」を集めて console3d.js へ渡すだけ。
+// 描き方はあちら、貼り付け先は scene.js。
+// ===================================================================
+function renderConsole3D(dt) {
+  const sensorPct = effectiveSensor();
+  const w = currentWeapon();
+  const a = currentBomb();
+  const left = ammo[weaponIndex];
+
+  drawConsole3D({
+    power: power,
+    heat: heat,
+    heatRate: (currentHeatRate() >= 0 ? '+' : '') + currentHeatRate().toFixed(1) + '/s',
+    radiatorOpen: radiatorOpen,
+    propellant: propellant,
+    shieldHp: shieldHp,
+    // 計器が壊れていると表示だけが揺らぐ(実際の値は正しい)
+    shieldShown: isBroken('shieldhp')
+      ? Math.max(0, Math.round(shieldHp + (Math.random() - 0.5) * 26))
+      : Math.round(shieldHp),
+    shieldRegen: currentShieldRegen(),
+
+    weapon: {
+      label: w.label, jp: w.jp,
+      ammo: (left === Infinity) ? '∞' : String(left),
+      heatText: w.burst ? ('+' + w.heat + '×' + w.burst) : ('+' + w.heat),
+      low: (left !== Infinity && left <= Math.max(2, Math.ceil(w.ammo * 0.25)))
+           || power.weapon < w.minPower,
+      isBeam: w.key === 'BEAM',
+    },
+    bomb: { label: a.label, ammo: bombAmmo[bombIndex],
+            low: bombAmmo[bombIndex] <= 0 || power.weapon < a.minPower },
+    flare: flareCount,
+    flareLow: flareCount <= Math.ceil(FLARE.COUNT / 6) || heat >= FLARE.HEAT_LIMIT,
+
+    contacts: getContacts(sensorPct),
+    inbound: missileContacts(sensorPct),
+    sensorRange: sensorRange(sensorPct),
+    sensorPct: sensorPct,
+    radarNoisy: isBroken('sensor') || empLeft > 0,
+
+    broken: {
+      weapon: isBroken('weapon'), shield: isBroken('shield'),
+      engine: isBroken('engine'), sensor: isBroken('sensor'),
+      heat: isBroken('heat'), propellant: isBroken('propellant'),
+      shieldhp: isBroken('shieldhp'),
+    },
+
+    speed: Math.round(currentSpeed()),
+    target: currentEnemyState(),
+    tHeat: nearestEnemyHeat(),
+    hull: HULL.MAX_DAMAGE - hullDamage,
+    hullMax: HULL.MAX_DAMAGE,
+    preset: presetEl.textContent,
+    empLeft: empLeft,
+  }, dt);
+
+  markConsoleTextureDirty();
+}
+
+// ===================================================================
 // 計器盤を機体と一緒に揺らす(コックピット視点のみ)
 //
 // 計器は機体に付いている物なので、機体が揺れれば計器も画面の中で動く。
@@ -1154,14 +1221,12 @@ function renderLeadPip() {
 // 三人称では計器はコックピットの外の表示なので、動かさない。
 // ===================================================================
 function renderConsoleSway() {
-  if (!isCockpitView()) {
-    if (consoleFrameEl.style.transform) consoleFrameEl.style.transform = '';
-    return;
+  // コックピットでは計器は3Dの面に描かれるので、HTMLの計器盤はまるごと隠す。
+  // 「重ねる」のをやめた、というのはこの1行のこと。
+  consoleFrameEl.style.display = isCockpitView() ? 'none' : '';
+  if (!isCockpitView() && consoleFrameEl.style.transform) {
+    consoleFrameEl.style.transform = '';
   }
-  const s = cockpitHudSway();
-  consoleFrameEl.style.transform =
-    'translate(' + s.x.toFixed(2) + 'px,' + s.y.toFixed(2) + 'px) ' +
-    'rotate(' + s.rot.toFixed(3) + 'deg)';
 }
 
 function renderRadar() {
@@ -1846,7 +1911,8 @@ function tick(now) {
   renderCrosshair();   // 照準(弾道の向きに合わせる)
   renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
   renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
-  renderConsoleSway(); // 計器盤を機体の揺れに追従させる
+  renderConsoleSway(); // 視点に応じてHTMLの計器盤を出し入れする
+  if (isCockpitView()) renderConsole3D(dt);   // 計器を3Dの計器台に描く
 
   requestAnimationFrame(tick);   // 次のコマを予約(これで無限に回り続ける)
 }
