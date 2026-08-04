@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-56 third UI';
+const BUILD = 'p1-58 track toggle';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -437,6 +437,7 @@ const dpClosureEl    = document.getElementById('dp-closure');
 const dpDriftEl      = document.getElementById('dp-drift');
 const dpBurstEl      = document.getElementById('dp-burst');
 const dpTheatEl      = document.getElementById('dp-theat');
+const autoTrackEl    = document.getElementById('auto-track');
 const viewModeEl    = document.getElementById('view-mode');
 const weaponPanelEl = document.getElementById('weapon-panel');
 const weaponNameEl  = document.getElementById('wp-name');
@@ -533,6 +534,10 @@ function renderHeat() {
   const baseRed = (hullDamage / HULL.MAX_DAMAGE) * 0.55;
   const flashRed = hitVignette / 0.45;
   vignetteEl.style.opacity = Math.min(baseRed + flashRed * 0.75, 1);
+
+  // 自動追尾の入切
+  autoTrackEl.textContent = isAimAssistOn() ? 'ON' : 'OFF';
+  autoTrackEl.style.color = isAimAssistOn() ? '' : '#4a5b66';
 
   // EMPを浴びている間だけ、残り秒数を出す
   empBadgeEl.classList.toggle('on', empLeft > 0);
@@ -772,6 +777,15 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     helpEl.classList.toggle('on');
     playViewClick();
+    return;
+  }
+
+  // Z キー … 照準の自動追尾の入切
+  // 自分で狙いたい人には邪魔になりうるので、いつでも切れるようにしておく。
+  if (event.key.toLowerCase() === 'z') {
+    setAimAssist(!isAimAssistOn());
+    playPresetConfirm();
+    addCombatLog('AUTO TRACK ' + (isAimAssistOn() ? 'ON' : 'OFF'), 'warn');
     return;
   }
 
@@ -1324,6 +1338,7 @@ function renderConsole3D(dt) {
     heatRate: (currentHeatRate() >= 0 ? '+' : '') + currentHeatRate().toFixed(1) + '/s',
     radiatorOpen: radiatorOpen,
     radiatorMode: radiatorMode,
+    autoTrack: isAimAssistOn(),
     propellant: propellant,
     shieldHp: shieldHp,
     // 計器が壊れていると表示だけが揺らぐ(実際の値は正しい)

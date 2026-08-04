@@ -385,8 +385,8 @@ const AIM = {
   // 捕捉を続けるとロックが進み、満ちると LOCKED になる。
   // かかる時間はセンサーの電力配分で変わる。
   // 「センサー厚め → ミサイル型」という配分スタイルの対応を、この数字が作る。
-  LOCK_SEC_MIN:  0.58,   // センサー100%のときのロック所要時間(秒)
-  LOCK_SEC_MAX:  2.08,   // センサー0%のときの所要時間
+  LOCK_SEC_MIN:  0.42,   // センサー100%のときのロック所要時間(秒)
+  LOCK_SEC_MAX:  1.55,   // センサー0%のときの所要時間
   LOCK_KEEP:      0.6,   // 照準から外れてもロックを保つ猶予(秒)
 
   // 偏差照準で「曲がりぶん」を読むときに使う時間の上限(秒)。
@@ -589,16 +589,19 @@ const PYRO = {
   RADIUS:       22,   // 炸裂して燃焼片が届く範囲
   DAMAGE:        1,   // HPを削る力は弱い。狙いはあくまで熱
   HEAT_ADD:     34,   // 炸裂の中心で敵のHEATに加える量
-  BURN_SEC:    5.0,   // 燃え続ける秒数(この間ずっと熱が入り続ける)
+  BURN_SEC:    7.0,   // 燃え続ける秒数(この間ずっと熱が入り続ける)
   BURN_RATE:     7,   // 燃焼中に毎秒加わる熱
-  MARK_SEC:    6.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
+  MARK_SEC:    9.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
 
   // --- 熱に基づくデバフ(この武器の本命)---
   // 燃焼片が放熱面にこびりついて、熱を捨てられなくする。
   // 敵は「熱が入る」だけでなく「熱を逃がせない」状態になるので、
   // 撃ち続ければ自分の発熱だけで勝手にシャットダウンへ向かう。
   VENT_MULT:  0.30,   // 放熱能力をこの割合まで落とす(毎秒9.0 → 2.7)
-  DEBUFF_SEC:  8.0,   // 放熱不能が続く秒数
+  // 放熱不能が続く秒数。燃焼(7.0)より長く取ってあるのが肝 ―
+  // 火が消えてからも熱を捨てられない時間が残るので、
+  // そこへ撃ち込めば自分の発熱だけで押し切れる。
+  DEBUFF_SEC: 12.0,
 
   SELF_RADIUS:  14,   // 自機がこれより近いと自分も浴びる
   SELF_HEAT:    22,   // 浴びたときに自分の熱に加わる量
@@ -2139,6 +2142,17 @@ function updateEnemyVelocity(dt) {
     }
 
     _rawVel.subVectors(e.group.position, e.prevPos).divideScalar(k);
+
+    // リスポーンなどで位置が飛ぶと、1コマで何百も動いたことになり、
+    // でたらめな速度と加速度が出て偏差照準が明後日を指す。
+    // ありえない速さは測定ミスとみなして捨てる。
+    const MAX_REAL = AI.EVADE_SPEED * 2.5;
+    if (_rawVel.length() > MAX_REAL) {
+      e.vel.set(0, 0, 0); e.acc.set(0, 0, 0);
+      e.prevVel.set(0, 0, 0); e.prevPos.copy(e.group.position);
+      continue;
+    }
+
     e.vel.lerp(_rawVel, blend);
 
     // 加速度も測る。旋回している相手は、速度の向きが毎コマ変わる ―
@@ -2355,6 +2369,10 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
 // の3つで、気づかない強さに抑えている。
 // ===================================================================
 const _assistAim = new THREE.Vector3();
+
+// 照準の自動追尾を外から入切する(Zキー)
+function setAimAssist(on) { ASSIST.ENABLED = !!on; }
+function isAimAssistOn() { return !!ASSIST.ENABLED; }
 
 function applyAimAssist(dt, authority) {
   if (!ASSIST.ENABLED) return;
@@ -4104,6 +4122,12 @@ function respawnEnemy(e) {
   setEnemyState(e, 'approach');
   e.fireTimer = AI.FIRE_INTERVAL;
   e.telegraph = 0;
+  // 位置が飛ぶので、速度の測定もやり直す(古い値を引きずらせない)
+  if (e.vel) {
+    e.vel.set(0, 0, 0); e.acc.set(0, 0, 0);
+    e.prevVel.set(0, 0, 0); e.prevPos.copy(e.group.position);
+  }
+
   e.heat = 0;
   e.burnLeft = 0;
   e.ventDown = 0;

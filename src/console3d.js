@@ -677,6 +677,7 @@ function drawConsole3D(s, dt) {
     ['HULL', s.hull + '/' + s.hullMax], ['HEAT RATE', s.heatRate],
     ['PRESET', s.preset],
   ];
+  items.push(['A-TRK', s.autoTrack ? 'ON' : 'OFF']);
   if (s.empLeft > 0) items.push(['EMP', s.empLeft.toFixed(1) + 's']);
 
   let ix = 250;
