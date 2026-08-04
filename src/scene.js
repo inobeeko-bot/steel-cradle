@@ -379,7 +379,19 @@ const SENSOR = {
 const AIM = {
   CAPTURE_MULT:   2.2,   // 捕捉半径 = 敵の当たり半径 × これ
   CAPTURE_SPREAD: 0.05,  // 距離に応じて広がる分(遠い敵も捉えられるように)
-  CAPTURE_RANGE:  480,   // この距離より遠い敵は捕捉しない
+  // この距離より遠い敵は捕捉しない(上限)。
+  // ミサイルは切り札枠なので、銃では届かない距離から仕掛けられるようにしてある。
+  // 銃の射程(弾速90×寿命2.2 ≒ 198)の6倍。
+  CAPTURE_RANGE: 1200,
+
+  // ただし実際に届く距離は、索敵半径にこの倍率をかけたところまで。
+  // 見えていない相手をロックできるのはおかしいので、センサーに縛ってある。
+  // これで「センサー厚め → ミサイル型」が距離という形で効いてくる。
+  //   センサー  0% … 索敵45 → ロック225
+  //   センサー 25% … 索敵99 → ロック494
+  //   センサー 60% … 索敵174 → ロック870
+  //   センサー100% … 索敵260 → 上限の1200
+  LOCK_RANGE_MULT: 5.0,
 
   // --- ロックオン(武器仕様書:ミサイルは発射にセンサーロック必須)---
   // 捕捉を続けるとロックが進み、満ちると LOCKED になる。
@@ -434,9 +446,11 @@ let lockGrace = 0;         // 照準から外れてからロックが切れる�
 
 // --- ミサイル(武器仕様書:切り札枠。発射にセンサーロック必須)---------
 const MISSILE = {
-  SPEED:       66,   // 弾速。ビーム(90)より遅いが、曲がって追いかける
+  SPEED:       95,   // 弾速。遠距離から撃つので、遅すぎると届く前に切れる
   TURN_RATE:  3.6,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
-  LIFE:       9.0,   // 燃焼時間(秒)。切れると失速して消える
+  // 燃焼時間(秒)。切れると失速して消える。
+  // 射程 = 弾速 × 寿命 = 95 × 16 = 1520。ロック可能距離(1200)より長く取る。
+  LIFE:      16.0,
   DAMAGE:       5,   // 敵HPを減らす量。敵の最大HPと同じ = 当たれば1発で撃墜
   HIT_RADIUS: 5.2,   // 当たり判定。ビームよりずっと甘い(近接信管のつもり)
   COLOR:  0xff9d4d,
@@ -460,17 +474,31 @@ const MISSILE = {
 // ===================================================================
 const SEEKER = {
   CONE:      1.05,   // シーカーの視野(進行方向からの半角・ラジアン)。約60度
-  RANGE:      160,   // 熱源を見つけられる距離
+  // 熱源を見つけられる距離。
+  // 遠距離から撃つようになったので、シーカーの目も同じだけ届かせる ―
+  // 短いと、発射直後は何も見えないまま真っすぐ飛んでしまう。
+  RANGE:      520,
   MIN_DIST:     7,   // 距離の下限。近すぎる熱源で信号が跳ね上がるのを防ぐ
   BASE_HEAT:   26,   // 機体の基礎熱源。HEATが0でもエンジンはこれだけ熱い
-  HEAT_SCALE: 3.4,   // 機体のHEAT(0〜100)を熱源にどれだけ足すか
+  // 機体のHEAT(0〜100)を熱源にどれだけ足すか。
+  // フレアが「掴んだら離さない」ようになったぶん、掴まれるかどうかが
+  // すべてを決める。そこで熱の効きを強くして、
+  // 熱いほどフレアより本体が明るく見えるようにしてある。
+  HEAT_SCALE: 7.0,
   // フレア1個ぶんの熱源(燃え尽きるにつれて減る)。
   // ここが「自機の熱がどこまでならフレアが効くか」を決める。
   // 逆二乗なので終盤は自機のほうが近くなる ― その不利を覆せるだけの熱量が要る。
-  // 800 で、自機の熱75%あたりまで効き、80%を超えると本体のほうが強く見える。
-  FLARE_HEAT: 800,
+  // ミサイルが速くなり、フレアが自機から離れきる前に迎撃点へ着くようになった。
+  // 距離で稼げなくなったぶん、熱量で補う。
+  FLARE_HEAT: 1050,
   LOCK_BIAS:  1.5,   // 発射時にロックした相手へのひいき。
                      // これが無いと、少し熱い物が視野をよぎるたびに乗り換えてしまう
+
+  // フレアに食いついたあと、何秒はそのフレアを追い続けるか。
+  // 毎コマ見比べ直すと、フレアの脇を通り抜けた瞬間に本体へ戻ってしまい、
+  // 「逸らせた」が一瞬で覆る。実際のシーカーも一度掴んだ熱源を追い続けるので、
+  // 掴んだら少しのあいだは離さない、という扱いにする。
+  DECOY_HOLD: 3.0,
 };
 
 let missiles = [];
@@ -502,7 +530,10 @@ const FLARE = {
   // 射出速度と減速。ここが弱いとフレアが自機から十分に離れず、
   // ミサイルがフレアへ向かう途中で自機の当たり判定(5.2)に触れてしまう。
   // 迎撃までの約0.7秒で、当たり判定より十分に大きく離れる必要がある。
-  SPEED:       58,    // 撒かれたあと飛ぶ速さ
+  // 撒かれたあと飛ぶ速さ。
+  // ミサイルが速くなった(66→95)ぶん、迎撃までの時間が短い。
+  // 同じだけ離れるには、こちらも速く撃ち出す必要がある。
+  SPEED:       76,
   SPREAD:      16,    // 左右上下にばらける量
   DRAG:       0.10,   // 減速の強さ。小さいほど遠くまで離れる
   DECOY_RANGE: 75,    // この距離内の敵パイロットの狙いを外せる
@@ -2006,6 +2037,12 @@ function updateAim(dt, sensorPercent, allowLock) {
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
 
+  // 捉えられる距離は索敵半径に縛られる(上限は CAPTURE_RANGE)。
+  // センサーへ配るほど、遠くから仕掛けられるようになる。
+  const captureRange = Math.min(
+    AIM.CAPTURE_RANGE,
+    sensorRange(sensorPercent) * AIM.LOCK_RANGE_MULT);
+
   let best = null;
   let bestAhead = Infinity;
 
@@ -2016,7 +2053,7 @@ function updateAim(dt, sensorPercent, allowLock) {
 
     // 前方への距離。マイナスなら後ろにいるので対象外
     const ahead = toEnemy.dot(forward);
-    if (ahead <= 0 || ahead > AIM.CAPTURE_RANGE) continue;
+    if (ahead <= 0 || ahead > captureRange) continue;
 
     // 照準線からの横のずれ。
     // 「敵へのベクトル」から「前方成分」を引くと、横方向のずれだけが残る。
@@ -2686,8 +2723,26 @@ function updateMissiles(dt) {
     // 曲がる速さには上限があるので、急に乗り換えても即座には向き直れない。
     // 「フレアに引っかかる」も「別の機体に吸い寄せられる」も、
     // すべてこの1つの仕組みから出てくる。
-    const seek = seekerAim(m);
-    m.decoyed = !!(seek && seek.isFlare);   // レーダー表示用
+    // --- フレアを掴んでいる間は、見比べ直さずそれを追う ---
+    if (m.decoyRef && m.decoyTimer > 0 && flares.indexOf(m.decoyRef) >= 0) {
+      m.decoyTimer -= dt;
+    } else {
+      m.decoyRef = null;
+    }
+
+    let seek;
+    if (m.decoyRef) {
+      seek = { pos: m.decoyRef.mesh.position, isFlare: true };
+    } else {
+      seek = seekerAim(m);
+      // 新しく掴んだのがフレアなら、そこから DECOY_HOLD 秒は離さない
+      if (seek && seek.isFlare) {
+        for (const f of flares) {
+          if (f.mesh.position === seek.pos) { m.decoyRef = f; m.decoyTimer = SEEKER.DECOY_HOLD; break; }
+        }
+      }
+    }
+    m.decoyed = !!(seek && seek.isFlare);   // レーダー表示と警報に使う
 
     if (seek) {
       const want = seek.pos.clone().sub(m.mesh.position).normalize();
@@ -3819,8 +3874,13 @@ function threatStatus() {
   // 実際に飛んできているミサイルがあれば、そちらが最上位。
   // ロック(来るかもしれない)と、発射済み(確実に来る)を分けるのが要点 ―
   // LOCK は「フレアを切るか迷う」段階、MISSILE は「もう迷う段階ではない」。
+  //
+  // ただしフレアに食いついたミサイルは数えない。
+  // もうこちらを見ていないのに警報が鳴り続けると、
+  // 「フレアが効いたのかどうか」が分からないままになる ―
+  // 警報が消えることが、そのまま「逸らせた」の合図になる。
   for (const m of missiles) {
-    if (m.fromEnemy) { level = 'MISSILE'; break; }
+    if (m.fromEnemy && !m.decoyed) { level = 'MISSILE'; break; }
   }
 
   return { level: level, count: count };
