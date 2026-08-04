@@ -88,6 +88,10 @@ const ADV_CONFIG = {
   // 歩行シートのコマ数。1周(=2歩)がこの枚数。
   WALK_FRAME_COUNT: 4,
 
+  // その場での作業アニメ(祖父の剪定など)の毎秒コマ数。
+  // 歩きと違って移動しないので、こちらは時間で送る。
+  WORK_ANIM_FPS: 3,
+
   // WALK_STEP_PX = 何px進むごとに1コマ進めるか。
   // 4コマで1周(=2歩)なので、1歩は2コマ = WALK_STEP_PX × 2。
   // 身長46pxに対して1歩21px前後が自然なので、10px/コマで噛み合う。
@@ -173,12 +177,21 @@ const STORY_SCENES = {
 
     // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
     npc: {
-      id: 'grandpa', x: 300,
-      // 祖父も同じ48×48のシート。ただし彼は歩かないので、コマは送らない。
-      // 歩行シートには「立ち」のコマが無いため、脚がいちばん揃って見える
-      // 通過コマを立ち姿として1枚だけ出している(4コマ版では添字1)。
+      // 樹冠の右端の真下。ここなら枝に手が届く
+      id: 'grandpa', x: 370,
+
+      // ふだんの姿:剪定の作業アニメ(2コマ)。コマ幅が48ではなく56なので、
+      // シートごとに幅を持たせてある。
+      work: { src: 'assets/adv/grandpa_work.png', frames: 2, w: 56, h: 48 },
+
+      // 話しかけられている間の姿。歩行シートには「立ち」のコマが無いので、
+      // 脚がいちばん揃って見える通過コマ(添字1)を borrow している。
       sprite: 'assets/adv/grandpa_walk_v4.png',
       standFrame: 1,
+
+      // ふだん向いている先。木のほうを見ながら剪定している。
+      // 会話が終わるとこの向きへ戻る。
+      faceX: 215,
       label: '祖父',
 
       talks: [
@@ -266,6 +279,10 @@ let storyAnimTime  = 0;    // コマを進めるための時計
 let storyAnimFrame = 0;    // いま何コマ目か
 let storyWalking   = false;
 
+// NPCの作業アニメの状態
+let storyWorkTime  = 0;
+let storyWorkFrame = 0;
+
 // ===================================================================
 // 拡大率を決めて、舞台の大きさを合わせる
 //
@@ -322,6 +339,18 @@ function storyGroundY(x) {
     }
   }
   return line[line.length - 1][1];
+}
+
+// ===================================================================
+// 人物を「ある地点のほう」へ向かせる(全NPC共通)
+//
+// 素材は右向きに描かれているので、左を向かせたいときだけ反転する。
+// 会話のたびに向き直る処理を1か所にまとめておくと、
+// NPCが増えても同じ1行で済む。
+// ===================================================================
+function faceActorTowards(el, selfX, targetX) {
+  const wantLeft = (targetX < selfX);
+  el.classList.toggle('flip', ADV_CONFIG.SPRITE.FACES_RIGHT ? wantLeft : !wantLeft);
 }
 
 // 人物の身長と幅。scale は「その人物が基準の何倍か」
@@ -389,11 +418,14 @@ function buildStoryScene(scene) {
   // --- 祖父 ---
   const n = scene.npc;
   storyNpcEl = document.createElement('div');
-  storyNpcEl.className = 'story-actor npc' + (n.sprite ? ' sprite' : '');
-  if (n.sprite) storyNpcEl.style.backgroundImage = 'url(' + n.sprite + ')';
-  else          storyNpcEl.style.background = n.color;
+  storyNpcEl.className = 'story-actor npc' + ((n.sprite || n.work) ? ' sprite' : '');
+  if (!n.sprite && !n.work) storyNpcEl.style.background = n.color;
   storyNpcEl.innerHTML = '<span>' + n.label + '</span>';
   storyWorldEl.appendChild(storyNpcEl);
+  storyWorkTime  = 0;
+  storyWorkFrame = 0;
+  // ふだんは作業しながら、決まった方角(木)を向いている
+  if (n.faceX !== undefined) faceActorTowards(storyNpcEl, n.x, n.faceX);
 
   // --- 出口の目印 ---
   storyExitEl = document.createElement('div');
@@ -439,7 +471,7 @@ function nearestStoryTarget() {
   if (dn < bestD) {
     bestD = dn;
     best = { kind: 'npc', data: n, x: n.x,
-             markH: n.sprite ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
+             markH: (n.sprite || n.work) ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
   }
 
   return best;
@@ -450,6 +482,10 @@ function nearestStoryTarget() {
 // ===================================================================
 function openStoryLines(lines) {
   if (!lines || !lines.length) return;
+  // 話しかけられたNPCは、相手のほうへ向き直る
+  if (storyScene && storyScene.npc && storyNpcEl) {
+    faceActorTowards(storyNpcEl, storyScene.npc.x, storyX);
+  }
   storyLines = lines;
   storyIndex = 0;
   storyTyped = 0;
@@ -482,6 +518,9 @@ function advanceStory() {
 function closeStoryLines() {
   storyLines = null;
   storyBoxEl.classList.remove('on');
+  // ふだんの向き(祖父なら木のほう)へ戻す
+  const n = storyScene && storyScene.npc;
+  if (n && n.faceX !== undefined && storyNpcEl) faceActorTowards(storyNpcEl, n.x, n.faceX);
 }
 
 // ===================================================================
@@ -608,16 +647,7 @@ function updateStory(dt) {
   // 上端 = 地面 − コマの高さ、左端 = x − コマ幅の半分 でぴたりと合う。
   const SPW = ADV_CONFIG.SPRITE.FRAME_W, SPH = ADV_CONFIG.SPRITE.FRAME_H;
   placeStoryActor(storyActorEl, storyX, SPW, SPH);
-  const n = storyScene.npc;
-  if (n.sprite) {
-    placeStoryActor(storyNpcEl, n.x, SPW, SPH);
-    // 立ち姿のコマを1枚だけ出す(歩かせない)
-    storyNpcEl.style.backgroundSize =
-      (SPW * ADV_CONFIG.WALK_FRAME_COUNT * S) + 'px ' + (SPH * S) + 'px';
-    storyNpcEl.style.backgroundPosition = (-(n.standFrame || 0) * SPW * S) + 'px 0px';
-  } else {
-    placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
-  }
+  renderStoryNpc(storyScene.npc, dt, S);
 
   // --- 出口の目印 ---
   storyExitEl.style.left   = Math.round((storyScene.exit.x - storyCamX) * S) + 'px';
@@ -662,6 +692,43 @@ function setStoryWalking(walking, distance) {
     (SP.FRAME_W * (walking ? ADV_CONFIG.WALK_FRAME_COUNT : 1) * S) + 'px ' +
     (SP.FRAME_H * S) + 'px';
   storyActorEl.style.backgroundPosition = (-storyAnimFrame * SP.FRAME_W * S) + 'px 0px';
+}
+
+// ===================================================================
+// NPCを描く
+//
+// ふだんは作業アニメ(2コマループ)、話しかけられている間は立ち姿。
+// 作業シートとはコマ幅が違うので、どちらを出すかで寸法も切り替える。
+// ===================================================================
+function renderStoryNpc(n, dt, S) {
+  const talking = !!storyLines;
+
+  if (n.work && !talking) {
+    // --- 作業中 ---
+    storyWorkTime += dt;
+    const per = 1 / ADV_CONFIG.WORK_ANIM_FPS;
+    while (storyWorkTime >= per) {
+      storyWorkTime -= per;
+      storyWorkFrame = (storyWorkFrame + 1) % n.work.frames;
+    }
+    placeStoryActor(storyNpcEl, n.x, n.work.w, n.work.h);
+    storyNpcEl.style.backgroundImage = 'url(' + n.work.src + ')';
+    storyNpcEl.style.backgroundSize =
+      (n.work.w * n.work.frames * S) + 'px ' + (n.work.h * S) + 'px';
+    storyNpcEl.style.backgroundPosition = (-storyWorkFrame * n.work.w * S) + 'px 0px';
+
+  } else if (n.sprite) {
+    // --- 会話中(手を止めてこちらを向いている)---
+    const W = ADV_CONFIG.SPRITE.FRAME_W, H = ADV_CONFIG.SPRITE.FRAME_H;
+    placeStoryActor(storyNpcEl, n.x, W, H);
+    storyNpcEl.style.backgroundImage = 'url(' + n.sprite + ')';
+    storyNpcEl.style.backgroundSize =
+      (W * ADV_CONFIG.WALK_FRAME_COUNT * S) + 'px ' + (H * S) + 'px';
+    storyNpcEl.style.backgroundPosition = (-(n.standFrame || 0) * W * S) + 'px 0px';
+
+  } else {
+    placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
+  }
 }
 
 // 人物を、その x の地面の高さに立たせる。
