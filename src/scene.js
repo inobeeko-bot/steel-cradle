@@ -457,8 +457,61 @@ const FLARE = {
   COLOR:  0xfff0b0,
 };
 
+// --- フレアの見た目 -------------------------------------------------
+// フレアはマグネシウム系の燃焼体。実物は直視できないほどの白い光を出し、
+// 燃え方が不安定なので激しくちらつく。単色の玉ではその感じが出ない。
+//
+// 3つ重ねて作る:
+//   芯   … ほぼ白。小さいが、いちばん明るい
+//   ハロー … まわりに広がる暖色。加算合成で「光が滲む」
+//   火の粉 … 燃え始めのあいだ、後ろへ散る
+//
+// 加算合成(AdditiveBlending)= 下の色に足し算で重ねる描き方。
+// 重なるほど白く飛ぶので、光っている物にはこれがいちばん効く。
+const FLARE_LOOK = {
+  CORE_COLOR: 0xffffff,   // 芯。マグネシウムの炎はほぼ白
+  HALO_COLOR: 0xffc766,   // まわりに滲む暖色(火の粉にも使う)
+  CORE_SIZE:    0.26,     // 白い芯の大きさ(立体)
+  HALO_SIZE:    3.40,     // 滲みの直径(板。常に正面を向く)
+  FLICKER_HZ:     34,     // ちらつきの速さ
+  FLICKER_AMT:  0.50,     // ちらつきの深さ(0=一定、1=消えるまで振れる)
+  SPARK_SEC:    0.08,     // 火の粉を出す間隔(秒)
+  SPARK_PHASE:  0.50,     // 燃え始めのこの割合の間だけ火の粉を出す
+  // 画面に出しておける破片の上限。フレアを連打されても描画が重くならないための蓋。
+  // 上限に達している間は火の粉を作らないだけで、見た目はほとんど変わらない。
+  SPARK_CAP:     220,
+};
+
 let flares = [];
-let flareGeometry = null;
+let flareGeometry = null;     // 芯の形
+let flareGlowTex = null;      // 滲みに貼る「中心が白く、外へ向けて消えていく」絵
+
+// ===================================================================
+// 滲み用の絵を、その場で描いて作る
+//
+// 多角形をいくら重ねても、光の滲みにはならない(縁が角張って見える)。
+// 中心から外へなめらかに消えていく円を1枚描き、それを板に貼るのがいちばん近い。
+//
+// 画像ファイルは使わない ― canvas に線を引いて作るので、素材は不要。
+// ===================================================================
+function makeFlareGlowTexture() {
+  const size = 64;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const g = cv.getContext('2d');
+
+  // createRadialGradient(内側の円, 外側の円) = 中心から外へ色を混ぜていく塗り
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0.00, 'rgba(255,255,255,1.00)');   // 中心は白く飛ぶ
+  grad.addColorStop(0.18, 'rgba(255,246,210,0.80)');
+  grad.addColorStop(0.45, 'rgba(255,190,95,0.30)');
+  grad.addColorStop(0.75, 'rgba(255,140,45,0.09)');
+  grad.addColorStop(1.00, 'rgba(255,120,30,0.00)');    // 外は完全に透明
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+
+  return new THREE.CanvasTexture(cv);
+}
 
 // --- パイロフォリック弾(武器仕様書3章)-----------------------------
 // 攻撃対象は敵の「熱」。ダメージ自体は低いが、着弾で燃焼片が付着して
@@ -1568,7 +1621,7 @@ function resetFlight() {
   // 飛んでいるものをすべて片付ける
   for (const m of missiles)   scene.remove(m.mesh);
   missiles.length = 0;
-  for (const f of flares)   { scene.remove(f.mesh); f.mesh.material.dispose(); }
+  for (const f of flares)   { scene.remove(f.mesh); f.coreMat.dispose(); f.haloMat.dispose(); }
   flares.length = 0;
   for (const b of bolts)      scene.remove(b.mesh);
   for (const b of enemyBolts) scene.remove(b.mesh);
@@ -2218,7 +2271,10 @@ function updateMissiles(dt) {
 // 指定した位置からフレアを1組(3個)撒く。最後の1個を返す。
 // 自機も敵も同じ処理を使う。
 function spawnFlareAt(position, quaternion) {
-  if (!flareGeometry) flareGeometry = new THREE.OctahedronGeometry(0.34);
+  if (!flareGeometry) {
+    flareGeometry = new THREE.OctahedronGeometry(1);       // 大きさは scale で決める
+    flareGlowTex  = makeFlareGlowTexture();
+  }
 
   // 機体から見た「右」「下」「後ろ」の向き
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
@@ -2227,10 +2283,29 @@ function spawnFlareAt(position, quaternion) {
   let last = null;
 
   for (let i = 0; i < 3; i++) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: FLARE.COLOR, transparent: true, opacity: 1,
+    // 芯と滲みを1つにまとめる入れ物。大きさを別々に動かせるようにする
+    const mesh = new THREE.Group();
+
+    // --- 芯:白く小さい。ここがいちばん明るい ---
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: FLARE_LOOK.CORE_COLOR, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false,
     });
-    const mesh = new THREE.Mesh(flareGeometry, mat);
+    const core = new THREE.Mesh(flareGeometry, coreMat);
+    core.scale.setScalar(FLARE_LOOK.CORE_SIZE);
+    mesh.add(core);
+
+    // --- 滲み:常に正面を向く板。Sprite は必ずカメラを向くので、
+    //     どの角度から見ても同じ「光の玉」に見える ---
+    const haloMat = new THREE.SpriteMaterial({
+      map: flareGlowTex, color: FLARE_LOOK.HALO_COLOR,
+      transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const halo = new THREE.Sprite(haloMat);
+    halo.scale.setScalar(FLARE_LOOK.HALO_SIZE);
+    mesh.add(halo);
+
     mesh.position.copy(position);
 
     // ★ 撒く向きがこの装備の成否を決める。
@@ -2252,7 +2327,13 @@ function spawnFlareAt(position, quaternion) {
     const vel = dir.multiplyScalar(FLARE.SPEED * (0.85 + Math.random() * 0.3));
 
     scene.add(mesh);
-    last = { mesh: mesh, velocity: vel, life: FLARE.LIFE, maxLife: FLARE.LIFE };
+    last = {
+      mesh: mesh, velocity: vel, life: FLARE.LIFE, maxLife: FLARE.LIFE,
+      coreMat: coreMat, haloMat: haloMat, core: core, halo: halo,
+      // ちらつきの位相を1個ずつずらす。同じにすると3個が揃って明滅して不自然
+      phase: Math.random() * 10,
+      sparkTimer: Math.random() * FLARE_LOOK.SPARK_SEC,
+    };
     flares.push(last);
   }
   return last;
@@ -2292,22 +2373,55 @@ function dropFlare(playerHeat) {
   return { ok: true, fooled: fooled };
 }
 
-// フレアを流し、燃え尽きたものを消す
+// フレアを流し、ちらつかせ、燃え尽きたものを消す
 function updateFlares(dt) {
+  const L = FLARE_LOOK;
+
   for (let i = flares.length - 1; i >= 0; i--) {
     const f = flares[i];
     f.mesh.position.addScaledVector(f.velocity, dt);
     f.velocity.multiplyScalar(1 - FLARE.DRAG * dt);   // だんだん減速
 
     f.life -= dt;
-    // 燃え尽きるにつれて小さく暗くなる
-    const t = Math.max(f.life / f.maxLife, 0);
-    f.mesh.material.opacity = t;
-    f.mesh.scale.setScalar(0.6 + t * 0.8);
+    const t = Math.max(f.life / f.maxLife, 0);        // 1 → 0
+
+    // --- ちらつき ---
+    // 速さの違う波を2つ重ねる。1つだと規則正しく明滅して機械的に見える。
+    // 位相(phase)はフレアごとに違うので、3個がばらばらに瞬く。
+    const n = 0.55
+      + 0.45 * Math.sin(sceneTime * L.FLICKER_HZ + f.phase)
+      + 0.30 * Math.sin(sceneTime * L.FLICKER_HZ * 0.41 + f.phase * 2.3);
+    const flicker = 1 - L.FLICKER_AMT * (1 - Math.max(Math.min(n, 1), 0));
+
+    // 燃え始めがいちばん激しく、終わりに向けて弱る。
+    // t を平方根にしているのは、最後の一瞬まで明るさを保たせるため。
+    const burn = Math.sqrt(t);
+
+    f.coreMat.opacity = Math.min(burn * flicker * 1.4, 1);
+    f.haloMat.opacity = Math.min(burn * flicker * 1.1, 1);
+
+    // 大きさもちらつきに合わせて脈打たせる。
+    // 滲みのほうを大きく揺らすと、光が呼吸しているように見える。
+    f.core.scale.setScalar(L.CORE_SIZE * (0.7 + burn * 0.6) * (0.85 + flicker * 0.3));
+    f.halo.scale.setScalar(L.HALO_SIZE * (0.55 + burn * 0.45) * (0.8 + flicker * 0.45));
+
+    // --- 火の粉 ---
+    // 燃え始めのあいだだけ、後ろへ小さな粒を散らす
+    if (t > 1 - L.SPARK_PHASE) {
+      f.sparkTimer -= dt;
+      if (f.sparkTimer <= 0) {
+        f.sparkTimer = L.SPARK_SEC;
+        // 火の粉は自分で光っているので、加算合成の明るい粒として出す
+        if (debris.length < L.SPARK_CAP) {
+          spawnDebris(f.mesh.position, 1, 0.10, 8, FLARE_LOOK.HALO_COLOR, true);
+        }
+      }
+    }
 
     if (f.life <= 0) {
       scene.remove(f.mesh);
-      f.mesh.material.dispose();
+      f.coreMat.dispose();
+      f.haloMat.dispose();
       flares.splice(i, 1);
     }
   }
@@ -3264,16 +3378,20 @@ function explodePlayer() {
 // 破片(デブリ)を撒く
 // position=出る場所 / count=個数 / size=大きさ / speed=飛び散る速さ
 // ===================================================================
-function spawnDebris(position, count, size, speed) {
+// color / glow は省略できる。省略すると従来どおり「機体の破片」の色になる。
+// glow=true にすると加算合成になり、自分で光っているもの(火の粉)として描かれる。
+function spawnDebris(position, count, size, speed, color, glow) {
   // 四面体 = 三角形4枚。もっとも面数の少ない立体で、ローポリの破片にちょうどいい
   if (!debrisGeometry) debrisGeometry = new THREE.TetrahedronGeometry(1);
 
   for (let i = 0; i < count; i++) {
     // 破片ごとに薄れ方が違うので、材質は1個ずつ作る(透明度を個別に変えるため)
     const material = new THREE.MeshBasicMaterial({
-      color: ENEMY.EDGE_COLOR,
+      color: (color === undefined) ? ENEMY.EDGE_COLOR : color,
       transparent: true,     // 透明度を扱えるようにする
       opacity: 1,
+      blending: glow ? THREE.AdditiveBlending : THREE.NormalBlending,
+      depthWrite: !glow,
     });
 
     const mesh = new THREE.Mesh(debrisGeometry, material);
