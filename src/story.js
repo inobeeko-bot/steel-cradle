@@ -4,16 +4,21 @@
 // 横一本の道を歩いて、物を調べ、人と話す。それだけの画面。
 // 戦闘(3D)とは完全に別の層で、こちらはHTML/CSSだけで描く。
 //
+// 【座標について】
+// このパートは 640×360 の「仮想解像度」で作る。背景のドット絵がその
+// 大きさで描かれているので、座標も全部そこに合わせておくと、
+// 絵の上の位置とコードの数字が1対1で対応して迷わない。
+// 画面に出すときだけ整数倍に拡大する(下の ADV_CONFIG.BASE_* 参照)。
+//
 // このファイルの方針:
 //   ・シーンは「データ」として書く(STORY_SCENES)。
 //     新しいシーンを足すときはコードではなく表を足す。
-//   ・絵はまだ入れない。仕様どおり、単色の矩形+ラベルで置いておく。
-//     あとでドット絵に差し替えるとき、位置と大きさはそのまま使える。
 //   ・会話は全スキップ可能(仕様書10章)。Esc でいつでも抜けられる。
 // ===================================================================
 
 // --- 画面の部品 -----------------------------------------------------
 const storyEl        = document.getElementById('story');
+const storyStageEl   = document.getElementById('story-stage');
 const storyWorldEl   = document.getElementById('story-world');
 const storyPromptEl  = document.getElementById('story-prompt');
 const storyBoxEl     = document.getElementById('story-box');
@@ -23,72 +28,95 @@ const storyFadeEl    = document.getElementById('story-fade');
 const storyHintEl    = document.getElementById('story-hint');
 
 // ===================================================================
-// 見た目の調整値
+// 調整値
 //
 // 数字はすべてここに集める。位置や速さを直したくなったとき、
 // シーンの表や描画処理を探し回らなくて済むようにしておく。
 // ===================================================================
-const ADV = {
-  WALK_SPEED:   330,   // 歩く速さ(1秒あたりの横移動量)
-  ACTOR_W:       46,   // カイトの矩形の幅(プレースホルダー)
-  ACTOR_H:      132,   // 同じく高さ。画面に対してこれくらいないと豆粒に見える
-  REACH:        130,   // 「調べる」が届く距離
-  CAM_EDGE:    0.40,   // 画面のどこにカイトを置くか(0.5=中央)
-  CAM_SMOOTH:  0.10,   // カメラの追従の緩さ(小さいほどぬるっと付いてくる)
-  TYPE_SPEED:    45,   // 1秒に何文字出すか。0 にすると一気に出る
-  GROUND_Y:     176,   // 地面の高さ(画面下からの距離)。会話枠より高くしておく
-  // 遠景を地平の上へ持ち上げる量。0 だと手前の物と同じ高さに立ってしまい、
-  // 「遠くの丘」ではなく「隣に建っている壁」に見える。
-  FAR_LIFT:      40,
+const ADV_CONFIG = {
+  // --- 仮想解像度。背景ドット絵の実寸 ---
+  BASE_W: 640,
+  BASE_H: 360,
+
+  // --- 拡大 ---
+  // 整数倍だけを使う。1.5倍などにするとドットの大きさが揃わず、
+  // 拡大したドット絵特有のガタつき(모アレ)が出る。
+  // 端に出る余白は黒帯にする。
+  MIN_SCALE: 1,
+
+  // --- 各層のスクロール率 ---
+  // 1.0 = カメラと同じだけ動く(手前)。小さいほど遠くに見える。
+  SCROLL: { far: 0.2, mid: 0.6, near: 1.0 },
+
+  // --- 背景画像 ---
+  LAYERS: [
+    { key: 'far',  src: 'assets/adv/bg_hill_far.png'  },
+    { key: 'mid',  src: 'assets/adv/bg_hill_mid.png'  },
+    { key: 'near', src: 'assets/adv/bg_hill_near.png' },
+  ],
+
+  // --- 人物と操作(すべて仮想解像度の px)---
+  WALK_SPEED:   72,    // 歩く速さ(1秒あたり)
+  ACTOR_W:      16,    // カイトの幅(まだ矩形のプレースホルダー)
+  ACTOR_H:      52,    // 同じく高さ。戸口の高さと見比べて決めてある
+  REACH:        34,    // 「調べる」が届く距離
+  CAM_EDGE:   0.40,    // 画面のどこにカイトを置くか(0.5=中央)
+  CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
+  TYPE_SPEED:   45,    // 1秒に何文字出すか
+
+  // --- 会話ウィンドウ ---
+  // 背景のドット絵が明るいので、枠が透けると文字が読めない。
+  // 不透明度はここで調整する。
+  BOX_OPACITY: 0.92,
 };
 
 // ===================================================================
 // シーンの表
 //
-// props     … 背景に置く物。examine があるものだけ調べられる
-// npc       … 話しかけられる相手。talks は「何回目か」で中身が変わる
-// exit      … 右端の出口。unlock のフラグが立つまで通れない
+// 座標はすべて 640×360 の仮想解像度。背景の絵と同じ物差し。
+//   x … 左からの距離
+//   y … 上からの距離(地面の高さを表す groundLine で使う)
 // ===================================================================
 const STORY_SCENES = {
 
   ch1_s1_hill: {
     title: '第一部 一章 ― 林檎の丘',
     place: 'アルカディア / 農業区',
-    width: 4100,          // 道の全長
-    start: 520,           // カイトの初期位置(家の戸口の少し右)
 
-    // 黄昏のパレット。収穫祭当日の昼下がり〜夕方
-    sky:    ['#3a2a3c', '#8a5a3e', '#d8925a'],   // 上 → 中 → 下
-    ground: '#241c22',
+    // 当面はマップ論理幅 = near層の幅。つまり1画面ぶんで、横スクロールしない。
+    // 横に広げるときは、この幅を伸ばしてセグメントを足す。
+    width: ADV_CONFIG.BASE_W,
+    start: 150,           // カイトの初期位置(家の戸口の前あたり)
 
-    // --- 背景(調べられない飾り)---
-    // far は遠景でゆっくり流れ、near は手前で速く流れる(パララックス)
-    scenery: [
-      // 遠くの丘。横に広く、背は低く。稜線のつもり
-      { layer: 'far',  x:  320, w:  900, h: 150, color: '#2a2436', label: '' },
-      { layer: 'far',  x: 1250, w: 1100, h: 210, color: '#272132', label: '' },
-      // 丘の遠景に旧ドック。ここが次のシーンの行き先になる
-      { layer: 'far',  x: 2800, w:  620, h: 330, color: '#1a1726', label: '旧ドック' },
-      { layer: 'far',  x: 3700, w:  800, h: 180, color: '#2a2436', label: '' },
-      { layer: 'near', x: 2270, w:  300, h: 100, color: '#3a2f34', label: '柵' },
-      // 村人のシルエット(背景。話しかけられない)
-      { layer: 'near', x: 2400, w:  34, h:  96, color: '#4a3a3a', label: '' },
-      { layer: 'near', x: 2460, w:  34, h: 104, color: '#4a3a3a', label: '' },
-      { layer: 'near', x: 2516, w:  30, h:  88, color: '#4a3a3a', label: '' },
+    // --- 地面の高さ ---
+    // 道が右下がりに傾いているので、1本の水平線では合わない。
+    // 「この x では上から何 px が地面」を数点だけ置き、間は直線で繋ぐ。
+    // 数字は背景の絵の上を実際に歩いている道の高さ。
+    groundLine: [
+      { x:   0, y: 318 },
+      { x: 120, y: 314 },
+      { x: 215, y: 308 },   // 木の根元
+      { x: 330, y: 314 },
+      { x: 460, y: 322 },
+      { x: 640, y: 330 },
     ],
 
     // --- 調べられる物 ---
+    // 絵の上に立体は置かない(背景に描かれている)。
+    // ここにあるのは「立つと調べられる場所」と、印を出す位置だけ。
+    //   x     … カイトがここに立つと調べられる
+    //   markX … 「▲」を出す位置(省略すると x と同じ)。
+    //           戸口のように、立ち位置と物の位置がずれるものに使う
+    //   markH … 印を物のどれくらい上に出すか
     props: [
       {
-        id: 'examine_house', x: 300, w: 200, h: 240,
-        color: '#4a3a34', label: '家の戸口',
+        id: 'examine_house', x: 118, markX: 56, markH: 78, label: '家の戸口',
         first: [
           { who: 'カイト', text: '鍵なんてかけたことがない。この村で盗みをやる奴は、翌朝には村じゅうの朝飯当番にされる' },
         ],
       },
       {
-        id: 'examine_tree', x: 1200, w: 250, h: 430,
-        color: '#3d5140', label: '林檎の木',
+        id: 'examine_tree', x: 215, markX: 208, markH: 118, label: '林檎の木',
         first: [
           { who: 'カイト', text: '実はまだ固いな。……祭りには間に合わないか' },
         ],
@@ -97,8 +125,7 @@ const STORY_SCENES = {
         ],
       },
       {
-        id: 'examine_shears', x: 1380, w: 44, h: 34,
-        color: '#7a7f86', label: '剪定バサミ',
+        id: 'examine_shears', x: 250, markX: 252, markH: 16, label: '剪定バサミ',
         first: [
           { who: 'カイト', text: 'じいちゃんの商売道具。……俺が触ると、なぜか翌日に刃が曇るらしい。濡れ衣だと思う' },
         ],
@@ -107,7 +134,7 @@ const STORY_SCENES = {
 
     // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
     npc: {
-      id: 'grandpa', x: 1700, w: 48, h: 122,
+      id: 'grandpa', x: 300, w: 13, h: 40,
       color: '#6b5240', label: '祖父',
 
       talks: [
@@ -147,12 +174,11 @@ const STORY_SCENES = {
 
     // --- 出口(右端)---
     exit: {
-      x: 3860,
+      x: 628,             // near層の右端。ここを越えるとシーン2へ
       unlock: 'gp3_done',
       blocked: [
         { who: 'カイト', text: '……先にじいちゃんの手伝いだな。呼ばれてる気がする' },
       ],
-      // 出口を通ったあとの行き先。まだ無いので予告だけ出す
       nextTitle: 'シーン2 ― 収穫祭の夜',
     },
 
@@ -168,28 +194,86 @@ const STORY_SCENES = {
 // ===================================================================
 // いまの状態
 // ===================================================================
-let storyScene   = null;    // 表示中のシーン(STORY_SCENES の中身)
+let storyScene   = null;    // 表示中のシーン
 let storyFlags   = null;    // 立ったフラグの集合
-let storyX       = 0;       // カイトの位置
-let storyCamX    = 0;       // カメラの位置
+let storyX       = 0;       // カイトの位置(仮想px)
+let storyCamX    = 0;       // カメラの位置(仮想px)
 let storyKeys    = null;    // 押しっぱなしのキー
 let storyTime    = 0;       // シーンが始まってからの秒数
 let storyTalkCount = null;  // 「その相手と何回話したか」の記録
+let storyScale   = 1;       // いまの拡大率(整数)
 
 // 会話の状態
 let storyLines   = null;    // 表示中の行の配列。null なら会話していない
-let storyIndex   = 0;       // 何行目を出しているか
-let storyTyped   = 0;       // 何文字まで出したか(1文字ずつ出す演出)
+let storyIndex   = 0;
+let storyTyped   = 0;
 
-// 画面の部品の実体。位置を毎コマ書き換えるので、作ったら覚えておく
-let storyProps   = null;    // { data, el } の配列
-let storyActorEl = null;
-let storyNpcEl   = null;
-let storyExitEl  = null;
-let storyMarkEl  = null;    // 調べられる物の上に出る「▲」
+// 画面の部品の実体
+let storyLayerEls = null;   // { key, el } の配列
+let storyActorEl  = null;
+let storyNpcEl    = null;
+let storyExitEl   = null;
+let storyMarkEl   = null;
 
-// チュートリアルの出し分け
 let storyHintShown = null;
+
+// ===================================================================
+// 拡大率を決めて、舞台の大きさを合わせる
+//
+// 画面の高さを 360 で割った整数が拡大率。1.5倍のような半端な倍率を
+// 使うと、1ドットが2画素になったり3画素になったりしてガタつくので、
+// 必ず切り捨てて整数にする。あまった領域は黒帯として残す。
+// ===================================================================
+function layoutStoryStage() {
+  if (!storyEl.classList.contains('on')) return;
+
+  const vw = storyEl.clientWidth;
+  const vh = storyEl.clientHeight;
+  // 縦にも横にも収まる整数倍を選ぶ
+  const byH = Math.floor(vh / ADV_CONFIG.BASE_H);
+  const byW = Math.floor(vw / ADV_CONFIG.BASE_W);
+  storyScale = Math.max(ADV_CONFIG.MIN_SCALE, Math.min(byH, byW));
+
+  const w = ADV_CONFIG.BASE_W * storyScale;
+  const h = ADV_CONFIG.BASE_H * storyScale;
+  storyStageEl.style.width  = w + 'px';
+  storyStageEl.style.height = h + 'px';
+  storyStageEl.style.left   = Math.floor((vw - w) / 2) + 'px';
+  storyStageEl.style.top    = Math.floor((vh - h) / 2) + 'px';
+
+  // 背景画像も同じ倍率に拡大する
+  if (storyLayerEls) {
+    for (const L of storyLayerEls) {
+      L.el.style.width  = (ADV_CONFIG.BASE_W * storyScale) + 'px';
+      L.el.style.height = (ADV_CONFIG.BASE_H * storyScale) + 'px';
+    }
+  }
+  // 文字まわりも倍率に合わせる(1倍のとき小さくなりすぎないよう下限あり)
+  storyStageEl.style.setProperty('--adv-scale', String(storyScale));
+}
+
+window.addEventListener('resize', layoutStoryStage);
+
+// ===================================================================
+// 地面の高さを求める
+//
+// groundLine に置いた数点の間を直線で繋いで、その x での地面の高さを返す。
+// 道が傾いているので、1本の水平線だと人物が浮いたり沈んだりする。
+// ===================================================================
+function storyGroundY(x) {
+  const line = storyScene && storyScene.groundLine;
+  if (!line || !line.length) return ADV_CONFIG.BASE_H - 40;
+
+  if (x <= line[0].x) return line[0].y;
+  for (let i = 1; i < line.length; i++) {
+    if (x <= line[i].x) {
+      const a = line[i - 1], b = line[i];
+      const t = (x - a.x) / (b.x - a.x);      // 0〜1 の比率
+      return a.y + (b.y - a.y) * t;           // 直線で繋ぐ
+    }
+  }
+  return line[line.length - 1].y;
+}
 
 // ===================================================================
 // シーンを開く
@@ -215,15 +299,14 @@ function startStoryScene(id) {
   storyEl.classList.add('on');
 
   buildStoryScene(scene);
+  layoutStoryStage();
   storyFadeEl.style.opacity = '1';   // 暗転から始めて、開幕でゆっくり明ける
 
-  // 開幕の地の文。少し待ってから出す
   setTimeout(() => {
     if (screenState === 'story') openStoryLines(scene.opening.map(l => ({ who: '', text: l.text })));
   }, 900);
 }
 
-// シーンを閉じてメインメニューへ戻る
 function exitStory() {
   storyEl.classList.remove('on');
   storyScene = null;
@@ -233,74 +316,39 @@ function exitStory() {
 
 // ===================================================================
 // 画面を組み立てる
-//
-// 背景・物・人を一度だけ作って並べる。あとは毎コマ位置だけ動かす。
 // ===================================================================
 function buildStoryScene(scene) {
   storyWorldEl.innerHTML = '';
 
-  // --- 空(グラデーション)と地面 ---
-  storyEl.style.setProperty('--sky-top', scene.sky[0]);
-  storyEl.style.setProperty('--sky-mid', scene.sky[1]);
-  storyEl.style.setProperty('--sky-bot', scene.sky[2]);
-  storyEl.style.setProperty('--ground', scene.ground);
-  storyEl.style.setProperty('--ground-h', ADV.GROUND_Y + 'px');
-
-  // --- 背景の飾り ---
-  for (const s of scene.scenery) {
-    const el = document.createElement('div');
-    el.className = 'story-scenery ' + s.layer;
-    el.style.left   = s.x + 'px';
-    el.style.width  = s.w + 'px';
-    el.style.height = s.h + 'px';
-    el.style.background = s.color;
-    // 遠景だけ地平より上に置いて、奥にあるように見せる
-    el.style.bottom = (ADV.GROUND_Y + (s.layer === 'far' ? ADV.FAR_LIFT : 0)) + 'px';
-    if (s.label) el.innerHTML = '<span>' + s.label + '</span>';
-    el.dataset.layer = s.layer;
+  // --- 背景3層 ---
+  // 奥から順に重ねる。img タグで置き、CSS で「ドットをぼかさない」指定をする。
+  storyLayerEls = [];
+  for (const layer of ADV_CONFIG.LAYERS) {
+    const el = document.createElement('img');
+    el.className = 'story-layer';
+    el.src = layer.src;
+    el.alt = '';
+    el.draggable = false;
     storyWorldEl.appendChild(el);
-  }
-
-  // --- 調べられる物 ---
-  storyProps = [];
-  for (const p of scene.props) {
-    const el = document.createElement('div');
-    el.className = 'story-prop';
-    el.style.left   = (p.x - p.w / 2) + 'px';
-    el.style.width  = p.w + 'px';
-    el.style.height = p.h + 'px';
-    el.style.background = p.color;
-    el.style.bottom = ADV.GROUND_Y + 'px';
-    el.innerHTML = '<span>' + p.label + '</span>';
-    storyWorldEl.appendChild(el);
-    storyProps.push({ data: p, el: el });
+    storyLayerEls.push({ key: layer.key, el: el });
   }
 
   // --- 祖父 ---
   const n = scene.npc;
   storyNpcEl = document.createElement('div');
   storyNpcEl.className = 'story-actor npc';
-  storyNpcEl.style.left   = (n.x - n.w / 2) + 'px';
-  storyNpcEl.style.width  = n.w + 'px';
-  storyNpcEl.style.height = n.h + 'px';
   storyNpcEl.style.background = n.color;
-  storyNpcEl.style.bottom = ADV.GROUND_Y + 'px';
   storyNpcEl.innerHTML = '<span>' + n.label + '</span>';
   storyWorldEl.appendChild(storyNpcEl);
 
   // --- 出口の目印 ---
   storyExitEl = document.createElement('div');
   storyExitEl.className = 'story-exit';
-  storyExitEl.style.left = scene.exit.x + 'px';
-  storyExitEl.style.bottom = ADV.GROUND_Y + 'px';
   storyWorldEl.appendChild(storyExitEl);
 
   // --- カイト ---
   storyActorEl = document.createElement('div');
   storyActorEl.className = 'story-actor kaito';
-  storyActorEl.style.width  = ADV.ACTOR_W + 'px';
-  storyActorEl.style.height = ADV.ACTOR_H + 'px';
-  storyActorEl.style.bottom = ADV.GROUND_Y + 'px';
   storyWorldEl.appendChild(storyActorEl);
 
   // --- 調べられるものを指す印 ---
@@ -310,24 +358,26 @@ function buildStoryScene(scene) {
   storyWorldEl.appendChild(storyMarkEl);
 
   storyHintEl.textContent = scene.place + '　/　' + scene.title;
+  storyBoxEl.style.setProperty('--box-opacity', String(ADV_CONFIG.BOX_OPACITY));
 }
 
 // ===================================================================
 // いちばん近い「調べられるもの」を探す
-//
-// 会話中は探さない。届く範囲(REACH)に入っているものだけを返す。
 // ===================================================================
 function nearestStoryTarget() {
   if (!storyScene) return null;
-  let best = null, bestD = ADV.REACH;
+  let best = null, bestD = ADV_CONFIG.REACH;
 
-  for (const p of storyProps) {
-    const d = Math.abs(p.data.x - storyX);
-    if (d < bestD) { bestD = d; best = { kind: 'prop', data: p.data, x: p.data.x }; }
+  for (const p of storyScene.props) {
+    const d = Math.abs(p.x - storyX);
+    if (d < bestD) {
+      bestD = d;
+      best = { kind: 'prop', data: p, x: (p.markX !== undefined) ? p.markX : p.x, markH: p.markH };
+    }
   }
   const n = storyScene.npc;
   const dn = Math.abs(n.x - storyX);
-  if (dn < bestD) { bestD = dn; best = { kind: 'npc', data: n, x: n.x }; }
+  if (dn < bestD) { bestD = dn; best = { kind: 'npc', data: n, x: n.x, markH: n.h }; }
 
   return best;
 }
@@ -346,7 +396,6 @@ function openStoryLines(lines) {
 
 function renderStoryLine() {
   const line = storyLines[storyIndex];
-  // 話者が空なら地の文。枠の見た目を変える
   storyBoxEl.classList.toggle('narration', !line.who);
   storySpeakerEl.textContent = line.who || '';
   storySpeakerEl.style.display = line.who ? '' : 'none';
@@ -354,7 +403,6 @@ function renderStoryLine() {
   storyTyped = 0;
 }
 
-// 次の行へ。1文字ずつ出している途中なら、まず全部出す
 function advanceStory() {
   if (!storyLines) return;
   const line = storyLines[storyIndex];
@@ -383,13 +431,11 @@ function interactStory() {
   if (t.kind === 'prop') {
     const seen = storyTalkCount[t.data.id] || 0;
     storyTalkCount[t.data.id] = seen + 1;
-    // 2回目以降の台詞があればそちらを出す
     const lines = (seen > 0 && t.data.repeat) ? t.data.repeat : t.data.first;
     openStoryLines(lines);
     return;
   }
 
-  // --- 祖父 ---
   const npc = t.data;
   const step = storyTalkCount[npc.id] || 0;
 
@@ -399,9 +445,7 @@ function interactStory() {
     storyFlags.add(talk.flag);
     openStoryLines(talk.lines);
 
-    // gp_talk_1 の最中だけ「Enter:次へ」を出す(仕様書のチュートリアル表)
     if (step === 0) showStoryHint('enter', 'Enter:次へ');
-    // 3回目まで終わったら出口が開く
     if (talk.flag === storyScene.exit.unlock) {
       storyExitEl.classList.add('open');
       showStoryHint('exit', '右へ:ドックへ向かう');
@@ -413,8 +457,6 @@ function interactStory() {
 
 // ===================================================================
 // チュートリアルの表示
-//
-// 同じものを二度出さないよう、一度出した種類は覚えておく。
 // ===================================================================
 function showStoryHint(key, text) {
   if (storyHintShown.has(key)) return;
@@ -431,20 +473,19 @@ function showStoryHint(key, text) {
 function updateStory(dt) {
   if (!storyScene) return;
   storyTime += dt;
+  const S = storyScale;
 
   // --- 暗転から明ける ---
-  const fade = Math.max(0, 1 - storyTime / 2.0);
-  storyFadeEl.style.opacity = String(fade);
+  storyFadeEl.style.opacity = String(Math.max(0, 1 - storyTime / 2.0));
 
-  // --- 開始2秒後に移動の説明を出す ---
   if (storyTime > 2.0) showStoryHint('move', '← →  /  A D:移動');
 
   // --- 1文字ずつ出す ---
-  if (storyLines) {
+  if (storyLines && storyLines !== 'leaving') {
     const line = storyLines[storyIndex];
     const full = (line.note ? line.note + ' ' : '') + line.text;
     if (storyTyped < full.length) {
-      storyTyped = Math.min(full.length, storyTyped + ADV.TYPE_SPEED * dt);
+      storyTyped = Math.min(full.length, storyTyped + ADV_CONFIG.TYPE_SPEED * dt);
       storyTextEl.textContent = full.slice(0, Math.floor(storyTyped));
     }
   }
@@ -455,28 +496,26 @@ function updateStory(dt) {
     if (storyKeys.has('arrowleft')  || storyKeys.has('a')) dir -= 1;
     if (storyKeys.has('arrowright') || storyKeys.has('d')) dir += 1;
     if (dir !== 0) {
-      storyX += dir * ADV.WALK_SPEED * dt;
+      storyX += dir * ADV_CONFIG.WALK_SPEED * dt;
       storyActorEl.classList.toggle('flip', dir < 0);
       storyActorEl.classList.add('walking');
     } else {
       storyActorEl.classList.remove('walking');
     }
-    // 道の外へ出ないようにする
-    storyX = Math.max(60, Math.min(storyScene.width - 60, storyX));
+    storyX = Math.max(12, Math.min(storyScene.width - 8, storyX));
 
-    // --- 出口の判定 ---
     const exit = storyScene.exit;
     if (storyX >= exit.x) {
       if (storyFlags.has(exit.unlock)) { leaveStoryScene(); }
-      else { storyX = exit.x - 4; openStoryLines(exit.blocked); }
+      else { storyX = exit.x - 2; openStoryLines(exit.blocked); }
     }
   }
 
   // --- 調べられるものが近くにあるか ---
   const target = (!storyLines) ? nearestStoryTarget() : null;
   if (target) {
-    storyMarkEl.style.left = target.x + 'px';
-    storyMarkEl.style.bottom = (ADV.GROUND_Y + (target.data.h || 60) + 14) + 'px';
+    storyMarkEl.style.left   = (target.x * S) + 'px';
+    storyMarkEl.style.top    = ((storyGroundY(target.x) - (target.markH || 40) - 12) * S) + 'px';
     storyMarkEl.classList.add('on');
     showStoryHint('interact', 'E / Enter:調べる・話す');
   } else {
@@ -484,32 +523,47 @@ function updateStory(dt) {
   }
 
   // --- カメラ ---
-  // カイトを画面の少し左寄りに置き、道の端では止める
-  const viewW = storyEl.clientWidth;
-  let want = storyX - viewW * ADV.CAM_EDGE;
-  want = Math.max(0, Math.min(storyScene.width - viewW, want));
-  storyCamX += (want - storyCamX) * (1 - Math.exp(-dt / ADV.CAM_SMOOTH));
+  // いまはマップ幅=画面幅なので動かないが、横に広げたときにそのまま効く
+  let want = storyX - ADV_CONFIG.BASE_W * ADV_CONFIG.CAM_EDGE;
+  want = Math.max(0, Math.min(storyScene.width - ADV_CONFIG.BASE_W, want));
+  storyCamX += (want - storyCamX) * (1 - Math.exp(-dt / ADV_CONFIG.CAM_SMOOTH));
 
-  storyWorldEl.style.transform = 'translateX(' + (-storyCamX) + 'px)';
-  storyActorEl.style.left = (storyX - ADV.ACTOR_W / 2) + 'px';
+  // --- 背景3層をスクロール率どおりに動かす ---
+  for (const L of storyLayerEls) {
+    const rate = ADV_CONFIG.SCROLL[L.key];
+    // 拡大後の画素にきっちり合わせる(小数だとドットの縁がにじむ)
+    const px = Math.round(-storyCamX * rate * S);
+    L.el.style.transform = 'translateX(' + px + 'px)';
+  }
 
-  // 遠景はカメラより遅く動かす(パララックス)。
-  // 手前と同じ速さで流すと、書き割りが貼りついているように見える。
-  for (const el of storyWorldEl.querySelectorAll('.story-scenery.far')) {
-    el.style.transform = 'translateX(' + (storyCamX * 0.55) + 'px)';
-  }
-  for (const el of storyWorldEl.querySelectorAll('.story-scenery.near')) {
-    el.style.transform = 'translateX(' + (storyCamX * 0.12) + 'px)';
-  }
+  // --- 人物を地面の上に置く ---
+  placeStoryActor(storyActorEl, storyX, ADV_CONFIG.ACTOR_W, ADV_CONFIG.ACTOR_H);
+  const n = storyScene.npc;
+  placeStoryActor(storyNpcEl, n.x, n.w, n.h);
+
+  // --- 出口の目印 ---
+  storyExitEl.style.left   = Math.round((storyScene.exit.x - storyCamX) * S) + 'px';
+  storyExitEl.style.top    = Math.round((storyGroundY(storyScene.exit.x) - 60) * S) + 'px';
+  storyExitEl.style.height = (60 * S) + 'px';
+}
+
+// 人物を、その x の地面の高さに立たせる。
+// 位置は拡大後の画素へ丸める ― 小数のままだと、ドット絵の上で
+// 人物だけが半画素ずれて滲んで見える。
+function placeStoryActor(el, x, w, h) {
+  const S = storyScale;
+  const gy = storyGroundY(x);
+  el.style.width  = (w * S) + 'px';
+  el.style.height = (h * S) + 'px';
+  el.style.left   = Math.round((x - storyCamX - w / 2) * S) + 'px';
+  el.style.top    = Math.round((gy - h) * S) + 'px';
 }
 
 // ===================================================================
 // 出口を抜けた:次のシーンへ
-//
-// シーン2はまだ無いので、予告だけ出してメニューへ戻る。
 // ===================================================================
 function leaveStoryScene() {
-  storyLines = 'leaving';   // 操作を止めるための目印(配列でないので描画はされない)
+  storyLines = 'leaving';
   storyFadeEl.style.transition = 'opacity 2s';
   storyFadeEl.style.opacity = '1';
   storyBoxEl.classList.remove('on');
@@ -537,7 +591,6 @@ window.addEventListener('keydown', (event) => {
 
   resumeAudio();
 
-  // 会話中でも移動中でも、Esc でメニューへ戻れる(会話は全スキップ可能)
   if (event.key === 'Escape') { event.preventDefault(); exitStory(); return; }
 
   if (event.key === 'Enter' || k === 'e' || event.key === ' ') {
