@@ -127,18 +127,25 @@ const GRANDPA_POS = {
   X: 254,          // 脚立の中心(幹の右端235 + 19)
 
   // 足場の高さ(px)。地面からこれだけ持ち上げる。
-  //
-  // 必要な高さは実測から 83px と出ている:
   //   地面に立つと鋏の先端は y=270(足元313 − 43)。葉の下端は y=190。
-  //   83 上げると先端は y=187 となり、葉に 3px 重なる(条件は2〜4px)。
-  //   ※81 だと 1px しか重ならないので足りない。
-  //
-  // ただし脚立の絵(prop_ladder_v2.png)が assets に無く、
-  // いま持ち上げると祖父が宙に浮く。絵が入ったらここを 83 にする。
-  LIFT_Y: 0,
+  //   83 上げると足元 y=230、先端 y=187 となり、葉に 3px 重なる(条件は2〜4px)。
+  LIFT_Y: 83,
 
-  // 脚立の縦方向の描画倍率(1.25倍まで許容)。絵が入るまで未使用。
-  LADDER_SCALE_Y: 1.0,
+  // 脚立の縦方向の描画倍率。
+  //
+  // なぜ 1.15 か:
+  //   脚立(30×92)の踏み桟は画像の上から y=20, 29, 38, 47, 56, 65, 74, 83。
+  //   底辺を地面(313)に置くと、桟 r に足を乗せたときの足場の高さは
+  //   (92 − r) × 倍率 になる。
+  //     上から2段目(r=29) … 83px にするには 1.32倍 必要 → 許容の1.25倍を超える
+  //     上から1段目(r=20) … 1.15倍 でちょうど 72 × 1.15 ≒ 83px
+  //   つまり「2段目に乗せる」と「鋏を葉に届かせる」は、
+  //   1.25倍の制限内では両立しない。届く条件のほうを優先し、
+  //   実際に桟のある高さ = 1段目に乗せている。
+  LADDER_SCALE_Y: 1.15,
+
+  // 脚立の絵。底辺を地面に接地させ、祖父の背面に描く
+  LADDER: { src: 'assets/adv/prop_ladder_v3.png', w: 30, h: 92 },
 };
 
 const STORY_SCENES = {
@@ -219,6 +226,7 @@ const STORY_SCENES = {
 
       // 足場の高さ。脚立の上に立つぶんだけ足元を持ち上げる。
       liftY: GRANDPA_POS.LIFT_Y,
+      ladder: GRANDPA_POS.LADDER,
 
       // ふだんの姿:剪定の作業アニメ(2コマ)。コマ幅が48ではなく56なので、
       // シートごとに幅を持たせてある。
@@ -311,6 +319,7 @@ let storyActorEl  = null;
 let storyNpcEl    = null;
 let storyExitEl   = null;
 let storyMarkEl   = null;
+let storyLadderEl = null;
 
 let storyHintShown = null;
 
@@ -455,8 +464,19 @@ function buildStoryScene(scene) {
     storyLayerEls.push({ key: layer.key, el: el });
   }
 
-  // --- 祖父 ---
+  // --- 脚立 ---
+  // 祖父より先に足すことで、祖父の背面に回る(あとから足した要素が手前)
   const n = scene.npc;
+  if (n.ladder) {
+    storyLadderEl = document.createElement('div');
+    storyLadderEl.className = 'story-prop-sprite';
+    storyLadderEl.style.backgroundImage = 'url(' + n.ladder.src + ')';
+    storyWorldEl.appendChild(storyLadderEl);
+  } else {
+    storyLadderEl = null;
+  }
+
+  // --- 祖父 ---
   storyNpcEl = document.createElement('div');
   storyNpcEl.className = 'story-actor npc' + ((n.sprite || n.work) ? ' sprite' : '');
   if (!n.sprite && !n.work) storyNpcEl.style.background = n.color;
@@ -742,6 +762,16 @@ function setStoryWalking(walking, distance) {
 // ===================================================================
 function renderStoryNpc(n, dt, S) {
   const talking = !!storyLines;
+
+  // --- 脚立。底辺を地面に接地させ、縦だけ引き伸ばす ---
+  if (storyLadderEl && n.ladder) {
+    const lh = Math.round(n.ladder.h * GRANDPA_POS.LADDER_SCALE_Y);
+    storyLadderEl.style.width  = (n.ladder.w * S) + 'px';
+    storyLadderEl.style.height = (lh * S) + 'px';
+    storyLadderEl.style.backgroundSize = (n.ladder.w * S) + 'px ' + (lh * S) + 'px';
+    storyLadderEl.style.left = Math.round((n.x - storyCamX - n.ladder.w / 2) * S) + 'px';
+    storyLadderEl.style.top  = Math.round((storyGroundY(n.x) - lh) * S) + 'px';
+  }
 
   if (n.work && !talking) {
     // --- 作業中 ---

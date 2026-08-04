@@ -1459,6 +1459,15 @@
     /* 左へ歩くときの水平反転。左向きの素材は用意せず、これで賄う */
     .story-actor.flip { transform: scaleX(-1); }
 
+    /* 背景に置くドット絵の小物(脚立など)。人物と同じく補間させない */
+    .story-prop-sprite {
+      position: absolute;
+      background-repeat: no-repeat;
+      image-rendering: crisp-edges;
+      image-rendering: pixelated;
+      pointer-events: none;
+    }
+
     /* --- 出口 --- */
     .story-exit {
       position: absolute;
