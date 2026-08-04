@@ -114,6 +114,33 @@ const ADV_CONFIG = {
 //   x … 左からの距離
 //   y … 上からの距離(接地ラインを表す groundY で使う)
 // ===================================================================
+// ===================================================================
+// 祖父の剪定位置
+//
+// 座標で決め打ちせず、背景の絵の上で
+//   ・脚立は幹の右端のすぐ右(隙間は幹の幅の半分まで)
+//   ・鋏の先端が樹冠下端の葉に 2〜4px 重なる
+// という見た目の条件を満たすように合わせ込んだ値。
+// 基準にした実測値は下の npc のコメントに残してある。
+// ===================================================================
+const GRANDPA_POS = {
+  X: 254,          // 脚立の中心(幹の右端235 + 19)
+
+  // 足場の高さ(px)。地面からこれだけ持ち上げる。
+  //
+  // 必要な高さは実測から 83px と出ている:
+  //   地面に立つと鋏の先端は y=270(足元313 − 43)。葉の下端は y=190。
+  //   83 上げると先端は y=187 となり、葉に 3px 重なる(条件は2〜4px)。
+  //   ※81 だと 1px しか重ならないので足りない。
+  //
+  // ただし脚立の絵(prop_ladder_v2.png)が assets に無く、
+  // いま持ち上げると祖父が宙に浮く。絵が入ったらここを 83 にする。
+  LIFT_Y: 0,
+
+  // 脚立の縦方向の描画倍率(1.25倍まで許容)。絵が入るまで未使用。
+  LADDER_SCALE_Y: 1.0,
+};
+
 const STORY_SCENES = {
 
   ch1_s1_hill: {
@@ -177,8 +204,21 @@ const STORY_SCENES = {
 
     // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
     npc: {
-      // 樹冠の右端の真下。ここなら枝に手が届く
-      id: 'grandpa', x: 370,
+      // --- 剪定位置(背景の絵を実測して合わせ込んだ値)---
+      //
+      // 合わせ込みに使った基準(bg_hill_near.png をピクセル単位で計測):
+      //   幹の右端 ……… x = 235(幹の幅は約40。脚立との隙間は半分=20まで)
+      //   樹冠下端の葉 … x240〜260 のあたりで y = 190〜196
+      //   x250 の地面 … y = 313
+      //   鋏の先端 ……… コマの中で、足元から43px上・中心から11px 差し出した側
+      //
+      // X は「脚立の中心」。幹の右端から19px右なので、隙間の条件(≦20)を満たす。
+      // 左を向いているので、鋏の先端は x = X − 11 = 243 に来る。
+      // そこの葉の下端は y = 190。
+      id: 'grandpa', x: GRANDPA_POS.X,
+
+      // 足場の高さ。脚立の上に立つぶんだけ足元を持ち上げる。
+      liftY: GRANDPA_POS.LIFT_Y,
 
       // ふだんの姿:剪定の作業アニメ(2コマ)。コマ幅が48ではなく56なので、
       // シートごとに幅を持たせてある。
@@ -711,7 +751,7 @@ function renderStoryNpc(n, dt, S) {
       storyWorkTime -= per;
       storyWorkFrame = (storyWorkFrame + 1) % n.work.frames;
     }
-    placeStoryActor(storyNpcEl, n.x, n.work.w, n.work.h);
+    placeStoryActor(storyNpcEl, n.x, n.work.w, n.work.h, n.liftY);
     storyNpcEl.style.backgroundImage = 'url(' + n.work.src + ')';
     storyNpcEl.style.backgroundSize =
       (n.work.w * n.work.frames * S) + 'px ' + (n.work.h * S) + 'px';
@@ -720,7 +760,7 @@ function renderStoryNpc(n, dt, S) {
   } else if (n.sprite) {
     // --- 会話中(手を止めてこちらを向いている)---
     const W = ADV_CONFIG.SPRITE.FRAME_W, H = ADV_CONFIG.SPRITE.FRAME_H;
-    placeStoryActor(storyNpcEl, n.x, W, H);
+    placeStoryActor(storyNpcEl, n.x, W, H, n.liftY);
     storyNpcEl.style.backgroundImage = 'url(' + n.sprite + ')';
     storyNpcEl.style.backgroundSize =
       (W * ADV_CONFIG.WALK_FRAME_COUNT * S) + 'px ' + (H * S) + 'px';
@@ -734,9 +774,9 @@ function renderStoryNpc(n, dt, S) {
 // 人物を、その x の地面の高さに立たせる。
 // 位置は拡大後の画素へ丸める ― 小数のままだと、ドット絵の上で
 // 人物だけが半画素ずれて滲んで見える。
-function placeStoryActor(el, x, w, h) {
+function placeStoryActor(el, x, w, h, liftY) {
   const S = storyScale;
-  const gy = storyGroundY(x);
+  const gy = storyGroundY(x) - (liftY || 0);   // 足場の上に立つぶんだけ上げる
   el.style.width  = (w * S) + 'px';
   el.style.height = (h * S) + 'px';
   el.style.left   = Math.round((x - storyCamX - w / 2) * S) + 'px';
