@@ -397,8 +397,8 @@ const AIM = {
 //      「勝手に動いた」と分かるようになる。
 const ASSIST = {
   ENABLED:   true,
-  CONE:      0.060,  // 効き始める角度(ラジアン)。約3.4度=照準のすぐ内側だけ
-  MAX_RATE:  0.17,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)の約1/5
+  CONE:      0.090,  // 効き始める角度(ラジアン)。約5.2度
+  MAX_RATE:  0.30,   // 1秒に寄せる最大角度(ラジアン)。操縦(0.80)の約1/2.7
   RANGE:      220,   // これより遠い敵には効かない
   MIN_RANGE:    8,   // 近すぎる敵には効かない(すれ違いで振り回されるため)
 };
@@ -407,6 +407,10 @@ const ASSIST = {
 //   'CLEAR'    … 何も捉えていない
 //   'TRACKING' … 照準の先に敵がいる(捕捉中)
 //   'LOCKED'   … 捕捉を維持しきってロックした(※中身は将来実装)
+// 偏差照準が出した交会点。照準の自動追尾もここを狙う
+const lastLeadPoint = new THREE.Vector3();
+let hasLeadPoint = false;
+
 let aimState = 'CLEAR';
 let aimTarget = null;      // 今捉えている敵
 let aimHoldTime = 0;       // 捕捉を続けている秒数
@@ -2035,12 +2039,20 @@ function hasLock() {
 // 「1コマで何メートル動いたか」から毎コマ割り出す。
 // 偏差照準(下の getLeadNdc)がこれを使う。
 // ===================================================================
+const _rawVel = new THREE.Vector3();
+
 function updateEnemyVelocity(dt) {
   const k = Math.max(dt, 0.0001);
+  // 1コマぶんの差だけで速度を出すと、細かく震えて偏差照準の印が落ち着かない。
+  // 前の値へ少しずつ寄せる(なまし)ことで、印がぴたりと止まる。
+  // ならしが強すぎると急旋回に追従しなくなるので、0.12秒ぶんで寄せている。
+  const blend = 1 - Math.exp(-dt / 0.12);
+
   for (const e of enemies) {
     if (!e.vel) { e.vel = new THREE.Vector3(); e.prevPos = e.group.position.clone(); }
     if (!e.alive) { e.vel.set(0, 0, 0); e.prevPos.copy(e.group.position); continue; }
-    e.vel.subVectors(e.group.position, e.prevPos).divideScalar(k);
+    _rawVel.subVectors(e.group.position, e.prevPos).divideScalar(k);
+    e.vel.lerp(_rawVel, blend);
     e.prevPos.copy(e.group.position);
   }
 }
@@ -2072,14 +2084,22 @@ function getLeadNdc() {
       if (dot > bestDot) { bestDot = dot; target = e; }
     }
   }
-  if (!target || !target.vel) return null;
+  if (!target || !target.vel) { hasLeadPoint = false; return null; }
 
-  const muzzle = playerShip.position;
+  // 弾が出るのは翼の発射口。機体の中心で測ると、そのぶんだけ狂う。
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  const muzzle = playerShip.position.clone()
+    .addScaledVector(forward, -BOLT.OFFSET_Z * -1);   // OFFSET_Z は前方が負
+
+  // 「飛翔時間 → その時間ぶん先の敵の位置 → その位置までの飛翔時間 → …」
+  // と繰り返して、交わる点に寄せていく。3回で十分に落ち着く。
   let aim = target.group.position.clone();
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     const t = muzzle.distanceTo(aim) / BOLT.SPEED;
     aim.copy(target.group.position).addScaledVector(target.vel, t);
   }
+  lastLeadPoint.copy(aim);   // 照準の自動追尾がこの点を使う
+  hasLeadPoint = true;
 
   const inFront = camera.worldToLocal(aim.clone()).z < 0;
   const ndc = aim.project(camera);
@@ -2225,7 +2245,12 @@ function applyAimAssist(dt) {
   for (const e of enemies) {
     if (!e.alive) continue;
 
-    const to = e.group.position.clone().sub(playerShip.position);
+    // 狙う先は機体そのものではなく、偏差照準が出した交会点。
+    // 機体を狙って寄せても、動いている相手には当たらない ―
+    // 「当たる場所」へ寄せてはじめて、追尾が命中の助けになる。
+    const aimAt = (hasLeadPoint && e === aimTarget) ? lastLeadPoint : e.group.position;
+
+    const to = aimAt.clone().sub(playerShip.position);
     const dist = to.length();
     if (dist > ASSIST.RANGE || dist < ASSIST.MIN_RANGE) continue;
 
