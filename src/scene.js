@@ -388,6 +388,11 @@ const AIM = {
   LOCK_SEC_MIN:  0.58,   // センサー100%のときのロック所要時間(秒)
   LOCK_SEC_MAX:  2.08,   // センサー0%のときの所要時間
   LOCK_KEEP:      0.6,   // 照準から外れてもロックを保つ猶予(秒)
+
+  // 偏差照準で「曲がりぶん」を読むときに使う時間の上限(秒)。
+  // ½at² は時間の2乗で効くので、遠い相手ほど読みすぎて外す。
+  // ここで頭を打たせておく。
+  LEAD_ACC_MAX_T: 1.2,
 };
 
 // --- 照準の微追尾(ソフトエイムアシスト)-----------------------------
@@ -2110,6 +2115,7 @@ function hasLock() {
 // 偏差照準(下の getLeadNdc)がこれを使う。
 // ===================================================================
 const _rawVel = new THREE.Vector3();
+const _rawAcc = new THREE.Vector3();
 
 function updateEnemyVelocity(dt) {
   const k = Math.max(dt, 0.0001);
@@ -2117,14 +2123,61 @@ function updateEnemyVelocity(dt) {
   // 前の値へ少しずつ寄せる(なまし)ことで、印がぴたりと止まる。
   // ならしが強すぎると急旋回に追従しなくなるので、0.12秒ぶんで寄せている。
   const blend = 1 - Math.exp(-dt / 0.12);
+  const accBlend = 1 - Math.exp(-dt / 0.20);   // 加速度はもう少し強くならす
 
   for (const e of enemies) {
-    if (!e.vel) { e.vel = new THREE.Vector3(); e.prevPos = e.group.position.clone(); }
-    if (!e.alive) { e.vel.set(0, 0, 0); e.prevPos.copy(e.group.position); continue; }
+    if (!e.vel) {
+      e.vel = new THREE.Vector3();
+      e.acc = new THREE.Vector3();
+      e.prevVel = new THREE.Vector3();
+      e.prevPos = e.group.position.clone();
+    }
+    if (!e.alive) {
+      e.vel.set(0, 0, 0); e.acc.set(0, 0, 0);
+      e.prevPos.copy(e.group.position); e.prevVel.set(0, 0, 0);
+      continue;
+    }
+
     _rawVel.subVectors(e.group.position, e.prevPos).divideScalar(k);
     e.vel.lerp(_rawVel, blend);
+
+    // 加速度も測る。旋回している相手は、速度の向きが毎コマ変わる ―
+    // それがそのまま加速度として出てくる。
+    // これを見ないと、曲がっている相手にはいつも外側へ撃ってしまう。
+    _rawAcc.subVectors(e.vel, e.prevVel).divideScalar(k);
+    e.acc.lerp(_rawAcc, accBlend);
+    e.prevVel.copy(e.vel);
+
     e.prevPos.copy(e.group.position);
   }
+}
+
+// ===================================================================
+// 「弾が届くころ、この敵はどこにいるか」
+//
+// 速度だけで直線的に伸ばすと、横旋回している相手には必ず外れる ―
+// 相手は曲がっているのに、こちらは直線の先を撃つことになるため。
+// 加速度まで見て、曲がるぶんを折り込む。
+//
+//   位置 = 今の位置 + 速度×t + ½×加速度×t²
+//
+// t² は伸びやすいので、加速度に使う時間には上限をかけてある。
+// 遠すぎる相手に対して、曲がりを読みすぎて明後日を撃たないため。
+// ===================================================================
+const _leadTmp = new THREE.Vector3();
+
+function leadPointFor(e, fromPos, out) {
+  out.copy(e.group.position);
+  if (!e.vel) return out;
+
+  for (let i = 0; i < 3; i++) {
+    const t = fromPos.distanceTo(out) / BOLT.SPEED;
+    const ta = Math.min(t, AIM.LEAD_ACC_MAX_T);   // 加速度に使う時間の上限
+    out.copy(e.group.position)
+       .addScaledVector(e.vel, t)
+       .addScaledVector(e.acc || _leadTmp.set(0, 0, 0), 0.5 * ta * ta);
+  }
+  return out;
 }
 
 // ===================================================================
@@ -2158,16 +2211,9 @@ function getLeadNdc() {
 
   // 弾が出るのは翼の発射口。機体の中心で測ると、そのぶんだけ狂う。
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
-  const muzzle = playerShip.position.clone()
-    .addScaledVector(forward, -BOLT.OFFSET_Z * -1);   // OFFSET_Z は前方が負
+  const muzzle = playerShip.position.clone().addScaledVector(forward, -BOLT.OFFSET_Z);
 
-  // 「飛翔時間 → その時間ぶん先の敵の位置 → その位置までの飛翔時間 → …」
-  // と繰り返して、交わる点に寄せていく。3回で十分に落ち着く。
-  let aim = target.group.position.clone();
-  for (let i = 0; i < 3; i++) {
-    const t = muzzle.distanceTo(aim) / BOLT.SPEED;
-    aim.copy(target.group.position).addScaledVector(target.vel, t);
-  }
+  const aim = leadPointFor(target, muzzle, new THREE.Vector3());
   lastLeadPoint.copy(aim);   // 照準の自動追尾がこの点を使う
   hasLeadPoint = true;
 
@@ -2308,6 +2354,8 @@ function turnView(dt, pitchDir, yawDir, rollDir) {
 //   ・照準の縁ほど弱く、中心に近いほど強い(境目で「吸い付いた」と感じさせない)
 // の3つで、気づかない強さに抑えている。
 // ===================================================================
+const _assistAim = new THREE.Vector3();
+
 function applyAimAssist(dt, authority) {
   if (!ASSIST.ENABLED) return;
   const gain = (authority === undefined) ? 1 : authority;
@@ -2322,10 +2370,11 @@ function applyAimAssist(dt, authority) {
   for (const e of enemies) {
     if (!e.alive) continue;
 
-    // 狙う先は機体そのものではなく、偏差照準が出した交会点。
+    // 狙う先は機体そのものではなく、弾が届くころに相手がいる場所。
     // 機体を狙って寄せても、動いている相手には当たらない ―
     // 「当たる場所」へ寄せてはじめて、追尾が命中の助けになる。
-    const aimAt = (hasLeadPoint && e === aimTarget) ? lastLeadPoint : e.group.position;
+    // 捉えている敵かどうかに関わらず、その敵ぶんの交会点を出して狙う。
+    const aimAt = leadPointFor(e, playerShip.position, _assistAim);
 
     const to = aimAt.clone().sub(playerShip.position);
     const dist = to.length();

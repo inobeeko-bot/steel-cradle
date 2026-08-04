@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-53 signature';
+const BUILD = 'p1-56 third UI';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -266,6 +266,41 @@ const currentBomb   = () => BOMBS[bombIndex];
 // --- 各リソースの現在値 ---------------------------------------------
 let heat = 0;               // 現在の熱量(0〜100)
 let radiatorOpen = true;    // ラジエーターを展開しているか(出撃時は展開状態)
+
+// ===================================================================
+// ラジエーターの操作モード(Vキーで切り替え)
+//
+//   'open'   … 展開しっぱなし。よく冷えるが、そのぶん敵に見つかる
+//   'closed' … 収納しっぱなし。見つかりにくいが熱が抜けない
+//   'auto'   … 熱を見て自動で開閉する
+//
+// 自動が要るのは、展開に代償があるから。
+// 「冷やしたいが目立ちたくない」の折り合いを毎回手で付けるのは忙しいので、
+// 基本の方針だけ機械に任せられるようにする。
+//
+// 自動の方針:
+//   熱が OPEN_AT を超えたら開く / CLOSE_AT を下回ったら閉じる(往復を防ぐ幅)
+//   ミサイルにロックされている間は閉じる ― いちばん見つかりたくない場面だから
+//   ただし熱が CRITICAL を超えていれば、ロック中でも開く(焼けるよりまし)
+// ===================================================================
+let radiatorMode = 'open';
+const RADIATOR_AUTO = {
+  OPEN_AT:   60,
+  CLOSE_AT:  28,
+  CRITICAL:  85,
+};
+
+function updateRadiatorAuto() {
+  if (radiatorMode !== 'auto') { radiatorOpen = (radiatorMode === 'open'); return; }
+
+  const locked = (threatStatus().level !== 'CLEAR' && threatStatus().level !== 'TRACK');
+
+  if (heat >= RADIATOR_AUTO.CRITICAL)      radiatorOpen = true;   // 焼けるほうが困る
+  else if (locked)                          radiatorOpen = false;  // 今は隠れる
+  else if (heat >= RADIATOR_AUTO.OPEN_AT)   radiatorOpen = true;
+  else if (heat <= RADIATOR_AUTO.CLOSE_AT)  radiatorOpen = false;
+  // その間は今の状態を保つ(境目で開閉を繰り返さないため)
+}
 let shutdownLeft = 0;       // 強制シャットダウンの残り秒数(0 なら通常状態)
 
 // EMPを浴びている残り秒数(自分のEMPに巻き込まれたとき)。
@@ -393,6 +428,15 @@ const helpEl        = document.getElementById('help');
 const consoleFrameEl = document.getElementById('console-frame');
 const leadPipEl      = document.getElementById('lead-pip');
 const lockWarnEl     = document.getElementById('lock-warn');
+const dpThreatEl     = document.getElementById('dp-threat');
+const dpDetectEl     = document.getElementById('dp-detect');
+const dpOverheatEl   = document.getElementById('dp-overheat');
+const dpLockEl       = document.getElementById('dp-lock');
+const dpRangeEl      = document.getElementById('dp-range');
+const dpClosureEl    = document.getElementById('dp-closure');
+const dpDriftEl      = document.getElementById('dp-drift');
+const dpBurstEl      = document.getElementById('dp-burst');
+const dpTheatEl      = document.getElementById('dp-theat');
 const viewModeEl    = document.getElementById('view-mode');
 const weaponPanelEl = document.getElementById('weapon-panel');
 const weaponNameEl  = document.getElementById('wp-name');
@@ -472,7 +516,9 @@ function renderHeat() {
   heatPanel.classList.toggle('warn', heat >= HEAT.WARN && shutdownLeft <= 0);
 
   // ラジエーターの状態表示
-  radEl.textContent = radiatorOpen ? 'RAD OPEN' : 'RAD CLOSED';
+  radEl.textContent = (radiatorMode === 'auto')
+    ? ('RAD AUTO ' + (radiatorOpen ? '▲' : '▼'))
+    : (radiatorOpen ? 'RAD OPEN' : 'RAD CLOSED');
   radEl.classList.toggle('open', radiatorOpen);
 
   // 速度計。3D側が持っている今の速さを表示する
@@ -778,8 +824,12 @@ window.addEventListener('keydown', (event) => {
   if (event.key.toLowerCase() === 'v') {
     // 熱系の計器が壊れているとラジエーターを動かせない
     if (isBroken('heat')) { addCombatLog('冷却系 損傷', 'hull'); playDenied(); return; }
-    radiatorOpen = !radiatorOpen;   // ! は「逆にする」。true↔false が入れ替わる
+    // 展開 → 収納 → 自動 → 展開 … と順に切り替える
+    radiatorMode = (radiatorMode === 'open') ? 'closed'
+                 : (radiatorMode === 'closed') ? 'auto' : 'open';
+    updateRadiatorAuto();
     playRadiator(radiatorOpen);
+    addCombatLog('RAD ' + radiatorMode.toUpperCase(), 'warn');
     return;
   }
 
@@ -1188,6 +1238,60 @@ function renderLockWarn(dt) {
   }
 }
 
+// ===================================================================
+// 三人称視点のデータパネル
+//
+// コックピットでは同じ内容を3Dの計器盤に描いているので、そちらでは出さない。
+// 三人称は「機外から見ている表示」なので、板として画面に置く。
+// ===================================================================
+function renderDataPanel() {
+  if (isCockpitView()) return;
+
+  const t = threatStatus();
+  const d = playerDetection();
+  const info = nearestTargetInfo();
+
+  const map = { CLEAR: ['CLEAR', ''], TRACK: ['TRACKED', 'track'],
+                LOCK: ['MSL LOCK', 'lock'], MISSILE: ['INBOUND', 'missile'] };
+  const m = map[t.level] || map.CLEAR;
+  dpThreatEl.textContent = m[0];
+  dpThreatEl.className = 'dp-threat' + (m[1] ? ' ' + m[1] : '');
+
+  const set = (el, text, cls) => { el.textContent = text; el.className = cls || ''; };
+
+  set(dpDetectEl, d.seen ? 'SEEN' : 'COLD', d.seen ? 'warn' : 'cool');
+
+  // 今の熱収支のまま、あと何秒でシャットダウンするか
+  const rate = currentHeatRate();
+  if (rate <= 0.05 || shutdownLeft > 0) set(dpOverheatEl, '――', '');
+  else {
+    const sec = (HEAT.MAX - heat) / rate;
+    set(dpOverheatEl, sec.toFixed(1) + 's',
+        sec < 8 ? 'warn' : (sec < 20 ? 'amber' : ''));
+  }
+
+  const aim = currentAimState();
+  set(dpLockEl, aim === 'LOCKED' ? 'LOCKED' : (aim === 'TRACKING' ? 'TRACK' : '----'),
+      aim === 'LOCKED' ? 'warn' : (aim === 'TRACKING' ? 'amber' : ''));
+
+  set(dpRangeEl, info.valid ? String(Math.round(info.dist)) : '----', '');
+  if (info.valid) {
+    const c = Math.round(info.closure);
+    set(dpClosureEl, (c > 0 ? '+' : '') + c, c > 0 ? 'amber' : 'cool');
+  } else set(dpClosureEl, '----', '');
+
+  const drift = driftAngleDeg();
+  set(dpDriftEl, Math.round(drift) + '°', drift > 25 ? 'cool' : '');
+
+  const bursts = Math.floor(propellant / PROP.BURST_COST);
+  set(dpBurstEl, String(bursts), bursts <= 2 ? 'warn' : '');
+
+  const eh = nearestEnemyHeat();
+  const vd = nearestEnemyVentDown();
+  set(dpTheatEl, eh + (vd ? ' ▼' : ''),
+      vd ? 'amber' : (eh >= 70 ? 'warn' : ''));
+}
+
 function renderLeadPip() {
   // センサーが壊れていると、そもそも精密な予測は出せない
   const lead = isBroken('sensor') ? null : getLeadNdc();
@@ -1219,6 +1323,7 @@ function renderConsole3D(dt) {
     heat: heat,
     heatRate: (currentHeatRate() >= 0 ? '+' : '') + currentHeatRate().toFixed(1) + '/s',
     radiatorOpen: radiatorOpen,
+    radiatorMode: radiatorMode,
     propellant: propellant,
     shieldHp: shieldHp,
     // 計器が壊れていると表示だけが揺らぐ(実際の値は正しい)
@@ -1714,6 +1819,7 @@ function restartMission() {
   power.weapon = 25; power.shield = 25; power.engine = 25; power.sensor = 25;
   presetEl.textContent = 'MANUAL';
   heat = 0;
+  radiatorMode = 'open';
   radiatorOpen = true;   // 出撃時はラジエーター展開状態
   shutdownLeft = 0;
   empLeft = 0;
@@ -2002,6 +2108,7 @@ function tick(now) {
 
   updateAutoFire(dt);               // 機関砲の連射
   updateBurst(dt);                  // ビーム砲の3点バーストの残り条
+  updateRadiatorAuto();             // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
   updateView(dt);                   // W/A/S/D による機首操作
@@ -2021,6 +2128,7 @@ function tick(now) {
   renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
   renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
   renderLockWarn(dt);  // 被ロック警報(視界の縁が脈打つ)
+  renderDataPanel();   // 三人称のデータパネル
   renderConsoleSway(); // 視点に応じてHTMLの計器盤を出し入れする
   if (isCockpitView()) renderConsole3D(dt);   // 計器を3Dの計器台に描く
 

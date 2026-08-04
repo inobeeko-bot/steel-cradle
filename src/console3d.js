@@ -559,8 +559,11 @@ function drawConsole3D(s, dt) {
   // ラジエーターの状態
   g.font = '13px monospace';
   g.textAlign = 'center';
-  g.fillStyle = s.radiatorOpen ? CONSOLE3D.TEXT : CONSOLE3D.DIM;
-  g.fillText(s.radiatorOpen ? 'RAD OPEN' : 'RAD CLOSED', 265, 252);
+  g.fillStyle = (s.radiatorMode === 'auto') ? CONSOLE3D.AMBER
+              : (s.radiatorOpen ? CONSOLE3D.TEXT : CONSOLE3D.DIM);
+  g.fillText((s.radiatorMode === 'auto')
+    ? ('AUTO ' + (s.radiatorOpen ? '▲' : '▼'))
+    : (s.radiatorOpen ? 'RAD OPEN' : 'RAD CLOSED'), 265, 252);
   // 危険域の赤線(80%)
   g.strokeStyle = 'rgba(255,90,60,0.55)';
   g.beginPath();

@@ -76,8 +76,8 @@
     }
 
     .hud-top    { position: absolute; top: 14px;  left: 50%; transform: translateX(-50%); text-align: center; }
-    .hud-left   { position: absolute; left: 18px; top: 50%;  transform: translateY(-50%); }
-    .hud-right  { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); }
+    .hud-left   { position: absolute; left: 18px; top: 43%;  transform: translateY(-50%); }
+    .hud-right  { position: absolute; right: 18px; top: 43%; transform: translateY(-50%); }
     .hud-bottom { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
                   display: flex; flex-direction: column; align-items: center; gap: 8px; }
 
@@ -540,6 +540,60 @@
       height: 2px;
       background: #3c6a60;
     }
+
+    /* =================================================================
+       三人称視点のデータパネル
+       コックピットの計器盤と同じ情報を、こちらでは板として出す。
+       ================================================================= */
+    .data-panel {
+      position: absolute;
+      left: 22px;
+      top: 43%;                    /* 左右の縦計器と高さを揃える */
+      transform: translateY(-50%);
+      margin-left: 132px;          /* 熱パネルの右どなり */
+      width: 176px;
+      padding: 9px 12px 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-bg);
+      box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.85);
+      clip-path: polygon(
+        8px 0, 100% 0, 100% calc(100% - 8px),
+        calc(100% - 8px) 100%, 0 100%, 0 8px);
+      font-size: 11px;
+    }
+    .hud.cockpit .data-panel { display: none; }   /* コックピットでは3D側が出す */
+
+    .dp-head {
+      font-size: 9px; letter-spacing: 0.24em; color: var(--dim);
+      border-bottom: 1px solid #16222b;
+      padding-bottom: 4px; margin-bottom: 7px;
+    }
+
+    /* 狙われている段階。いちばん大きく、いちばん上に */
+    .dp-threat {
+      text-align: center;
+      font-size: 15px; font-weight: bold; letter-spacing: 0.22em;
+      padding: 5px 0;
+      border: 1px solid var(--line);
+      color: var(--dim);
+      margin-bottom: 8px;
+    }
+    .dp-threat.track   { color: #ffcf6a; border-color: #4a3a20; }
+    .dp-threat.lock    { color: #ff5a3c; border-color: #ff5a3c;
+                         animation: warnBlink 0.3s steps(2) infinite; }
+    .dp-threat.missile { color: #fff; border-color: #ff3a24; background: rgba(255,40,20,0.18);
+                         animation: warnBlink 0.2s steps(2) infinite; }
+
+    .dp-rows > div {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 1px 0;
+    }
+    .dp-rows span { color: var(--dim); font-size: 10px; letter-spacing: 0.1em; }
+    .dp-rows b { color: var(--text); font-weight: normal;
+                 font-size: 13px; font-variant-numeric: tabular-nums; }
+    .dp-rows b.warn { color: #ff5a3c; }
+    .dp-rows b.amber { color: #ffcf6a; }
+    .dp-rows b.cool { color: #8fd8ff; }
 
     /* =================================================================
        被ロック警報(ミサイルにロックされている間)
@@ -1304,6 +1358,23 @@
 
     <!-- ここから下は計器盤ではないので console-frame の外。
          コックピットで計器盤を隠しても、これらは出し続ける -->
+    <!-- 三人称視点用のデータパネル。
+         コックピットでは同じ内容を3Dの計器盤に描くので、こちらは隠す -->
+    <div class="data-panel" id="data-panel">
+      <div class="dp-head">FLIGHT DATA</div>
+      <div class="dp-threat" id="dp-threat">CLEAR</div>
+      <div class="dp-rows">
+        <div><span>DETECT</span><b id="dp-detect">COLD</b></div>
+        <div><span>OVERHEAT</span><b id="dp-overheat">――</b></div>
+        <div><span>LOCK</span><b id="dp-lock">----</b></div>
+        <div><span>RANGE</span><b id="dp-range">----</b></div>
+        <div><span>CLOSURE</span><b id="dp-closure">----</b></div>
+        <div><span>DRIFT</span><b id="dp-drift">0°</b></div>
+        <div><span>BURST</span><b id="dp-burst">12</b></div>
+        <div><span>T-HEAT</span><b id="dp-theat">0</b></div>
+      </div>
+    </div>
+
     <!-- 戦闘ログ(HIT / KILL) -->
     <div class="combat-log" id="combat-log"></div>
 
