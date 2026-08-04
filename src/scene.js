@@ -630,7 +630,12 @@ const ENEMY_HEAT = {
 const ENEMY_MISSILE = {
   AMMO:          3,    // 1機あたりの搭載数(リスポーンで補充)
   INTERVAL:   11.0,    // 次に撃つまでの間隔(秒)
-  TELEGRAPH:   1.1,    // 発射前に光って知らせる時間。銃(0.5)より長い
+  // ロックしてから撃つまでの時間。この間ずっと警報が鳴る。
+  // フレアを切るか迷える長さが要るので、銃の予告(0.5)よりずっと長い。
+  TELEGRAPH:   1.8,
+  // ロックしたのに撃たない割合。読み合いの正体はこの数字。
+  // 0 にすると「鳴ったら必ず来る」= フレアを切るだけの作業になる。
+  BLUFF_CHANCE: 0.35,
   RANGE:        95,    // この距離内でだけ撃ってくる
   MIN_RANGE:    22,    // 近すぎると撃たない
   SHIELD_DAMAGE: 60,   // 命中時にシールドを削る量(銃の15よりはるかに重い)
@@ -1898,15 +1903,23 @@ function currentSpeed() {
 // 当たり判定(ENEMY.HIT_RADIUS)とは別に捕捉半径を持たせているのが要点。
 // 捕捉のほうを大きくしておくと、アイドル揺れ程度では捕捉が途切れない。
 //
-// 状態は 'CLEAR' → 'TRACKING' → (将来) 'LOCKED' と段階を上げていく想定。
-// 今回は2段階まで。LOCKED へ上げる条件はここに足せばよい。
+// 状態は 'CLEAR' → 'TRACKING' → 'LOCKED' の3段階。
+//
+// ただし LOCKED まで上がるのはミサイルを選んでいるときだけ(allowLock)。
+// 機関砲やビームは「軽く捉えて偏差点を追う」だけで、ロックはしない。
+//
+// これは演出の都合ではなく、駆け引きの都合。
+// ロックの警報が銃でも鳴ると、警報が鳴りっぱなしになって
+// 「ロックされた ― フレアを切るか?」の判断そのものが成立しなくなる。
+// 警報を鳴らすのはミサイルのときだけに絞ることで、
+// 鳴った瞬間の重みを保つ。
 // ===================================================================
 function lockSeconds(sensorPercent) {
   const ratio = Math.max(0, Math.min(sensorPercent || 0, 100)) / 100;
   return AIM.LOCK_SEC_MAX + ratio * (AIM.LOCK_SEC_MIN - AIM.LOCK_SEC_MAX);
 }
 
-function updateAim(dt, sensorPercent) {
+function updateAim(dt, sensorPercent, allowLock) {
   if (!sceneReady) { aimState = 'CLEAR'; return aimState; }
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
@@ -1948,11 +1961,19 @@ function updateAim(dt, sensorPercent) {
     aimHoldTime += dt;
     lockGrace = AIM.LOCK_KEEP;
 
-    // ロックの進み。センサー配分が高いほど速く満ちる
-    lockProgress = Math.min(lockProgress + dt / lockSeconds(sensorPercent), 1);
-    if (lockProgress >= 1) aimState = 'LOCKED';
+    // ロックの進み。センサー配分が高いほど速く満ちる。
+    // ミサイル以外を選んでいるときは進めない ― 捉えるだけで終わる。
+    if (allowLock) {
+      lockProgress = Math.min(lockProgress + dt / lockSeconds(sensorPercent), 1);
+      if (lockProgress >= 1) aimState = 'LOCKED';
+    } else {
+      // ミサイルでロックしたまま銃に持ち替えると、ロックが残り続けてしまう。
+      // 捉えている状態まで下げ直す。
+      lockProgress = 0;
+      if (aimState === 'LOCKED') aimState = 'TRACKING';
+    }
 
-  } else if (lockGrace > 0 && aimState === 'LOCKED') {
+  } else if (allowLock && lockGrace > 0 && aimState === 'LOCKED') {
     // 照準から外れても、少しの間はロックを保つ。
     // 揺れや一瞬の被弾でロックが飛ぶと、ミサイルが使い物にならないため。
     lockGrace -= dt;
@@ -3102,7 +3123,8 @@ function createEnemy() {
     // ミサイルとフレア
     missileAmmo:  ENEMY_MISSILE.AMMO,
     missileTimer: ENEMY_MISSILE.INTERVAL * (0.4 + Math.random() * 0.6),
-    missileTele:  0,     // ミサイル発射予告の残り秒
+    missileTele:  0,     // ミサイルのロック中の残り秒
+    missileBluff: false, // このロックがハッタリか(撃たずに解く)
     flareAmmo:    ENEMY_MISSILE.FLARE_AMMO,
     flareCool:    0,
   };
@@ -3256,13 +3278,27 @@ function updateEnemyAI(e, dt) {
 // 機体を大きく振るか、フレアを撒くかの判断が要るため。
 // ===================================================================
 function updateEnemyMissileLogic(e, dt, distance) {
+  // --- ロック中 ---
+  // ロックしたからといって必ず撃つわけではない。
+  // 一定の割合で撃たずに解く ― これがこの装備のいちばんの肝。
+  //
+  // 必ず撃ってくるなら、警報が鳴った瞬間にフレアを切ればよく、
+  // そこに判断は生まれない。「撃ってくるかもしれない」を残すことで、
+  // 有限のフレアを切るかどうかという読み合いが成立する。
   if (e.missileTele > 0) {
     e.missileTele -= dt;
     if (e.missileTele <= 0) {
       e.missileTele = 0;
-      fireEnemyMissile(e);
-      e.missileTimer = ENEMY_MISSILE.INTERVAL;
-      e.heatSig = SENSOR.HEAT_LINGER * 1.5;   // 撃つと大きく熱を出す
+      if (e.missileBluff) {
+        // 撃たずに解いた。次に狙うまでは短めにして、また揺さぶってくる
+        e.missileBluff = false;
+        e.missileTimer = ENEMY_MISSILE.INTERVAL * 0.45;
+        onEnemyMissileBreak();               // main.js:ログ(撃たなかったことを伝える)
+      } else {
+        fireEnemyMissile(e);
+        e.missileTimer = ENEMY_MISSILE.INTERVAL;
+        e.heatSig = SENSOR.HEAT_LINGER * 1.5;   // 撃つと大きく熱を出す
+      }
     }
     return;
   }
@@ -3274,6 +3310,10 @@ function updateEnemyMissileLogic(e, dt, distance) {
   e.missileTimer -= dt;
   if (e.missileTimer <= 0) {
     e.missileTele = ENEMY_MISSILE.TELEGRAPH;
+    // このロックが本気かハッタリかを、ここで決めておく。
+    // 決めるのはロックに入る瞬間 ― 途中で変えると、
+    // プレイヤーの反応を見て決めているように振る舞ってしまう。
+    e.missileBluff = (Math.random() < ENEMY_MISSILE.BLUFF_CHANCE);
     onIncomingMissile();     // main.js:警報と音声
   }
 }
@@ -3536,14 +3576,26 @@ function threatStatus() {
     // 熱やEMPで止まっている敵は、こちらを狙えない
     if (e.heatDown > 0 || e.empLeft > 0) continue;
 
+    // 銃の発射予告は LOCK に上げない。
+    // 銃は当たっても致命傷にならないうえ数が多いので、
+    // これで警報を鳴らすと鳴りっぱなしになり、
+    // 本当に危ないミサイルのロックが埋もれてしまう。
     let mine = 'CLEAR';
-    if (e.missileTele > 0)      mine = 'MISSILE';
-    else if (e.telegraph > 0)   mine = 'LOCK';
+    if (e.missileTele > 0)         mine = 'LOCK';    // ミサイルのロック中
+    else if (e.telegraph > 0)      mine = 'TRACK';   // 銃を撃つ直前
     else if (e.state === 'attack') mine = 'TRACK';
 
     if (mine !== 'CLEAR') count++;
     if (rank[mine] > rank[level]) level = mine;
   }
+
+  // 実際に飛んできているミサイルがあれば、そちらが最上位。
+  // ロック(来るかもしれない)と、発射済み(確実に来る)を分けるのが要点 ―
+  // LOCK は「フレアを切るか迷う」段階、MISSILE は「もう迷う段階ではない」。
+  for (const m of missiles) {
+    if (m.fromEnemy) { level = 'MISSILE'; break; }
+  }
+
   return { level: level, count: count };
 }
 
@@ -3851,6 +3903,7 @@ function respawnEnemy(e) {
   e.missileAmmo = ENEMY_MISSILE.AMMO;
   e.missileTimer = ENEMY_MISSILE.INTERVAL * (0.5 + Math.random() * 0.5);
   e.missileTele = 0;
+  e.missileBluff = false;
   e.flareAmmo = ENEMY_MISSILE.FLARE_AMMO;
   e.flareCool = 0;
 
@@ -3966,6 +4019,10 @@ function updateScene(dt, elapsed) {
   // 発光(被弾の白い点滅 と 発射予告の光)は、止まっていても消えていくよう常に更新する
   for (const e of enemies) updateEnemyGlow(e, dt);
 
+  // 敵の速度は、戦闘が止まっていても測っておく。
+  // 偏差照準がこれを使うので、未計測だと印が出なくなる。
+  updateEnemyVelocity(dt);
+
   // --- ミッション終了中は戦闘を止める(破片だけ動かす)---
   if (combatFrozen) {
     renderer.render(scene, camera);
@@ -3984,7 +4041,6 @@ function updateScene(dt, elapsed) {
   }
 
   updateCollisions();   // 機体どうしがぶつかっていないか
-  updateEnemyVelocity(dt);   // 偏差照準に使う「敵が今どっちへ動いているか」
 
   renderer.render(scene, camera);
   renderRearMirror();

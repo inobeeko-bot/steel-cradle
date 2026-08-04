@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-49 more gauges';
+const BUILD = 'p1-50 missile lock';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -392,6 +392,7 @@ const lockRingEl    = document.getElementById('lock-ring');
 const helpEl        = document.getElementById('help');
 const consoleFrameEl = document.getElementById('console-frame');
 const leadPipEl      = document.getElementById('lead-pip');
+const lockWarnEl     = document.getElementById('lock-warn');
 const viewModeEl    = document.getElementById('view-mode');
 const weaponPanelEl = document.getElementById('weapon-panel');
 const weaponNameEl  = document.getElementById('wp-name');
@@ -837,10 +838,9 @@ function applyViewMode(isCockpit) {
 // 敵がミサイルの発射予告に入った。scene.js から呼ばれる
 function onIncomingMissile() {
   if (missionState !== 'active') return;
-  playLockWarning();
-  playLockWarning();
-  speakVoice('MISSILE_INBOUND');
-  addCombatLog('MISSILE INBOUND', 'hull');
+  // 音と音声は renderLockWarn が鳴らし続けるので、ここではログだけ。
+  // 二重に鳴らすと、続く警報の頭が潰れて聞き取れなくなる。
+  addCombatLog('MISSILE LOCK ― 敵が照準中', 'hull');
 }
 
 // 敵のミサイルが自機に当たった
@@ -905,6 +905,13 @@ function onEnemyCollide() {
   addCombatLog('敵機 接触 ― 相討ち', 'kill');
 }
 
+// 敵がロックしたのに撃たずに解いた。
+// 「来なかった」ことが分かると、次にロックされたときの判断が重くなる。
+function onEnemyMissileBreak() {
+  if (missionState !== 'active') return;
+  addCombatLog('敵ロック解除 ― 発射なし', 'warn');
+}
+
 // 敵がフレアを撒いた
 function onEnemyFlare(tooHot) {
   playFlare();
@@ -914,8 +921,9 @@ function onEnemyFlare(tooHot) {
 // 敵が発射予告に入った(＝こちらが狙われた)。scene.js から呼ばれる
 function onIncomingLock() {
   if (missionState !== 'active') return;
+  // これは銃の発射予告。音だけ鳴らし、音声は使わない。
+  // 銃は数が多いので、いちいち喋らせるとミサイルの警報が埋もれる。
   playLockWarning();
-  speakVoice('INCOMING');
 }
 
 // ===================================================================
@@ -994,7 +1002,9 @@ function effectiveSensor() {
 }
 
 function updateAimFeedback(dt) {
-  const state = updateAim(dt, effectiveSensor());
+  // ロックまで進めるのはミサイルを選んでいるときだけ。
+  // 銃は捉える(TRACKING)までで、偏差照準の目標にだけ使う。
+  const state = updateAim(dt, effectiveSensor(), !!currentWeapon().needsLock);
 
   if (state !== 'CLEAR') {
     // 捉え続けた時間に応じて 0→1 へ。1に近いほど間隔が詰まる
@@ -1134,6 +1144,50 @@ function renderLockRing() {
 // 印に機首を合わせて撃てば当たる ― 動く敵に当てるための道具。
 // 判定は3D側(scene.js の getLeadNdc)。ここは置くだけ。
 // ===================================================================
+// ===================================================================
+// 被ロック警報(ミサイルにロックされている間)
+//
+// この装備の駆け引きは「撃ってくるか分からないまま、
+// 有限のフレアを切るかどうかを決める」ところにある。
+// だから警報は「ロックされた」で鳴り始め、
+// 実際に飛んできたかどうかは別の段階として見せる。
+//   LOCKED   … ロックされている。来るかもしれない ― ここが判断の時間
+//   INBOUND  … 発射された。もう迷う段階ではない
+// ===================================================================
+let lastThreatLevel = 'CLEAR';
+let threatBeepTimer = 0;
+
+function renderLockWarn(dt) {
+  const t = threatStatus();
+  const locked  = (t.level === 'LOCK');
+  const inbound = (t.level === 'MISSILE');
+
+  lockWarnEl.classList.toggle('on', locked || inbound);
+  lockWarnEl.classList.toggle('inbound', inbound);
+  if (locked || inbound) {
+    lockWarnEl.querySelector('.lock-warn-label').textContent =
+      inbound ? 'MISSILE INBOUND' : 'MISSILE LOCK';
+  }
+
+  // 鳴り続ける警報。間隔は段階で変える(発射済みのほうが速い)
+  if (locked || inbound) {
+    threatBeepTimer -= dt;
+    if (threatBeepTimer <= 0) {
+      playMissileLockWarn();
+      threatBeepTimer = inbound ? 0.22 : 0.38;
+    }
+  } else {
+    threatBeepTimer = 0;
+  }
+
+  // 段階が上がった瞬間だけ音声を出す(毎コマ言わせない)
+  if (t.level !== lastThreatLevel) {
+    if (inbound) speakVoice('MISSILE_INBOUND');
+    else if (locked) speakVoice('INCOMING');
+    lastThreatLevel = t.level;
+  }
+}
+
 function renderLeadPip() {
   // センサーが壊れていると、そもそも精密な予測は出せない
   const lead = isBroken('sensor') ? null : getLeadNdc();
@@ -1964,6 +2018,7 @@ function tick(now) {
   renderCrosshair();   // 照準(弾道の向きに合わせる)
   renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
   renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
+  renderLockWarn(dt);  // 被ロック警報(視界の縁が脈打つ)
   renderConsoleSway(); // 視点に応じてHTMLの計器盤を出し入れする
   if (isCockpitView()) renderConsole3D(dt);   // 計器を3Dの計器台に描く
 

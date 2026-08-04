@@ -542,6 +542,44 @@
     }
 
     /* =================================================================
+       被ロック警報(ミサイルにロックされている間)
+       =================================================================
+       画面の縁全体を赤く脈打たせる。計器のどこかに小さく出すのではなく、
+       視界そのものを侵すことで「今すぐ決めろ」という圧力にする。
+       撃たれるかどうかは分からないまま、これが鳴り続ける。 */
+    .lock-warn {
+      position: absolute;
+      inset: 0;
+      display: none;
+      pointer-events: none;
+      z-index: 3;
+      box-shadow: inset 0 0 130px rgba(255, 40, 20, 0.55),
+                  inset 0 0  40px rgba(255, 70, 40, 0.35);
+      animation: lockWarnPulse 0.5s ease-in-out infinite;
+    }
+    .lock-warn.on { display: block; }
+    /* 発射済み(確実に来る)のときは、もっと速く強く */
+    .lock-warn.inbound { animation-duration: 0.26s; }
+    @keyframes lockWarnPulse {
+      0%, 100% { opacity: 0.35; }
+      50%      { opacity: 1; }
+    }
+
+    /* 警報の文字。画面上部中央に大きく出す */
+    .lock-warn-label {
+      position: absolute;
+      left: 50%;
+      top: 30%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      font-size: 21px;
+      font-weight: bold;
+      letter-spacing: 0.4em;
+      color: #ff5a3c;
+      text-shadow: 0 0 20px rgba(255, 58, 36, 1);
+    }
+
+    /* =================================================================
        偏差照準(リードパイパー)
        「弾が届くころ敵がいる場所」を示す、ごく小さな緑の印。
        ここに機首を合わせて撃てば当たる。
@@ -594,11 +632,28 @@
     .lock-ring-outer {
       position: absolute;
       inset: 0;
-      border: 2px solid #ff3a24;
+      border: 3px solid #ff3a24;
       border-radius: 50%;
-      box-shadow: 0 0 16px rgba(255, 58, 36, 0.75),
-            inset 0 0 16px rgba(255, 58, 36, 0.30);
+      box-shadow: 0 0 26px rgba(255, 58, 36, 0.9),
+            inset 0 0 26px rgba(255, 58, 36, 0.45);
       animation: lockRingPulse 0.62s ease-out infinite;
+    }
+    /* 四隅の括弧。円だけより「機械が捉えている」感じが強くなる */
+    .lock-ring::before,
+    .lock-ring::after {
+      content: "";
+      position: absolute;
+      width: 26px; height: 26px;
+      border: 3px solid #ff3a24;
+      animation: lockBlink 0.24s steps(2) infinite;
+    }
+    .lock-ring::before {
+      left: -10px; top: -10px;
+      border-right: none; border-bottom: none;
+    }
+    .lock-ring::after {
+      right: -10px; bottom: -10px;
+      border-left: none; border-top: none;
     }
     /* 内側の円。速く点滅させて緊張感を作る */
     .lock-ring-inner {
@@ -614,12 +669,14 @@
       bottom: 100%;
       left: 50%;
       transform: translateX(-50%);
-      margin-bottom: 10px;
+      margin-bottom: 12px;
       white-space: nowrap;       /* 折り返さない */
-      font-size: 15px;
-      letter-spacing: 0.34em;
+      font-size: 19px;
+      font-weight: bold;
+      letter-spacing: 0.38em;
       color: #ff3a24;
-      text-shadow: 0 0 12px rgba(255, 58, 36, 0.9);
+      text-shadow: 0 0 18px rgba(255, 58, 36, 1),
+                   0 0 40px rgba(255, 58, 36, 0.6);
       animation: lockBlink 0.24s steps(2) infinite;
     }
     @keyframes lockBlink {
@@ -1118,6 +1175,9 @@
       <span>REAR</span>
       <b class="no-signal">NO SIGNAL</b>
     </div>
+
+    <!-- 被ロック警報。ミサイルにロックされている間、視界の縁が脈打つ -->
+    <div class="lock-warn" id="lock-warn"><span class="lock-warn-label"></span></div>
 
     <!-- 偏差照準(リードパイパー)。
          「動いている敵に当てるには、ここへ撃てばよい」という点。
