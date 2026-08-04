@@ -381,19 +381,19 @@ const AIM = {
   CAPTURE_SPREAD: 0.05,  // 距離に応じて広がる分(遠い敵も捉えられるように)
   // この距離より遠い敵は捕捉しない(上限)。
   // ミサイルは切り札枠なので、銃では届かない距離から仕掛けられるようにしてある。
-  // 銃の射程(弾速90×寿命2.2 ≒ 198)の12倍。
+  // 銃の射程(弾速90×寿命2.2 ≒ 198)の24倍。
   // 敵はフレアを持っていて何発も無駄になるので、
   // 「まだ点にしか見えない距離から先に撃ち始める」ことを成立させたい。
-  CAPTURE_RANGE: 2400,
+  CAPTURE_RANGE: 4800,
 
   // ただし実際に届く距離は、索敵半径にこの倍率をかけたところまで。
   // 見えていない相手をロックできるのはおかしいので、センサーに縛ってある。
   // これで「センサー厚め → ミサイル型」が距離という形で効いてくる。
-  //   センサー  0% … 索敵45 → ロック450
-  //   センサー 25% … 索敵99 → ロック988
-  //   センサー 60% … 索敵174 → ロック1740
-  //   センサー100% … 索敵260 → 上限の2400
-  LOCK_RANGE_MULT: 10.0,
+  //   センサー  0% … 索敵45 → ロック900
+  //   センサー 25% … 索敵99 → ロック1976
+  //   センサー 60% … 索敵174 → ロック3480
+  //   センサー100% … 索敵260 → 上限の4800
+  LOCK_RANGE_MULT: 20.0,
 
   // --- ロックオン(武器仕様書:ミサイルは発射にセンサーロック必須)---
   // 捕捉を続けるとロックが進み、満ちると LOCKED になる。
@@ -451,9 +451,9 @@ const MISSILE = {
   SPEED:       95,   // 弾速。遠距離から撃つので、遅すぎると届く前に切れる
   TURN_RATE:  3.6,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
   // 燃焼時間(秒)。切れると失速して消える。
-  // 射程 = 弾速 × 寿命 = 95 × 28 = 2660。ロック可能距離(2400)より長く取る ―
+  // 射程 = 弾速 × 寿命 = 95 × 56 = 5320。ロック可能距離(4800)より長く取る ―
   // 撃てるのに届かない距離があると、ロックの意味がなくなるため。
-  LIFE:      28.0,
+  LIFE:      56.0,
   // 敵HPを減らす量。いちばん硬いソルジャー(6)と同じにして、
   // 当たれば必ず1発で落ちる「切り札」の位置づけを保つ。
   DAMAGE:       6,
@@ -625,19 +625,19 @@ const PYRO = {
   RADIUS:       22,   // 炸裂して燃焼片が届く範囲
   DAMAGE:        1,   // HPを削る力は弱い。狙いはあくまで熱
   HEAT_ADD:     34,   // 炸裂の中心で敵のHEATに加える量
-  BURN_SEC:    7.0,   // 燃え続ける秒数(この間ずっと熱が入り続ける)
+  BURN_SEC:   14.0,   // 燃え続ける秒数(この間ずっと熱が入り続ける)
   BURN_RATE:     7,   // 燃焼中に毎秒加わる熱
-  MARK_SEC:    9.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
+  MARK_SEC:   18.0,   // 熱で目立つ状態が続く秒数(センサーに映りやすくなる)
 
   // --- 熱に基づくデバフ(この武器の本命)---
   // 燃焼片が放熱面にこびりついて、熱を捨てられなくする。
   // 敵は「熱が入る」だけでなく「熱を逃がせない」状態になるので、
   // 撃ち続ければ自分の発熱だけで勝手にシャットダウンへ向かう。
   VENT_MULT:  0.30,   // 放熱能力をこの割合まで落とす(毎秒9.0 → 2.7)
-  // 放熱不能が続く秒数。燃焼(7.0)より長く取ってあるのが肝 ―
+  // 放熱不能が続く秒数。燃焼(14.0)より長く取ってあるのが肝 ―
   // 火が消えてからも熱を捨てられない時間が残るので、
   // そこへ撃ち込めば自分の発熱だけで押し切れる。
-  DEBUFF_SEC: 12.0,
+  DEBUFF_SEC: 24.0,
 
   SELF_RADIUS:  14,   // 自機がこれより近いと自分も浴びる
   SELF_HEAT:    22,   // 浴びたときに自分の熱に加わる量
@@ -655,10 +655,15 @@ const PYRO = {
 // どちらも自分が巻き込まれる。撃ったら離れる、が要る武器にしてある。
 const BOMB = {
   SPEED:       46,   // 弾(90)よりずっと遅い。前へ「置く」感覚
-  FUSE:       1.5,   // 発射してから炸裂するまでの秒数
-  RADIUS:      24,   // 爆発が届く半径
-  DAMAGE:       4,   // 中心での威力(HP)。敵の最大HPは5なので、中心なら瀕死
-  SELF_RADIUS: 18,   // 自機がこれより近いと巻き込まれる
+  FUSE:       0.8,   // 発射してから炸裂するまでの秒数。短いほど「置く」より「投げつける」
+  RADIUS:      36,   // 爆発が届く半径
+  // 中心での威力(HP)。いちばん硬いソルジャー(6)を中心で吹き飛ばせる。
+  // 距離で減衰するので、端をかすめただけでは落ちない
+  DAMAGE:       7,
+  // 自機がこれより近いと巻き込まれる。
+  // 炸裂範囲を広げたぶんここも広げてある ― 起爆が早くなったので、
+  // 近すぎる相手に投げると自分も巻き込まれる、という緊張を残す
+  SELF_RADIUS: 24,
   SELF_DAMAGE: 25,   // 巻き込まれたときにシールドを削る量
   COLOR:  0xffb04a,
 };
@@ -2868,9 +2873,12 @@ function applyAimAssist(dt, authority) {
 // 射撃(仕様書9.6:F=主兵装発射)
 // 命中判定はまだ入れない。まずは「撃った」ことが見て分かる状態にする。
 // ===================================================================
-function fireBolt(color) {
+// damage = この弾1発が敵HPを削る量。省略時は1(=これまでどおり)。
+// 兵装ごとに威力を変えられるよう、弾そのものに持たせている。
+function fireBolt(color, damage) {
   if (!sceneReady) return;
   const boltColor = (color === undefined) ? BOLT.COLOR : color;
+  const boltDamage = (typeof damage === 'number') ? damage : 1;
 
   // 弾の形と材質は毎回作らず、最初の1回だけ作って使い回す(数が増えても重くならない)
   if (!boltGeometry) {
@@ -2922,6 +2930,7 @@ function fireBolt(color) {
     scene.add(mesh);
     bolts.push({
       mesh: mesh, direction: direction, life: BOLT.LIFE,
+      damage: boltDamage,
       volleyId: volleyCounter,
     });
 
@@ -3691,7 +3700,7 @@ function updateBolts(dt) {
       const isFirstOfVolley = (bolt.volleyId !== lastDamagedVolley);
       if (isFirstOfVolley) lastDamagedVolley = bolt.volleyId;
 
-      hitEnemy(struck, bolt.mesh.position, isFirstOfVolley);
+      hitEnemy(struck, bolt.mesh.position, isFirstOfVolley, bolt.damage);
       scene.remove(bolt.mesh);
       bolts.splice(i, 1);
       continue;   // この弾はもう無いので、次の弾へ
@@ -4632,7 +4641,7 @@ function hitsShip(point, obj, half, margin) {
 // 敵機への命中
 // ===================================================================
 // dealDamage が false のときは、見た目(光と破片)だけでHPは減らさない
-function hitEnemy(e, point, dealDamage) {
+function hitEnemy(e, point, dealDamage, damage) {
   e.hitFlash = ENEMY.FLASH_SEC;         // 白く光らせる
   e.heatSig  = SENSOR.HEAT_LINGER;      // 被弾直後も熱くて見つかりやすい
 
@@ -4643,7 +4652,8 @@ function hitEnemy(e, point, dealDamage) {
 
   if (!dealDamage) return;
 
-  e.hp -= 1;
+  // 弾ごとの威力で削る。指定がなければ1(パイロなど、別処理で削るもの用)
+  e.hp -= (typeof damage === 'number') ? damage : 1;
 
   if (e.hp <= 0) {
     killEnemy(e);
