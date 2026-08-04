@@ -12,7 +12,7 @@
 // ブラウザは古いJSを溜め込む(キャッシュ)ことがあり、直したはずの不具合が
 // 直っていないように見える原因になる。この番号が想定と違えば古い版が動いている。
 // 中身を変えたらこの数字も上げること。
-const BUILD = 'p1-68 loadout pass';
+const BUILD = 'p2-01 adv ch1-s1';
 
 // --- 系統の定義 -----------------------------------------------------
 // 配列(リスト)で4系統を並べておく。順番はそのまま「均等に差し引く」順にもなる。
@@ -2192,6 +2192,13 @@ function tick(now) {
   if (screenState === 'menu') {
     updateMenuBackdrop(dt);   // screens.js:ゆるい旋回と巡航
     updateScene(dt, elapsed);
+    requestAnimationFrame(tick);
+    return;
+  }
+
+  // --- ストーリー:サイドビューのADVパート。3Dは動かさない ---
+  if (screenState === 'story') {
+    updateStory(dt);          // story.js:歩き・会話・カメラ
     requestAnimationFrame(tick);
     return;
   }

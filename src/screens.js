@@ -68,7 +68,8 @@ const MENU_PAGES = {
   story: {
     items: [
       {
-        label: 'PART I', jp: '黄昏のアルカディア', tag: '準備中', ready: false,
+        label: 'PART I', jp: '黄昏のアルカディア', tag: '一章', ready: true,
+        run: () => startStoryScene('ch1_s1_hill'),
         detail: '企業連合軍によるアルカディア陥落。カイトは生存者と脱出艇で逃げ延び、' +
                 '傭兵チームとして各地を転戦する。<br>' +
                 '自分たちも「誰かの故郷」を落としていると気づく転換点を経て、' +
@@ -488,6 +489,9 @@ window.addEventListener('keydown', (event) => {
     }
     return;
   }
+
+  // ストーリー中のキーは story.js が受け持つ。ここでは何もしない
+  if (screenState === 'story') return;
 
   resumeAudio();   // メニューでの最初のキー入力で音を起こす
 

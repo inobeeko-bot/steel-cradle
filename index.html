@@ -1394,6 +1394,190 @@
     }
     .gal-hint span { color: #6e8b98; }
 
+    /* ================================================================
+       ストーリー(サイドビューADVパート)
+       戦闘の3Dとは別の層。ここはHTML/CSSだけで描く。
+       絵はまだ入れず、単色の矩形+ラベルで置いてある(あとで差し替える)。
+       ================================================================ */
+    .story {
+      position: absolute;
+      inset: 0;
+      display: none;
+      overflow: hidden;
+      z-index: 45;
+      /* 空。上から下へ、夜の色 → 黄昏 → 地平の明るさ */
+      background: linear-gradient(180deg,
+        var(--sky-top, #3a2a3c) 0%,
+        var(--sky-mid, #8a5a3e) 62%,
+        var(--sky-bot, #d8925a) 100%);
+      font-family: 'Courier New', monospace;
+    }
+    .story.on { display: block; }
+
+    /* 地面。画面の下に敷く帯 */
+    .story::after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: var(--ground-h, 120px);
+      background: var(--ground, #241c22);
+      border-top: 2px solid rgba(255, 220, 180, 0.22);
+    }
+
+    /* 道そのもの。カメラはこれを左右に動かして表現する */
+    .story-world {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 100%;
+      will-change: transform;
+    }
+
+    /* --- 背景の飾り --- */
+    .story-scenery {
+      position: absolute;
+      border-radius: 2px 2px 0 0;
+    }
+    /* 遠景は空気に溶かす。近景よりぼんやりさせると奥行きが出る */
+    .story-scenery.far  { opacity: 0.55; filter: saturate(0.6); }
+    .story-scenery.near { opacity: 0.9; }
+    .story-scenery span {
+      position: absolute; left: 0; right: 0; top: 10px;
+      text-align: center; font-size: 9px; letter-spacing: 0.2em;
+      color: rgba(255, 230, 200, 0.35);
+    }
+
+    /* --- 調べられる物 --- */
+    .story-prop {
+      position: absolute;
+      border-radius: 3px 3px 0 0;
+      box-shadow: inset 0 -10px 20px rgba(0, 0, 0, 0.35);
+    }
+    /* ラベルは物の「上」に出す。下に置くと地面の帯に隠れてしまう */
+    .story-prop span {
+      position: absolute; left: -40px; right: -40px; top: -17px;
+      text-align: center; font-size: 9px; letter-spacing: 0.16em;
+      color: rgba(255, 235, 210, 0.55);
+    }
+
+    /* --- 人物(プレースホルダーの矩形)--- */
+    .story-actor {
+      position: absolute;
+      border-radius: 4px 4px 1px 1px;
+    }
+    .story-actor.kaito {
+      background: #cfd8dd;
+      box-shadow: inset 0 -14px 18px rgba(0, 0, 0, 0.3);
+    }
+    .story-actor span {
+      position: absolute; left: -40px; right: -40px; top: -17px;
+      text-align: center; font-size: 9px; letter-spacing: 0.16em;
+      color: rgba(255, 235, 210, 0.68);
+    }
+    /* 歩いているあいだ、わずかに上下させる(足踏みの代わり) */
+    .story-actor.walking { animation: storyWalk 0.32s steps(2) infinite; }
+    @keyframes storyWalk { 0% { margin-bottom: 0; } 50% { margin-bottom: 3px; } 100% { margin-bottom: 0; } }
+    .story-actor.flip { transform: scaleX(-1); }
+
+    /* --- 出口 --- */
+    .story-exit {
+      position: absolute;
+      width: 4px; height: 150px;
+      background: repeating-linear-gradient(180deg,
+        rgba(255, 210, 160, 0.5) 0 8px, transparent 8px 16px);
+      opacity: 0.3;
+    }
+    .story-exit.open { opacity: 1; box-shadow: 0 0 22px rgba(255, 210, 160, 0.5); }
+
+    /* --- 調べられるものを指す印 --- */
+    .story-mark {
+      position: absolute;
+      transform: translateX(-50%);
+      font-size: 13px;
+      color: #ffe6c0;
+      opacity: 0;
+      transition: opacity 0.15s;
+      text-shadow: 0 0 8px rgba(255, 200, 140, 0.7);
+      animation: storyBob 1.1s ease-in-out infinite;
+    }
+    .story-mark.on { opacity: 0.9; }
+    @keyframes storyBob { 0%,100% { margin-bottom: 0; } 50% { margin-bottom: 6px; } }
+
+    /* --- 会話ウィンドウ --- */
+    .story-box {
+      position: absolute;
+      left: 50%; bottom: 26px;
+      transform: translateX(-50%);
+      width: min(860px, 88%);
+      min-height: 92px;
+      display: none;
+      padding: 14px 20px 16px;
+      background: rgba(6, 8, 12, 0.9);
+      border: 1px solid #4a3a30;
+      border-left: 3px solid #c98a4a;
+      border-radius: 3px;
+      z-index: 3;
+    }
+    .story-box.on { display: block; }
+    /* 地の文は話者がいないので、枠の色を抑えて中央寄りの文章にする */
+    .story-box.narration {
+      border-left-color: #4a5a68;
+      background: rgba(4, 6, 10, 0.92);
+    }
+    .story-box.narration .story-text { color: #9fb2be; font-style: normal; }
+
+    .story-speaker {
+      font-size: 11px; letter-spacing: 0.24em; color: #e0a86a;
+      margin-bottom: 8px;
+    }
+    .story-text {
+      font-size: 13px; line-height: 1.95; letter-spacing: 0.05em;
+      color: #e8ded2;
+      min-height: 3.9em;
+    }
+    /* 「次へ」の三角。テキストの右下で点滅させる */
+    .story-next {
+      position: absolute; right: 14px; bottom: 8px;
+      font-size: 10px; color: #c98a4a;
+      animation: storyBlink 1s steps(2) infinite;
+    }
+    @keyframes storyBlink { 0% { opacity: 1; } 50% { opacity: 0.15; } 100% { opacity: 1; } }
+
+    /* --- 操作説明(一時的に出る帯)--- */
+    .story-prompt {
+      position: absolute;
+      left: 50%; top: 12%;
+      transform: translateX(-50%);
+      padding: 7px 18px;
+      font-size: 11px; letter-spacing: 0.22em;
+      color: #ffe2bb;
+      background: rgba(8, 6, 10, 0.72);
+      border: 1px solid rgba(255, 200, 150, 0.28);
+      border-radius: 2px;
+      opacity: 0;
+      transition: opacity 0.35s;
+      z-index: 4;
+      pointer-events: none;
+    }
+    .story-prompt.on { opacity: 1; }
+    .story-prompt.big { font-size: 17px; letter-spacing: 0.3em; padding: 14px 28px; }
+
+    /* 画面左上の現在地表示 */
+    .story-hint {
+      position: absolute; left: 20px; top: 16px;
+      font-size: 9px; letter-spacing: 0.22em;
+      color: rgba(255, 230, 200, 0.4);
+      z-index: 4;
+    }
+
+    /* 暗転用の黒幕 */
+    .story-fade {
+      position: absolute; inset: 0;
+      background: #000;
+      opacity: 1;
+      pointer-events: none;
+      z-index: 5;
+    }
+
     /* 画面右下の版数。開発中なので出しておく */
     .menu-build {
       position: absolute;
@@ -1700,6 +1884,19 @@
     </div>
   </div>
 
+  <!-- ストーリー(サイドビューADVパート)。中身は story.js が組み立てる -->
+  <div class="story" id="story">
+    <div class="story-world" id="story-world"></div>
+    <div class="story-hint" id="story-hint"></div>
+    <div class="story-prompt" id="story-prompt"></div>
+    <div class="story-box" id="story-box">
+      <div class="story-speaker" id="story-speaker"></div>
+      <div class="story-text" id="story-text"></div>
+      <div class="story-next">▼ Enter</div>
+    </div>
+    <div class="story-fade" id="story-fade"></div>
+  </div>
+
   <!-- Three.js 本体(CDN)。バージョンを固定しておくと、ある日突然壊れることがない。
        0.150.1 は「普通の<script>タグで読める」最後の系列。
        ダブルクリックで index.html を開く運用を保つために、この版を選んでいる。 -->
@@ -1720,5 +1917,8 @@
 
   <!-- メインメニューと画面遷移。main.js の関数を呼ぶので、いちばん最後に読む -->
   <script src="src/screens.js"></script>
+
+  <!-- ストーリー(サイドビューADV)。screens.js の関数を呼ぶので、そのあとに読む -->
+  <script src="src/story.js"></script>
 </body>
 </html>
