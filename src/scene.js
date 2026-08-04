@@ -808,8 +808,13 @@ const AI_ARCHETYPES = {
     LABEL: 'SOLDIER', JP: 'ソルジャー',
     WEIGHT: 50,            // 出現比率(3つの合計に対する重み)
     // 標準色。今までの敵機の色そのまま
-    COLOR: { BODY: 0xa8452f, WING: 0x6d2a20, CANOPY: 0x3a1a16, EDGE: 0xff9d84 },
+    COLOR: { BODY: 0xa8452f, WING: 0x6d2a20, CANOPY: 0x3a1a16, EDGE: 0xff9d84,
+             GLOW_COLOR: 0xff7a4d },
     MAX_HP: 6,
+    // 当たり判定(モデル寸法の半分)。形が違えば当たり方も違うべきなので、
+    // タイプごとに持たせる。ENEMY.SCALE は自動で効くので掛けなくてよい。
+    //   主翼 x=±2.2 / 薄い上下 y≈0.95 / 機首から尾まで z=±1.8
+    HIT_HALF: { x: 2.2, y: 0.95, z: 1.8 },
     SPEED:  { APPROACH: 30, ATTACK: 20, EVADE: 34 },
     RANGE:  { ATTACK: 85, BREAK: 130, TOO_CLOSE: 22 },
     TURN_RATE: 2.2,
@@ -839,8 +844,11 @@ const AI_ARCHETYPES = {
     WEIGHT: 30,
     // 暖色系(琥珀)。ソルジャーのくすんだ赤とはっきり離すため、黄色寄りにする。
     // 近づいてくる機体が視界の端に入った瞬間に分かることが大事
-    COLOR: { BODY: 0xdd8a12, WING: 0x96560a, CANOPY: 0x40280c, EDGE: 0xffd98a },
-    MAX_HP: 4,             // 脆い。突進中は的になる
+    COLOR: { BODY: 0xdd8a12, WING: 0x96560a, CANOPY: 0x40280c, EDGE: 0xffd98a,
+             GLOW_COLOR: 0xff5a1e },
+    MAX_HP: 4,
+    // 短く詰まった機体。前後が薄いぶん、正面から見ると当てにくい
+    HIT_HALF: { x: 2.3, y: 1.0, z: 1.4 },             // 脆い。突進中は的になる
     SPEED:  { APPROACH: 46, ATTACK: 34, EVADE: 42 },
     RANGE:  { ATTACK: 46, BREAK: 95, TOO_CLOSE: 9 },       // ぐっと詰めてくる
     TURN_RATE: 3.2,
@@ -873,8 +881,11 @@ const AI_ARCHETYPES = {
     LABEL: 'SNIPER', JP: 'スナイパー',
     WEIGHT: 20,
     // 寒色系(青)。遠くの点として見えたとき、色で「あれは狙撃機」と分かる
-    COLOR: { BODY: 0x2f5f8a, WING: 0x1b3a56, CANOPY: 0x14283a, EDGE: 0x8fd2ff },
+    COLOR: { BODY: 0x2f5f8a, WING: 0x1b3a56, CANOPY: 0x14283a, EDGE: 0x8fd2ff,
+             GLOW_COLOR: 0x6fc0ff },
     MAX_HP: 5,
+    // 長く細い機体。翼幅が広いので横は大きく、上下は薄い
+    HIT_HALF: { x: 3.3, y: 0.75, z: 2.4 },
     SPEED:  { APPROACH: 18, ATTACK: 14, EVADE: 30 },
     // 遠距離を保つ。TOO_CLOSE が大きい = 詰められると下がりたがる
     RANGE:  { ATTACK: 150, BREAK: 230, TOO_CLOSE: 90 },
@@ -1241,13 +1252,58 @@ function createFlatPart(geometry, color, edgeColor) {
 }
 
 // ===================================================================
+// エンジン(ノズル+噴射光)を1基ぶん足す
+//
+// 3タイプとも形は違うが、エンジンの作り方は同じなので共通にしておく。
+// 噴射光を付けるのは「動かない模型」に見えるのを防ぐため ―
+// 静止していても光っていれば、そこに機械があると分かる。
+// ===================================================================
+function addEnemyEngine(ship, C, x, y, z, radius, length) {
+  const nozzleGeo = new THREE.CylinderGeometry(radius * 0.84, radius, length, 5);
+  nozzleGeo.rotateX(Math.PI / 2);        // 円柱を寝かせて前後方向にする
+  const nozzle = createFlatPart(nozzleGeo, C.WING, C.EDGE);
+  nozzle.position.set(x, y, z);
+  ship.add(nozzle);
+
+  const glowGeo = new THREE.ConeGeometry(radius * 0.72, length * 1.5, 6);
+  glowGeo.rotateX(Math.PI / 2);          // 後ろ(+Z)へ尖らせる
+  glowGeo.translate(0, 0, length * 0.75);
+  const glow = new THREE.Mesh(glowGeo, new THREE.MeshBasicMaterial({
+    color: C.GLOW_COLOR, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  glow.position.set(x, y, z + length * 0.5);
+  ship.add(glow);
+}
+
+// ===================================================================
 // 敵機を組み立てる
 //
 // 画像は使わず、単純な立体(円錐・箱・八面体)を組み合わせて機体の形を作る。
 // 面の数が少ないほど「ローポリ」らしくなるので、円錐はあえて4面にしている。
 // Group = 複数の部品をひとまとめにして、1つの物として動かすための入れ物。
+//
+// タイプによって役目が違うので、形も分けている。色だけの違いだと、
+// 遠くの1点として見えたときに「何が来たか」しか分からず、
+// 「なぜその動きなのか」が形から読み取れないため。
+//   SOLDIER … 前翼つきの汎用機。過不足のない基準の形
+//   HOUND   … 短く詰まった突撃機。顎のような吸気口と大型ノズル
+//   SNIPER  … 細長い狙撃機。上面を貫く砲身と、長く薄い直線翼
 // ===================================================================
-function createEnemyFighter() {
+function createEnemyFighter(archKey) {
+  const A = AI_ARCHETYPES[archKey] || AI_ARCHETYPES.SOLDIER;
+  const ship = (archKey === 'HOUND')  ? buildHoundFighter(A.COLOR)
+             : (archKey === 'SNIPER') ? buildSniperFighter(A.COLOR)
+             :                          buildSoldierFighter(A.COLOR);
+  // ここでは拡大しない。
+  // 大きさは親(敵1機ぶんのグループ)に掛ける ―
+  // 当たり判定は親の座標系で行い、その拡大率を自動で使う作りなので、
+  // 子だけを大きくすると見た目と判定がずれる(実際にずれた)。
+  return ship;
+}
+
+// --- タイプ1:ソルジャー(基準の形)---------------------------------
+function buildSoldierFighter(C) {
   const ship = new THREE.Group();
 
   // ※ 機首は自機と同じ「-Z が前」に揃えてある。
@@ -1259,14 +1315,13 @@ function createEnemyFighter() {
   const bodyGeo = new THREE.ConeGeometry(0.75, 3.0, 4);
   // 円錐は初期状態で上(+Y)を向いているので、90度倒して前(-Z)へ向ける
   bodyGeo.rotateX(-Math.PI / 2);
-  ship.add(createFlatPart(bodyGeo, ENEMY.BODY_COLOR, ENEMY.EDGE_COLOR));
+  ship.add(createFlatPart(bodyGeo, C.BODY, C.EDGE));
 
   // --- 主翼(左右)---
   // BoxGeometry(幅, 高さ, 奥行き)
   // 細長すぎると1本の棒に見えてしまうので、奥行き(前後の厚み)をしっかり取る
   for (const side of [-1, 1]) {          // -1=左 / +1=右 をまとめて作る
-    const wingGeo = new THREE.BoxGeometry(1.8, 0.16, 1.7);
-    const wing = createFlatPart(wingGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    const wing = createFlatPart(new THREE.BoxGeometry(1.8, 0.16, 1.7), C.WING, C.EDGE);
     wing.position.set(side * 1.3, -0.1, 0.5);
     wing.rotation.z = side * 0.20;       // 少し上に反らせて「への字」の翼にする
     wing.rotation.y = side * 0.16;       // 後退角(翼を後ろへ倒す)
@@ -1277,8 +1332,7 @@ function createEnemyFighter() {
   // 機首寄りに小さな翼を付けると、一気に「兵器らしい」シルエットになる。
   // 自機は前翼を持たないので、遠目でも敵味方を形で見分けられる。
   for (const side of [-1, 1]) {
-    const canardGeo = new THREE.BoxGeometry(0.85, 0.10, 0.55);
-    const canard = createFlatPart(canardGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    const canard = createFlatPart(new THREE.BoxGeometry(0.85, 0.10, 0.55), C.WING, C.EDGE);
     canard.position.set(side * 0.72, 0.05, -0.85);
     canard.rotation.z = side * 0.34;     // 大きく上へ跳ね上げる
     canard.rotation.y = side * -0.10;    // 前進翼(自機の後退翼と逆)
@@ -1286,62 +1340,161 @@ function createEnemyFighter() {
   }
 
   // --- 双垂直尾翼(外側へ倒す)---
-  // 1枚の尾翼より、外へ開いた2枚のほうが機械的に見える。
   for (const side of [-1, 1]) {
-    const finGeo = new THREE.BoxGeometry(0.12, 0.95, 0.9);
-    const fin = createFlatPart(finGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    const fin = createFlatPart(new THREE.BoxGeometry(0.12, 0.95, 0.9), C.WING, C.EDGE);
     fin.position.set(side * 0.5, 0.5, 1.15);
     fin.rotation.z = side * -0.36;       // ハの字に開く
     ship.add(fin);
   }
 
   // --- 側面の装甲板 ---
-  // 胴体(円錐)の丸みを角で隠す。平たい板を1枚貼るだけで見た目の情報量が増える。
   for (const side of [-1, 1]) {
-    const plateGeo = new THREE.BoxGeometry(0.16, 0.52, 1.9);
-    const plate = createFlatPart(plateGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
+    const plate = createFlatPart(new THREE.BoxGeometry(0.16, 0.52, 1.9), C.WING, C.EDGE);
     plate.position.set(side * 0.55, -0.02, 0.15);
     plate.rotation.z = side * -0.22;
     ship.add(plate);
   }
 
   // --- 機首のセンサーポッド ---
-  const podGeo = new THREE.OctahedronGeometry(0.22);
-  const pod = createFlatPart(podGeo, ENEMY.CANOPY_COLOR, ENEMY.EDGE_COLOR);
+  const pod = createFlatPart(new THREE.OctahedronGeometry(0.22), C.CANOPY, C.EDGE);
   pod.position.set(0, -0.18, -1.25);
   pod.scale.set(0.8, 0.8, 1.8);
   ship.add(pod);
 
-  // --- エンジンノズルと噴射光(左右)---
-  // 5角柱。少ない面数のまま「機械的な塊」を足して、機体の後ろを重く見せる
-  for (const side of [-1, 1]) {
-    const nozzleGeo = new THREE.CylinderGeometry(0.3, 0.36, 1.0, 5);
-    nozzleGeo.rotateX(Math.PI / 2);      // 円柱を寝かせて前後方向にする
-    const nozzle = createFlatPart(nozzleGeo, ENEMY.WING_COLOR, ENEMY.EDGE_COLOR);
-    nozzle.position.set(side * 0.62, -0.05, 1.3);
-    ship.add(nozzle);
-
-    // 噴射光。自機だけが光っていると敵が「動かない模型」に見えるので、
-    // 敵にも付ける。色は自機の水色に対して赤 ― 遠目でも敵味方が分かる。
-    const glowGeo = new THREE.ConeGeometry(0.24, 1.5, 6);
-    glowGeo.rotateX(Math.PI / 2);        // 後ろ(+Z)へ尖らせる
-    glowGeo.translate(0, 0, 0.75);
-    const glow = new THREE.Mesh(glowGeo, new THREE.MeshBasicMaterial({
-      color: 0xff7a4d, transparent: true, opacity: 0.5,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    glow.position.set(side * 0.62, -0.05, 1.8);
-    ship.add(glow);
-  }
+  // --- エンジン(左右)---
+  for (const side of [-1, 1]) addEnemyEngine(ship, C, side * 0.62, -0.05, 1.3, 0.36, 1.0);
 
   // --- コックピット(八面体。角ばったキャノピー)---
-  const canopyGeo = new THREE.OctahedronGeometry(0.42);
-  const canopy = createFlatPart(canopyGeo, ENEMY.CANOPY_COLOR, ENEMY.EDGE_COLOR);
+  const canopy = createFlatPart(new THREE.OctahedronGeometry(0.42), C.CANOPY, C.EDGE);
   canopy.position.set(0, 0.36, -0.15);
   canopy.scale.set(1, 0.7, 1.6);        // 前後に伸ばして流線形っぽく
   ship.add(canopy);
 
-  ship.scale.setScalar(ENEMY.SCALE);    // 全体の大きさをまとめて調整
+  return ship;
+}
+
+// --- タイプ2:ハウンド(突撃機)-------------------------------------
+//
+// 「短く、詰まっていて、前が重い」形。翼を大きく後ろへ畳み、
+// 機首に顎のような吸気口を開かせて、噛みつきに来る印象を作る。
+// 尾翼は付けない ― 安定させる形は、この機体の役目と逆だから。
+function buildHoundFighter(C) {
+  const ship = new THREE.Group();
+
+  // --- 胴体:太く短い ---
+  const bodyGeo = new THREE.ConeGeometry(0.92, 2.3, 4);
+  bodyGeo.rotateX(-Math.PI / 2);
+  ship.add(createFlatPart(bodyGeo, C.BODY, C.EDGE));
+
+  // --- 顎(機首の左右へ突き出した吸気口)---
+  // 細く長い板を、前ほど外へ開くように傾けて2枚。
+  // 太い塊にすると胴体と一体化して「ただの塊」に見えてしまうので、
+  // わざと薄くして、機首より前へはみ出させる。これがこの機体の顔になる。
+  for (const side of [-1, 1]) {
+    const jaw = createFlatPart(new THREE.BoxGeometry(0.20, 0.52, 2.0), C.WING, C.EDGE);
+    jaw.position.set(side * 0.60, -0.10, -1.05);
+    jaw.rotation.y = side * -0.34;      // 前が外に開く = 口を開けた形
+    jaw.rotation.z = side * 0.20;
+    ship.add(jaw);
+  }
+
+  // --- 主翼:大きく後退させ、下へ垂らす(獲物に覆いかぶさる形)---
+  // 爪は翼の子として付ける。こうすると後退角を変えても
+  // 勝手に翼の先端に付いてきてくれる(位置を計算し直さなくてよい)。
+  for (const side of [-1, 1]) {
+    const wing = createFlatPart(new THREE.BoxGeometry(2.3, 0.11, 1.0), C.WING, C.EDGE);
+    wing.position.set(side * 1.35, -0.22, 0.75);
+    wing.rotation.z = side * -0.34;     // 下へ垂らす(ソルジャーは上へ反らせている)
+    wing.rotation.y = side * 0.52;      // 強い後退角
+    ship.add(wing);
+
+    const claw = createFlatPart(new THREE.ConeGeometry(0.13, 0.9, 3), C.CANOPY, C.EDGE);
+    claw.position.set(side * 1.1, 0, -0.35);   // 翼から見た先端の少し前
+    claw.rotation.x = -Math.PI / 2;            // 前へ尖らせる
+    wing.add(claw);
+  }
+
+  // --- 背びれ ---
+  // こぶ(箱)にすると背中が膨らんで鈍く見える。
+  // 薄い板を1枚立てるだけのほうが、速そうなシルエットになる。
+  const spine = createFlatPart(new THREE.BoxGeometry(0.12, 0.52, 1.7), C.WING, C.EDGE);
+  spine.position.set(0, 0.52, 0.5);
+  spine.rotation.x = 0.10;
+  ship.add(spine);
+
+  // --- 大型エンジン2基。ソルジャーより太く、外に開いて付ける ---
+  for (const side of [-1, 1]) addEnemyEngine(ship, C, side * 0.72, -0.02, 1.15, 0.50, 1.3);
+
+  // --- コックピット:小さく、前寄り ---
+  const canopy = createFlatPart(new THREE.OctahedronGeometry(0.34), C.CANOPY, C.EDGE);
+  canopy.position.set(0, 0.34, -0.42);
+  canopy.scale.set(1, 0.62, 1.4);
+  ship.add(canopy);
+
+  return ship;
+}
+
+// --- タイプ3:スナイパー(狙撃機)-----------------------------------
+//
+// 「長く、細く、正面から見て薄い」形。上面を貫く砲身と、
+// グライダーのように長く真っ直ぐな翼で、遠くから狙う機体だと分かる。
+// 正面投影が小さい = 遠距離では当てにくい相手でもある。
+function buildSniperFighter(C) {
+  const ship = new THREE.Group();
+
+  // --- 胴体:細く長い ---
+  const bodyGeo = new THREE.ConeGeometry(0.52, 4.0, 4);
+  bodyGeo.rotateX(-Math.PI / 2);
+  bodyGeo.translate(0, 0, 0.3);          // 少し後ろへ寄せて、砲身を前に出す
+  ship.add(createFlatPart(bodyGeo, C.BODY, C.EDGE));
+
+  // --- 砲身:機体の上を前後に貫く長い角材 ---
+  // この機体でいちばん目を引く部分。撃つ前にここが光る
+  const barrel = createFlatPart(new THREE.BoxGeometry(0.26, 0.26, 4.6), C.WING, C.EDGE);
+  barrel.position.set(0, 0.34, -0.5);
+  ship.add(barrel);
+
+  // 砲口(先端を一回り太くして、砲身だと分かるようにする)
+  const muzzle = createFlatPart(new THREE.CylinderGeometry(0.20, 0.26, 0.5, 6), C.CANOPY, C.EDGE);
+  muzzle.rotation.x = Math.PI / 2;
+  muzzle.position.set(0, 0.34, -2.65);
+  ship.add(muzzle);
+
+  // --- 主翼:長く薄い直線翼(後退角なし)---
+  for (const side of [-1, 1]) {
+    const wing = createFlatPart(new THREE.BoxGeometry(3.1, 0.10, 0.85), C.WING, C.EDGE);
+    wing.position.set(side * 1.85, -0.06, 0.75);
+    wing.rotation.z = side * 0.06;       // ほぼ水平。安定した射撃台の形
+    ship.add(wing);
+  }
+
+  // --- 翼端の垂直板 ---
+  for (const side of [-1, 1]) {
+    const tip = createFlatPart(new THREE.BoxGeometry(0.08, 0.62, 0.7), C.WING, C.EDGE);
+    tip.position.set(side * 3.3, 0.22, 0.75);
+    ship.add(tip);
+  }
+
+  // --- センサーの箱(キャノピーの後ろ)---
+  // 遠くを見るための装置。これがあると「観測して撃つ機体」に見える
+  const sensor = createFlatPart(new THREE.BoxGeometry(0.62, 0.46, 0.9), C.CANOPY, C.EDGE);
+  sensor.position.set(0, 0.30, 0.75);
+  ship.add(sensor);
+
+  // --- 尾翼:1枚だけ、背が高い ---
+  const fin = createFlatPart(new THREE.BoxGeometry(0.10, 1.25, 1.0), C.WING, C.EDGE);
+  fin.position.set(0, 0.72, 1.85);
+  ship.add(fin);
+
+  // --- エンジンは1基だけ(遅い機体)---
+  addEnemyEngine(ship, C, 0, -0.14, 1.75, 0.40, 1.1);
+
+  // --- コックピット:細く前寄り ---
+  const canopy = createFlatPart(new THREE.OctahedronGeometry(0.34), C.CANOPY, C.EDGE);
+  canopy.position.set(0, 0.14, -0.55);
+  canopy.scale.set(0.85, 0.62, 1.9);
+  ship.add(canopy);
+
   return ship;
 }
 
@@ -3007,7 +3160,7 @@ function updateMissiles(dt) {
     for (const e of enemies) {
       if (!e.alive) continue;
       // ミサイルは近接信管なので、機体の形に信管の効く距離を足して判定する
-      if (hitsShip(m.mesh.position, e.group, ENEMY.HIT_HALF, MISSILE.HIT_RADIUS)) { struck = e; break; }
+      if (hitsShip(m.mesh.position, e.group, e.arch.HIT_HALF, MISSILE.HIT_RADIUS)) { struck = e; break; }
     }
 
     if (struck) {
@@ -3505,7 +3658,7 @@ function updateBolts(dt) {
     let struck = null;
     for (const e of enemies) {
       if (!e.alive) continue;
-      if (hitsShip(bolt.mesh.position, e.group, ENEMY.HIT_HALF)) { struck = e; break; }
+      if (hitsShip(bolt.mesh.position, e.group, e.arch.HIT_HALF)) { struck = e; break; }
     }
 
     if (struck) {
@@ -3538,45 +3691,42 @@ function updateBolts(dt) {
 // ===================================================================
 // 敵機を1機ぶん作る。見た目・材質・AIの状態をひとまとめにして返す
 function createEnemy() {
-  const group = createEnemyFighter();
+  // 敵1機につき、3タイプぶんの機体モデルをまとめて作っておく。
+  //
+  // リスポーンのたびに作り直すと、そのたびに一瞬引っかかる。
+  // 最初に3つ作って親にぶら下げ、表示を切り替えるだけにすれば、
+  // タイプが変わっても作り直しは起きない。
+  // (2機 × 3タイプ = 6モデル。この規模なら持っていて問題ない)
+  const group = new THREE.Group();
+  group.scale.setScalar(ENEMY.SCALE);   // 大きさは親にまとめて掛ける
   scene.add(group);
 
-  // 被弾時に白く光らせるため、機体を構成する材質だけを集めておく。
-  // traverse = そのグループの中身を隅々まで1つずつ見て回る命令。
-  // isMesh で立体だけを選ぶ(輪郭線は LineSegments なので対象外)。
-  // ただし噴射光は MeshBasicMaterial で emissive を持たないので除く。
-  // 混ざると発光を塗るときに落ちる。
-  const materials = [];
-  group.traverse((obj) => {
-    if (obj.isMesh && obj.material && obj.material.emissive) materials.push(obj.material);
-  });
+  const models = {};
+  for (const key of Object.keys(AI_ARCHETYPES)) {
+    const model = createEnemyFighter(key);
+    model.visible = false;
+    group.add(model);
 
-  // タイプごとに色を塗り替えるため、材質を「どこの色だったか」で仕分けしておく。
-  // 部品を作るときに使った色(胴体/翼/風防/輪郭線)がそのまま残っているので、
-  // それを見て振り分ければ、部品を1つずつ覚えておかなくてよい。
-  const paint = { body: [], wing: [], canopy: [], edge: [] };
-  group.traverse((obj) => {
-    if (!obj.material || !obj.material.color) return;
-    if (obj.isLineSegments) { paint.edge.push(obj.material); return; }
-    // 噴射光は MeshBasicMaterial(emissive を持たない)。
-    // 光そのものなので塗り替えない ― ここで弾いておく。
-    if (!obj.material.emissive) return;
-
-    const hex = obj.material.color.getHex();
-    if      (hex === ENEMY.BODY_COLOR)    paint.body.push(obj.material);
-    else if (hex === ENEMY.CANOPY_COLOR)  paint.canopy.push(obj.material);
-    // 翼色、および上のどれでもない小物(機首ポッドなど)は翼色にまとめる。
-    // 塗り漏らすと、その部品だけ前のタイプの色のまま残ってしまう。
-    else paint.wing.push(obj.material);
-  });
+    // 被弾時に白く光らせるため、その機体の材質だけを集めておく。
+    // traverse = そのグループの中身を隅々まで1つずつ見て回る命令。
+    // 噴射光は MeshBasicMaterial で emissive を持たないので除く ―
+    // 混ざると発光を塗るときに落ちる。
+    const mats = [];
+    model.traverse((obj) => {
+      if (obj.isMesh && obj.material && obj.material.emissive) mats.push(obj.material);
+    });
+    models[key] = { model: model, materials: mats };
+  }
 
   return {
     group: group,
-    materials: materials,
-    paint: paint,
+    models: models,                // タイプ名 → { model, materials }
+    // いま表示しているタイプの材質。被弾の白光りはここに塗る。
+    // assignArchetype がタイプを変えるたびに差し替える。
+    materials: models.SOLDIER.materials,
     archKey: 'SOLDIER',            // タイプ名。respawn のたびに抽選し直す
     arch: AI_ARCHETYPES.SOLDIER,   // その中身(数字の表)への近道
-    hp: ENEMY.MAX_HP,
+    hp: AI_ARCHETYPES.SOLDIER.MAX_HP,
     alive: true,
     respawnLeft: 0,      // リスポーンまでの残り秒数
     hitFlash: 0,         // 被弾時に白く光る残り時間
@@ -3584,7 +3734,7 @@ function createEnemy() {
     // AIの状態。'approach'(接近) / 'attack'(攻撃) / 'evade'(回避)の3つ
     state: 'approach',
     stateTime: 0,        // その状態になってからの経過秒
-    fireTimer: AI.FIRE_INTERVAL,   // 次の発射までの残り秒
+    fireTimer: AI_ARCHETYPES.SOLDIER.FIRE.INTERVAL,   // 次の発射までの残り秒
     telegraph: 0,        // 発射予告(光っている)の残り秒。0 なら予告していない
     evadeDir: new THREE.Vector3(1, 0, 0),
 
@@ -3631,11 +3781,14 @@ function assignArchetype(e, key) {
   e.archKey = key;
   e.arch    = AI_ARCHETYPES[key];
 
-  const c = e.arch.COLOR;
-  for (const m of e.paint.body)   m.color.setHex(c.BODY);
-  for (const m of e.paint.wing)   m.color.setHex(c.WING);
-  for (const m of e.paint.canopy) m.color.setHex(c.CANOPY);
-  for (const m of e.paint.edge)   m.color.setHex(c.EDGE);
+  // 3タイプぶんのモデルはすでに全部ぶら下がっているので、
+  // 見せるものを1つだけ表示に切り替える。
+  for (const k of Object.keys(e.models)) e.models[k].model.visible = (k === key);
+
+  // 被弾の白光りを塗る先も、いま見えているモデルのものに差し替える。
+  // ここを忘れると、見えていない機体を光らせ続けることになる。
+  e.materials = e.models[key].materials;
+  for (const m of e.materials) m.emissive.setRGB(0, 0, 0);
 }
 
 function setEnemyState(e, next) {
