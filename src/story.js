@@ -49,11 +49,9 @@ const ADV_CONFIG = {
   SCROLL: { far: 0.2, mid: 0.6, near: 1.0 },
 
   // --- 背景画像 ---
-  LAYERS: [
-    { key: 'far',  src: 'assets/adv/bg_hill_far.png'  },
-    { key: 'mid',  src: 'assets/adv/bg_hill_mid.png'  },
-    { key: 'near', src: 'assets/adv/bg_hill_near.png' },
-  ],
+  // どのマップの絵を使うかは、シーンごとに scene.map で指定する。
+  // ここでは層の順番(奥→手前)だけを決めておく。
+  LAYER_ORDER: ['far', 'mid', 'near'],
 
   // --- 人物と操作(すべて仮想解像度の px)---
   // 歩く速さ(1秒あたり)。
@@ -75,8 +73,8 @@ const ADV_CONFIG = {
   SPRITE: {
     FRAME_W: 48,
     FRAME_H: 48,
-    IDLE: 'assets/adv/kite_idle.png',
-    WALK: 'assets/adv/kite_walk_v4.png',
+    IDLE: ADV_ASSETS.chars.kite.idle,
+    WALK: ADV_ASSETS.chars.kite.walk,
     // ドット絵は右向きに描かれている。左へ歩くときは水平反転して使う。
     // (もし素材が左向きだったら、ここを false にすれば反転が逆になる)
     FACES_RIGHT: true,
@@ -138,7 +136,7 @@ const GRANDPA_POS = {
   X: 254,          // 脚立の中心(幹の右端235 + 19)
 
   // 脚立の絵。底辺を地面に接地させ、祖父の背面に描く
-  LADDER: { src: 'assets/adv/prop_ladder_v3.png', w: 30, h: 92 },
+  LADDER: { src: ADV_ASSETS.props.ladder, w: 30, h: 92 },
 
   // 脚立の縦方向の描画倍率
   LADDER_SCALE_Y: 1.5,
@@ -165,6 +163,7 @@ const STORY_SCENES = {
   ch1_s1_hill: {
     title: '第一部 一章 ― 林檎の丘',
     place: 'アルカディア / 農業区',
+    map: 'hill',          // 背景に使う絵(ADV_ASSETS.maps のどれか)
 
     // 当面はマップ論理幅 = near層の幅。つまり1画面ぶんで、横スクロールしない。
     // 横に広げるときは、この幅を伸ばしてセグメントを足す。
@@ -242,11 +241,11 @@ const STORY_SCENES = {
 
       // ふだんの姿:剪定の作業アニメ(2コマ)。コマ幅が48ではなく56なので、
       // シートごとに幅を持たせてある。
-      work: { src: 'assets/adv/grandpa_work.png', frames: 2, w: 56, h: 48 },
+      work: { src: ADV_ASSETS.chars.grandpa.work, frames: 2, w: 56, h: 48 },
 
       // 話しかけられている間の姿。歩行シートには「立ち」のコマが無いので、
       // 脚がいちばん揃って見える通過コマ(添字1)を borrow している。
-      sprite: 'assets/adv/grandpa_walk_v4.png',
+      sprite: ADV_ASSETS.chars.grandpa.walk,
       standFrame: 1,
 
       // ふだん向いている先。木のほうを見ながら剪定している。
@@ -517,14 +516,15 @@ function buildStoryScene(scene) {
   // --- 背景3層 ---
   // 奥から順に重ねる。img タグで置き、CSS で「ドットをぼかさない」指定をする。
   storyLayerEls = [];
-  for (const layer of ADV_CONFIG.LAYERS) {
+  const mapArt = ADV_ASSETS.maps[scene.map];
+  for (const key of ADV_CONFIG.LAYER_ORDER) {
     const el = document.createElement('img');
     el.className = 'story-layer';
-    el.src = layer.src;
+    el.src = mapArt[key];
     el.alt = '';
     el.draggable = false;
     storyWorldEl.appendChild(el);
-    storyLayerEls.push({ key: layer.key, el: el });
+    storyLayerEls.push({ key: key, el: el });
   }
 
   // --- 脚立 ---
