@@ -243,14 +243,17 @@ const STORY_SCENES = {
       // シートごとに幅を持たせてある。
       work: { src: ADV_ASSETS.chars.grandpa.work, frames: 2, w: 56, h: 48 },
 
-      // 話しかけられている間の姿。歩行シートには「立ち」のコマが無いので、
-      // 脚がいちばん揃って見える通過コマ(添字1)を borrow している。
-      sprite: ADV_ASSETS.chars.grandpa.walk,
-      standFrame: 1,
+      // 手を止めているときの姿。専用の立ち絵(1コマ)。
+      // 以前は歩行シートの通過コマを借りていたが、本来の素材に差し替えた。
+      idle: ADV_ASSETS.chars.grandpa.idle,
 
       // ふだん向いている先。木のほうを見ながら剪定している。
       // 会話が終わるとこの向きへ戻る。
       faceX: 215,
+
+      // このフラグが立ったら剪定をやめて立ち姿になる。
+      // gp_talk_3 で「よし、上がりだ」と言って仕事を切り上げるため。
+      doneFlag: 'gp3_done',
       label: '祖父',
 
       talks: [
@@ -541,8 +544,8 @@ function buildStoryScene(scene) {
 
   // --- 祖父 ---
   storyNpcEl = document.createElement('div');
-  storyNpcEl.className = 'story-actor npc' + ((n.sprite || n.work) ? ' sprite' : '');
-  if (!n.sprite && !n.work) storyNpcEl.style.background = n.color;
+  storyNpcEl.className = 'story-actor npc' + ((n.idle || n.work) ? ' sprite' : '');
+  if (!n.idle && !n.work) storyNpcEl.style.background = n.color;
   storyWorldEl.appendChild(storyNpcEl);
   storyWorkTime  = 0;
   storyWorkFrame = 0;
@@ -620,7 +623,7 @@ function nearestStoryTarget() {
   if (dn < bestD) {
     bestD = dn;
     best = { kind: 'npc', data: n, x: n.x,
-             markH: (n.sprite || n.work) ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
+             markH: (n.idle || n.work) ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
   }
 
   return best;
@@ -852,7 +855,12 @@ function setStoryWalking(walking, distance) {
 // 作業シートとはコマ幅が違うので、どちらを出すかで寸法も切り替える。
 // ===================================================================
 function renderStoryNpc(n, dt, S) {
-  const talking = !!storyLines;
+  // 手を止める条件は2つ。
+  //   ・話しかけられている間
+  //   ・仕事を終えたあと(gp_talk_3 の「よし、上がりだ」以降)
+  // 終わったと言った本人が、その後ろで剪定を続けていたら台詞が嘘になる。
+  const done = !!(n.doneFlag && storyFlags.has(n.doneFlag));
+  const talking = !!storyLines || done;
 
   // --- 脚立。底辺を地面に接地させ、縦だけ引き伸ばす ---
   if (storyLadderEl && n.ladder) {
@@ -879,15 +887,15 @@ function renderStoryNpc(n, dt, S) {
       (n.work.w * n.work.frames * S) + 'px ' + (n.work.h * S) + 'px';
     storyNpcEl.style.backgroundPosition = (-storyWorkFrame * n.work.w * S) + 'px 0px';
 
-  } else if (n.sprite) {
-    // --- 会話中(手を止めてこちらを向いている)---
+  } else if (n.idle) {
+    // --- 手を止めている(会話中、または仕事を終えたあと)---
+    // 1コマだけの絵なので、コマ送りの計算はいらない。
     const W = ADV_CONFIG.SPRITE.FRAME_W, H = ADV_CONFIG.SPRITE.FRAME_H;
     placeStoryActor(storyNpcEl, n.x, W, H, n.liftY);
     storyNpcTopY = storyGroundY(n.x) - (n.liftY || 0) - H;
-    storyNpcEl.style.backgroundImage = 'url(' + n.sprite + ')';
-    storyNpcEl.style.backgroundSize =
-      (W * ADV_CONFIG.WALK_FRAME_COUNT * S) + 'px ' + (H * S) + 'px';
-    storyNpcEl.style.backgroundPosition = (-(n.standFrame || 0) * W * S) + 'px 0px';
+    storyNpcEl.style.backgroundImage = 'url(' + n.idle + ')';
+    storyNpcEl.style.backgroundSize = (W * S) + 'px ' + (H * S) + 'px';
+    storyNpcEl.style.backgroundPosition = '0px 0px';
 
   } else {
     placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));

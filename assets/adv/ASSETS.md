@@ -23,6 +23,7 @@ assets/adv/
 │   │   ├── kite_idle.png
 │   │   └── kite_walk.png
 │   └── grandpa/
+│       ├── grandpa_idle.png
 │       ├── grandpa_walk.png
 │       └── grandpa_work.png
 └── props/
@@ -99,11 +100,3 @@ storyActorEl.style.backgroundImage = 'url(assets/adv/chars/kite/kite_walk.png)';
 画面表示は **整数倍のみ**（`floor(画面高 ÷ 360)`）。あまりは黒帯。
 補間は禁止（CSS の `image-rendering: pixelated`）。
 半端な倍率で拡大するとドットの大きさが揃わず、絵が汚れる。
-
----
-
-## 足りていない素材
-
-| ファイル | 用途 | 現状 |
-|---|---|---|
-| `chars/grandpa/grandpa_idle.png` | 祖父の立ち姿 | 未納品。`grandpa_walk.png` の通過コマ（添字1）で代用中 |

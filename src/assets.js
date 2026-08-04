@@ -35,10 +35,10 @@ const ADV_ASSETS = {
       walk: 'assets/adv/chars/kite/kite_walk.png',   // 4コマ
     },
     grandpa: {
+      idle: 'assets/adv/chars/grandpa/grandpa_idle.png',   // 1コマ(立ち姿)
       walk: 'assets/adv/chars/grandpa/grandpa_walk.png',   // 4コマ
       // 剪定の作業アニメ。2コマで、コマ幅だけ56pxと広い(鋏を差し出すぶん)
       work: 'assets/adv/chars/grandpa/grandpa_work.png',
-      // ※ grandpa_idle.png はまだ無い。立ち姿は walk の通過コマで代用中
     },
   },
 
