@@ -313,20 +313,28 @@ function buildBossVent(spec) {
   const cs = bossCrossSection(spec.t);
   const z  = bossZAt(spec.t);
 
-  // 面ごとに「置く場所」と「どちらを向くか」を決める
+  // 面ごとに「置く場所」と「どちらを向くか」を決める。
+  //
+  // ※ 舷側が要注意。断面は台形(下辺 halfW、上辺 halfW×0.72)なので、
+  //   舷側の面は垂直ではなく内側へ傾いている。
+  //   上辺の位置に置くと弱点が艦体に埋まって見えなくなるので、
+  //   高さ0での実際の面(halfW と上辺の中間)を基準にし、
+  //   さらに傾きぶん(最大3ほど)の余裕を足して外へ出す。
   let pos, rot;
-  const topW = cs.halfW * 0.72;
+  const topW  = cs.halfW * 0.72;
+  const sideX = (cs.halfW + topW) / 2;   // 高さ0での舷側の面
   if (spec.face === 'top') {
-    pos = new THREE.Vector3(0, cs.halfH + 0.6, z);
+    // 上面には溝の桟(高さ1.6)が並んでいる。そこへめり込まないよう少し浮かせる
+    pos = new THREE.Vector3(0, cs.halfH + 1.8, z);
     rot = new THREE.Euler(-Math.PI / 2, 0, 0);
   } else if (spec.face === 'bottom') {
-    pos = new THREE.Vector3(0, -cs.halfH - 0.6, z);
+    pos = new THREE.Vector3(0, -cs.halfH - 1.6, z);
     rot = new THREE.Euler(Math.PI / 2, 0, 0);
   } else if (spec.face === 'left') {
-    pos = new THREE.Vector3(-topW - 0.6, 0, z);
+    pos = new THREE.Vector3(-sideX - 5.0, 0, z);
     rot = new THREE.Euler(0, -Math.PI / 2, 0);
   } else {
-    pos = new THREE.Vector3(topW + 0.6, 0, z);
+    pos = new THREE.Vector3(sideX + 5.0, 0, z);
     rot = new THREE.Euler(0, Math.PI / 2, 0);
   }
 
@@ -918,12 +926,23 @@ function bossTakeHit(point, damage) {
 }
 
 // 艦体(楔形)の中に入っているか
+//
+// ※ 断面は「箱」ではなく「台形」。上へ行くほど狭い。
+//   箱で判定すると、舷側の斜面の外側 ― 実際には何も無い空間 ―
+//   でも弾が弾かれ、艦のそばを掠めただけで火花が散ってしまう。
+//   見えている形と当たる形は必ず一致させる。
 function bossPointInsideHull(local) {
   const halfL = BOSS.LENGTH / 2;
   if (local.z < -halfL || local.z > halfL) return false;
   const t = (local.z + halfL) / BOSS.LENGTH;     // 0=艦首 1=艦尾
   const cs = bossCrossSection(t);
-  return Math.abs(local.x) <= cs.halfW && Math.abs(local.y) <= cs.halfH;
+  if (Math.abs(local.y) > cs.halfH) return false;
+
+  // その高さでの実際の半幅。下辺 halfW から上辺 halfW×0.72 へ線形に狭まる
+  const topW = cs.halfW * 0.72;
+  const k = (local.y + cs.halfH) / (2 * cs.halfH);   // 0=下端 1=上端
+  const halfWHere = cs.halfW + (topW - cs.halfW) * k;
+  return Math.abs(local.x) <= halfWHere;
 }
 
 // 装甲に弾かれた:火花だけ出して、ダメージは入らない
