@@ -1748,9 +1748,10 @@ function onKill() {
   addCombatLog('★ KILL', 'kill');
   console.log('KILL ― 累計撃墜数: ' + killCount);
 
-  // 規定数を落とすと、戦闘機の相手はそこで終わり ― 戦艦が出てくる。
-  // 任務が終わるのは、その戦艦を沈めたとき(onBossDestroyed)。
-  if (killCount >= BOSS.SPAWN_KILLS && !bossStatus()) spawnBoss();
+  // 「あとから登場」の設定のときだけ、規定数で戦艦を呼ぶ。
+  // 出撃時から出す設定(SPAWN_AT_START)なら、ここは何もしない。
+  // どちらにせよ任務が終わるのは、戦艦を沈めたとき(onBossDestroyed)。
+  if (!BOSS.SPAWN_AT_START && killCount >= BOSS.SPAWN_KILLS && !bossStatus()) spawnBoss();
 }
 
 // ===================================================================
@@ -2055,7 +2056,7 @@ function restartMission() {
   timerElMission.classList.remove('warn');
   timerElMission.textContent = formatTime(missionTime);   // 表示も即座に戻す
   setCombatFrozen(false);
-  resetBoss();   // ボスがいたら片付ける(boss.js)。撃墜数が規定に届くとまた出てくる
+  resetBoss();   // 前回の戦艦を片付ける(boss.js)。出し直しは自機を戻したあと
 
   // --- 7パラメーターを初期状態へ ---
   power.weapon = 25; power.shield = 25; power.engine = 25; power.sensor = 25;
@@ -2095,6 +2096,18 @@ function restartMission() {
   render();
   addCombatLog('SORTIE', 'warn');
   playSortie();
+
+  // 戦艦を出す(boss.js)。
+  //
+  // ★ 必ず resetFlight() のあとで呼ぶこと。
+  //   出現位置は「自機の正面 430」で決めるので、自機を原点に戻す前に呼ぶと、
+  //   前回の任務を終えた場所と向きを基準にしてしまい、
+  //   戦艦が真横や真後ろに現れる。
+  //
+  // ★ screenState を見ているのは、ページを開いた直後や
+  //   メニューに戻っているときに出さないため ―
+  //   タイトルの背景に戦艦が現れて警報が鳴りだしたら事故になる。
+  if (BOSS.SPAWN_AT_START && screenState === 'mission') spawnBoss();
   console.log('RESTART ― 再出撃');
 }
 
