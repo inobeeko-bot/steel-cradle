@@ -491,6 +491,12 @@ const shieldRegenEl = document.getElementById('shield-regen');
 const killCountEl = document.getElementById('kill-count');
 const combatLogEl = document.getElementById('combat-log');
 
+// 装甲(HULL)ゲージ。5段の四角で「あと何発耐えられるか」を出す
+const hullTubeEl = document.getElementById('hull-tube');
+const hullNumEl  = document.getElementById('hull-num');
+const hullSubEl  = document.getElementById('hull-sub');
+const hullSegEls = hullTubeEl ? Array.from(hullTubeEl.children) : [];
+
 // 戦艦パネル(boss.js が出す情報の表示先)
 const bossPanelEl    = document.getElementById('boss-panel');
 const bossVentListEl = document.getElementById('boss-vent-list');
@@ -614,6 +620,7 @@ function renderHeat() {
   const hullLeft = HULL.MAX_DAMAGE - hullDamage;
   hullEl.textContent = hullLeft;
   hullEl.style.color = hullLeft <= 2 ? '#ff5a3c' : '';
+  renderHullGauge(hullLeft);
 
   // 損傷が進むほど常時うっすら赤くなり、被弾の瞬間だけ強く光る
   const baseRed = (hullDamage / HULL.MAX_DAMAGE) * 0.55;
@@ -1961,6 +1968,37 @@ function breakRandomInstrument() {
 
   const info = BREAKAGE[key];
   return info ? (info.label + ' ' + info.lost) : null;
+}
+
+// ===================================================================
+// 装甲(HULL)ゲージ
+//
+// シールドは削られても自然に回復するが、装甲は戻らない。
+// 5段すべて失うと任務失敗 ― こちらが本当の体力。
+// 「あと何発耐えられるか」を、数えなくても分かる形で出す。
+// ===================================================================
+function renderHullGauge(hullLeft) {
+  if (!hullTubeEl) return;
+
+  // 段の表示。上から失われていく(要素は下から積んである)
+  for (let i = 0; i < hullSegEls.length; i++) {
+    hullSegEls[i].classList.toggle('lost', i >= hullLeft);
+  }
+
+  // 残りに応じて色を変える。数字を読まなくても危険度が分かるようにする
+  hullTubeEl.classList.toggle('warn', hullLeft === 3);
+  hullTubeEl.classList.toggle('crit', hullLeft <= 2);
+
+  hullNumEl.textContent = hullLeft;
+  hullNumEl.style.color = hullLeft <= 2 ? '#ff5a3c' : (hullLeft === 3 ? '#ffcf6a' : '');
+
+  // 添え書き。今の状態をひとことで
+  hullSubEl.textContent =
+    hullLeft >= HULL.MAX_DAMAGE ? 'INTACT'
+    : hullLeft <= 1 ? 'CRITICAL'
+    : hullLeft <= 2 ? 'HEAVY'
+    : 'DAMAGED';
+  hullSubEl.style.color = hullLeft <= 2 ? '#ff5a3c' : '';
 }
 
 // ===================================================================

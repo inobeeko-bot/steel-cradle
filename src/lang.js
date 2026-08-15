@@ -220,6 +220,7 @@ const TEXT = {
   'hud.shutdownMsg':    ['強制冷却中 ― 操作不能', 'Forced cooldown — no control'],
   'hud.weapon':         ['武器', 'WEAPON'],
   'hud.shield':         ['シールド', 'SHIELD'],
+  'hud.hull':           ['装甲', 'HULL'],
   'hud.engine':         ['エンジン', 'ENGINE'],
   'hud.sensor':         ['センサー', 'SENSOR'],
   'hud.heat':           ['熱', 'HEAT'],

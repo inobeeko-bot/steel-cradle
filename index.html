@@ -439,11 +439,14 @@
        「いま撃ってよい弱点はどれか」を一目で伝えること。
        開いている排熱口だけが緑に光る。それ以外は撃っても弾かれる。
        ================================================================= */
+    /* 置き場所について:
+       画面上端の中央は後方確認ミラーの定位置(コックピット視点)なので、
+       そこへ置くと戦艦の情報とミラーが重なって、どちらも読めなくなる。
+       左上は三人称でもコックピットでも空いている。 */
     .boss-panel {
       position: absolute;
-      left: 50%;
-      top: 66px;
-      transform: translateX(-50%);
+      left: 22px;
+      top: 44px;
       display: none;
       min-width: 264px;
       padding: 7px 12px 9px;
@@ -1164,6 +1167,43 @@
       background: #3a5f52;
       transition: height 0.12s linear, background-color 0.12s linear;
     }
+    /* --- 装甲(HULL)ゲージ ------------------------------------------
+       中身が5段階なので、連続した棒ではなく5個の四角で表す。
+       column-reverse = 下から積む。減るときは上から消えていく。 */
+    .hull-tube {
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 3px;
+      padding: 3px;
+      background-image: none;   /* 目盛りは要らない(段が目盛りそのものなので) */
+    }
+    .hull-tube > i {
+      display: block;
+      flex: 1;
+      background: #9fe1cb;
+      box-shadow: 0 0 6px rgba(159, 225, 203, 0.35);
+      transition: background-color 0.12s linear;
+    }
+    /* 失った段。枠だけ残して「そこにあったもの」を示す */
+    .hull-tube > i.lost {
+      background: #16090a;
+      box-shadow: inset 0 0 0 1px #5c231a;
+    }
+    /* 残りが減るほど、生きている段の色が警告色へ寄る */
+    .hull-tube.warn > i:not(.lost) {
+      background: #ffcf6a;
+      box-shadow: 0 0 6px rgba(255, 207, 106, 0.4);
+    }
+    .hull-tube.crit > i:not(.lost) {
+      background: #ff5a3c;
+      box-shadow: 0 0 8px rgba(255, 90, 60, 0.55);
+      animation: hullCrit 0.7s infinite;
+    }
+    @keyframes hullCrit {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.45; }
+    }
+
     /* 棒の上端に明るい線を1本引く。「今どこを指しているか」が読み取りやすくなる */
     .gauge-bar::after {
       content: "";
@@ -1831,6 +1871,28 @@
           <div class="gauge-value" id="shield-value"><span class="num" id="shield-num">100</span><span class="unit">%</span></div>
           <div class="gauge-label"><span data-i18n="hud.shield">シールド</span><br><span class="en">SHIELD HP</span></div>
           <div class="sub-label" id="shield-regen">+0.0/s</div>
+        </div>
+
+        <!-- 装甲(HULL)。
+             シールドと違って、これが尽きたら任務失敗 ― 本当の体力はこちら。
+             これまで画面下端に「HULL 5/5」と小さく出ていただけで、
+             あと何回耐えられるのかが戦闘中にまるで読めなかった。
+             シールドの隣に並べると「盾の残り + その後ろの装甲」が一目で分かる。
+
+             目盛りではなく5個の四角にしてあるのは、中身が5段階だから。
+             連続した棒にすると、実際には無い細かさがあるように見えてしまう。
+
+             ※ data-system を付けていないのは意図的。
+                被弾で計器が壊れる抽選の対象から外している ―
+                残り体力が読めなくなるのは、演出ではなく理不尽になるため。 -->
+        <div class="gauge">
+          <div class="gauge-key">&nbsp;</div>
+          <div class="gauge-tube hull-tube" id="hull-tube">
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div class="gauge-value"><span class="num" id="hull-num">5</span><span class="unit">/5</span></div>
+          <div class="gauge-label"><span data-i18n="hud.hull">装甲</span><br><span class="en">HULL</span></div>
+          <div class="sub-label" id="hull-sub">INTACT</div>
         </div>
       </div>
     </div>

@@ -447,6 +447,20 @@ let lockProgress = 0;      // ロックの進み具合(0〜1)。1で LOCKED
 let lockGrace = 0;         // 照準から外れてからロックが切れるまでの残り秒
 
 // --- ミサイル(武器仕様書:切り札枠。発射にセンサーロック必須)---------
+// --- 被ロック警報を鳴らす条件 ---------------------------------------
+// 「INBOUND(もう飛んできている)」と鳴らしてよいのは、
+// そのミサイルが本当にこちらへ向かっているときだけ。
+const THREAT = {
+  // この距離まで近づいたら警報を出す。
+  // 弾速95なので 240 ÷ 95 ≒ 2.5秒ぶんの猶予。
+  // フレアを撒いて向きを変えるにはこれくらいあれば足りる。
+  MISSILE_RANGE:  240,
+  // 進行方向と自機の方向の一致度の下限。
+  // 1.0=まっすぐこちら / 0.0=真横 / マイナス=遠ざかっている。
+  // 0.35 はおよそ70度。旋回して回り込んでくる最中も拾える広さにしてある。
+  MISSILE_CLOSING: 0.35,
+};
+
 const MISSILE = {
   SPEED:       95,   // 弾速。遠距離から撃つので、遅すぎると届く前に切れる
   TURN_RATE:  3.6,   // 曲がる速さ(ラジアン/秒)。大きいほど振り切りにくい
@@ -4508,8 +4522,31 @@ function threatStatus() {
   // もうこちらを見ていないのに警報が鳴り続けると、
   // 「フレアが効いたのかどうか」が分からないままになる ―
   // 警報が消えることが、そのまま「逸らせた」の合図になる。
+  //
+  // ★ さらに「今こちらへ近づいているか」まで見る。
+  //   以前は「敵のミサイルが1本でも空中にあれば INBOUND」だった。
+  //   戦闘機どうしの戦いでは、たまたまそれで釣り合っていた ―
+  //   撃たれる本数が少なく、外れた弾はすぐ寿命で消えていたため。
+  //
+  //   戦艦が出た途端に破綻した。9秒ごとに3発、ミサイルの寿命は56秒。
+  //   常時18発前後が空に残るので、外れて明後日の方向へ飛んでいった弾のせいで
+  //   警報が永久に鳴り続けた。追いかけられてもいないのに、である。
+  //
+  //   INBOUND の意味は「存在する」ではなく「こちらへ来ている」。
+  //   距離と向きの両方を見て、その意味どおりに鳴らす。
   for (const m of missiles) {
-    if (m.fromEnemy && !m.decoyed) { level = 'MISSILE'; break; }
+    if (!m.fromEnemy || m.decoyed) continue;
+
+    const toPlayer = playerShip.position.clone().sub(m.mesh.position);
+    const dist = toPlayer.length();
+    if (dist > THREAT.MISSILE_RANGE) continue;   // まだ遠い。鳴らすには早い
+
+    // 進行方向と「自機のいる方向」の一致度。1 = まっすぐこちら / 0 = 真横
+    toPlayer.normalize();
+    if (m.direction.dot(toPlayer) < THREAT.MISSILE_CLOSING) continue;   // 逸れている
+
+    level = 'MISSILE';
+    break;
   }
 
   return { level: level, count: count };
