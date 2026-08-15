@@ -97,8 +97,11 @@ const HULL = {
 // --- ミッションの枠組み(仕様書9.1「1ゲーム最長10分の短期決戦」)-------
 const MISSION = {
   DURATION:   600,   // 制限時間(秒)= 10分
-  KILL_GOAL:   10,   // 勝利条件:この数だけ撃墜する
   WARN_SEC:    60,   // 残りこの秒数を切ったら、タイマーを赤く点滅させる
+  // ※ かつてここに KILL_GOAL(規定数撃墜で任務達成)があった。
+  //   今の勝利条件は「戦艦を沈める」なので廃止した。
+  //   画面の KILLS x/y の y は BOSS.SPAWN_KILLS ―
+  //   あと何機落とせば戦艦が出てくるか、を表している。
 };
 
 // --- 敵の攻撃を受けたときの設定 -------------------------------------
@@ -186,7 +189,11 @@ const WEAPONS = [
     damage: 1.5,
     heat: 0.5,            // ほぼ熱を出さない。ビームの16分の1
                           //   = 撃ってもレーダーに映りにくい隠密武器の下地
-    ammo: 120,            // 有限。戦闘中は補充できない(リロード不可)
+    // 有限。戦闘中は補充できない(リロード不可)。
+    // 240発 = 毎秒11発なので、押しっぱなしにすると22秒で撃ち尽くす。
+    // 戦艦の弱点は開いている1.7秒しか撃てないので、
+    // 「開くまで待って、開いたら遠慮なく叩き込む」ぶんの弾数が要る。
+    ammo: 240,
     minPower: 0,          // 電力を必要としない
     auto: true,           // Fを押しっぱなしで連射できる
     interval: 0.09,       // 連射の間隔(秒)。毎秒約11発
@@ -489,6 +496,7 @@ const shieldValue= document.getElementById('shield-value');
 const shieldRegenEl = document.getElementById('shield-regen');
 
 const killCountEl = document.getElementById('kill-count');
+const killGoalEl  = document.getElementById('kill-goal');
 const combatLogEl = document.getElementById('combat-log');
 
 // 装甲(HULL)ゲージ。5段の四角で「あと何発耐えられるか」を出す
@@ -1496,7 +1504,7 @@ function renderConsole3D(dt) {
 
     // --- 戦績 ---
     kills: killCount,
-    killGoal: MISSION.KILL_GOAL,
+    killGoal: BOSS.SPAWN_KILLS,   // 戦艦が出てくるまでの残り撃墜数の分母
     hitsTaken: hitsTaken,
     // シールドが満タンに戻るまでの秒数。撤退するかの判断に使う
     shieldToFull: (function () {
@@ -1768,10 +1776,13 @@ function onKill() {
 // このゲームでずっと守っている役割分担をここでも通す。
 // ===================================================================
 
-// 出現した
-function onBossArrive() {
+// 出現した。withdrew = 戦場から引いた味方…ではなく敵戦闘機の数
+function onBossArrive(withdrew) {
   addCombatLog('▲ WARNING ― CAPITAL SHIP', 'alert');
   addCombatLog(BOSS.NAME + ' 接近', 'alert');
+  // 戦闘機が引いたことは、必ず伝える。
+  // 黙って消すと「撃ち落としたのか、バグで消えたのか」が分からない。
+  if (withdrew > 0) addCombatLog('敵戦闘機 ' + withdrew + '機 離脱 ― 単艦戦闘', 'warn');
   speakVoice('CAPITAL_SHIP');
   playLockWarning();
   bossPanelEl.classList.add('on');
@@ -2051,7 +2062,7 @@ function endMission(result) {
   if (result === 'complete') {
     resultPanel.classList.add('win');
     resultTitleEl.textContent = 'MISSION COMPLETE';
-    resultReasonEl.textContent = '規定数撃墜 ― 任務達成';
+    resultReasonEl.textContent = BOSS.NAME + ' 撃沈 ― 任務達成';
     playMissionComplete();
   } else if (result === 'timeup') {
     playTimeUp();
@@ -2635,6 +2646,8 @@ function bootStep(name, fn) {
 }
 
 bootStep('build', () => { document.getElementById('build').textContent = BUILD; });
+// KILLS x/y の y。HTMLに数字を直書きすると、出現条件を変えたときに必ず食い違う
+bootStep('killgoal', () => { killGoalEl.textContent = BOSS.SPAWN_KILLS; });
 console.log('STEEL CRADLE build: ' + BUILD);
 
 bootStep('audio', initAudio);       // 音の準備(audio.js)。最初のキー入力で鳴り始める

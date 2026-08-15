@@ -811,7 +811,7 @@ const ENEMY_BOLT = {
 //
 // ※ これが「同時に出てくる敵の数の上限」でもある。
 //   10分で10撃墜という難度はこの数で釣り合いを取ってあるので、
-//   増やすときは撃墜数の目標(MISSION.KILL_GOAL)も一緒に見直すこと。
+//   増やすときは、戦艦が出るまでの撃墜数(BOSS.SPAWN_KILLS)も一緒に見直すこと。
 const ENEMY_COUNT = 3;
 
 // ===================================================================
@@ -2341,6 +2341,31 @@ function setEnemiesHidden(on) {
     e.group.visible = on ? false : e.alive;
   }
   if (typeof setBossHidden === 'function') setBossHidden(on);
+}
+
+// ===================================================================
+// 戦闘機を戦場から引かせる(戦艦が現れたとき)
+//
+// 撃墜ではなく離脱なので、爆発も破片も出さないし撃墜数にも数えない。
+// 小さな青い光だけ置いて、そのまま消える。
+//
+// 補充が止まるのは updateScene 側(bossOnField を見ている)。
+// ここで消しても、止めなければ3秒後にまた湧いてくる。
+// 戻すのは resetFlight ― 出撃のたびに全機を並べ直している。
+// ===================================================================
+function withdrawEnemies() {
+  if (!sceneReady) return 0;
+  let n = 0;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    spawnFlash(e.group.position, 9, 0x9fd8ff, 0.3);
+    e.alive = false;
+    e.group.visible = false;
+    e.telegraph = 0;
+    e.missileTele = 0;
+    n += 1;
+  }
+  return n;
 }
 
 // ===================================================================
@@ -5001,8 +5026,14 @@ function updateScene(dt, elapsed) {
   }
 
   // --- 敵1機ずつ:死んでいればリスポーンを待ち、生きていればAIを動かす ---
+  // 戦艦が出ている間は戦闘機を補充しない = 戦艦との1対1にする。
+  // 撃墜されて空いた枠を埋めないだけなので、
+  // 戦艦を沈めたあと(または再出撃)には元どおり湧くようになる。
+  const soloBoss = (typeof bossOnField === 'function') && bossOnField() && BOSS.SOLO_FIGHT;
+
   for (const e of enemies) {
     if (!e.alive) {
+      if (soloBoss) continue;
       e.respawnLeft -= dt;
       if (e.respawnLeft <= 0) respawnEnemy(e);
       continue;

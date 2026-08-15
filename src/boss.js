@@ -33,15 +33,18 @@ const BOSS = {
   NAME_JA: '級 超弩級戦艦',
 
   // --- 出現 ---------------------------------------------------------
-  // true = 出撃した瞬間から戦艦がいる。
-  // false にすると「戦闘機を SPAWN_KILLS 機落としてから登場」に変わる。
-  SPAWN_AT_START: true,
+  // true にすると出撃した瞬間から戦艦がいる。
+  // false = 戦闘機を SPAWN_KILLS 機落としてから登場(こちらが既定)。
+  SPAWN_AT_START: false,
 
-  // SPAWN_AT_START が false のときだけ使う出現条件。
-  // MISSION.KILL_GOAL と同じ数にしてある ―
-  // 「規定数を落としたら任務達成」だった場所が「戦艦が出てくる」に変わる。
+  // 何機落としたら戦艦が出てくるか。
+  // ここが「前半:戦闘機との戦い」と「後半:戦艦との一騎討ち」の切れ目になる。
   // どちらの設定でも、開発者コンソールで spawnBoss() と打てばその場で出せる。
-  SPAWN_KILLS:  10,
+  SPAWN_KILLS:   5,
+
+  // true = 戦艦が出たら戦闘機は戦場から引き、以後は補充もされない。
+  // 戦艦との1対1にするための設定。
+  SOLO_FIGHT: true,
   SPAWN_DIST:  430,     // 出現する距離(自機の正面)
   ARRIVE_SEC:  2.6,     // 出現演出にかける秒数
 
@@ -470,7 +473,15 @@ function spawnBoss() {
   spawnBlast(group.position, 70, 0x9fd8ff);
   startShake(1.4);
 
-  onBossArrive();   // main.js:ログ・音声・HUDの表示
+  // 戦闘機には退いてもらう。ここからは1対1。
+  const left = BOSS.SOLO_FIGHT ? withdrawEnemies() : 0;
+
+  onBossArrive(left);   // main.js:ログ・音声・HUDの表示
+}
+
+// ボスが戦場にいるか。戦闘機の補充を止める判断に使う
+function bossOnField() {
+  return !!boss && (bossState === 'arriving' || bossState === 'active' || bossState === 'dying');
 }
 
 
