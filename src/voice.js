@@ -37,6 +37,10 @@ const VOICE = {
     CRITICAL_DAMAGE: { text: 'WARNING. CRITICAL DAMAGE.',    priority: 2 },
     POWER_FAILURE:   { text: 'POWER FAILURE.',               priority: 2 },
     SYSTEMS_DOWN:    { text: 'WARNING. SYSTEMS DOWN.', priority: 2, cooldown: 6 },
+    // 戦艦(boss.js)用
+    CAPITAL_SHIP:    { text: 'WARNING. CAPITAL SHIP.',       priority: 2 },
+    MAIN_GUN:        { text: 'MAIN GUN CHARGING. EVADE.', priority: 2, cooldown: 8 },
+    VENT_EXPOSED:    { text: 'VENT EXPOSED.',      priority: 1, cooldown: 6 },
 
     // 状態通知(低優先・割り込まれる側)
     TARGET_ACQUIRED:  { text: 'TARGET ACQUIRED.',            priority: 1 },

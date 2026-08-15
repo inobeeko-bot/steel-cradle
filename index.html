@@ -429,6 +429,84 @@
     .log-line.kill { color: #ffcf6a; font-size: 14px; letter-spacing: 0.3em; }
     .log-line.warn { color: #8fd8ff; }                      /* シールドで受けた */
     .log-line.hull { color: #ff5a3c; font-size: 13px; }     /* HULL損傷 */
+    .log-line.alert{ color: #ff8b5a; font-size: 13px; letter-spacing: 0.24em; }  /* 戦艦の警告 */
+    .log-line.miss { color: #6c7d88; }                      /* 装甲に弾かれた */
+
+    /* =================================================================
+       戦艦パネル(boss.js)
+
+       ここが果たす役割はひとつだけ ―
+       「いま撃ってよい弱点はどれか」を一目で伝えること。
+       開いている排熱口だけが緑に光る。それ以外は撃っても弾かれる。
+       ================================================================= */
+    .boss-panel {
+      position: absolute;
+      left: 50%;
+      top: 66px;
+      transform: translateX(-50%);
+      display: none;
+      min-width: 264px;
+      padding: 7px 12px 9px;
+      background: rgba(10, 6, 6, 0.62);
+      border: 1px solid #6b2f22;
+      border-top: 2px solid #b8563f;
+      z-index: 6;
+      pointer-events: none;
+    }
+    .boss-panel.on { display: block; }
+
+    /* 主砲チャージ中は枠ごと脈打たせる。見ていなくても視界の端で気づく */
+    .boss-panel.beam { animation: bossBeamWarn 0.5s infinite; }
+    @keyframes bossBeamWarn {
+      0%, 100% { border-color: #b8563f; background: rgba(10, 6, 6, 0.62); }
+      50%      { border-color: #ff6a4a; background: rgba(60, 12, 8, 0.75); }
+    }
+
+    .boss-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 10px;
+      letter-spacing: 0.26em;
+      color: #ff8b5a;
+      margin-bottom: 6px;
+    }
+    .boss-head .dist { color: #9aa6b0; letter-spacing: 0.14em; }
+
+    .boss-vent {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: #6c7d88;
+      line-height: 1.9;
+    }
+    .boss-vent .lbl { width: 32px; }
+    .boss-vent .bar {
+      flex: 1;
+      height: 5px;
+      background: #1c2228;
+      border: 1px solid #38424a;
+      display: block;
+    }
+    .boss-vent .bar > i {
+      display: block;
+      height: 100%;
+      width: 100%;
+      background: #56636d;
+    }
+    .boss-vent .st { width: 34px; text-align: right; }
+
+    /* 開いている = 撃つべき瞬間。ここだけが明るい */
+    .boss-vent.open { color: #9ff6ff; }
+    .boss-vent.open .bar { border-color: #9ff6ff; }
+    .boss-vent.open .bar > i { background: #9ff6ff; }
+    .boss-vent.open .st { color: #ffffff; }
+
+    /* 潰した弱点 */
+    .boss-vent.down { color: #4a3a34; text-decoration: line-through; }
+    .boss-vent.down .bar > i { width: 0 !important; }
 
     /* =================================================================
        兵装パネル(仕様書9.6「下段右:弾数・神器コア状態」)
@@ -1640,6 +1718,15 @@
   <!-- 実行中に出たエラーの表示。ふだんは非表示 -->
   <div id="runtime-error"></div>
 
+  <!-- 戦艦パネル。ボスが出ているあいだだけ表示される(boss.js) -->
+  <div class="boss-panel" id="boss-panel">
+    <div class="boss-head">
+      <span>DREADNOUGHT ― 排熱口</span>
+      <span class="dist"><b id="boss-dist">0</b> m</span>
+    </div>
+    <div id="boss-vent-list"></div>
+  </div>
+
   <!-- キャノピーの枠(四隅を暗く落とすだけの飾り) -->
   <div class="canopy"></div>
 
@@ -1923,6 +2010,9 @@
 
   <!-- 3D空間(星空・敵機)。main.js より先に読む必要がある -->
   <script src="src/scene.js"></script>
+
+  <!-- 巨大戦艦。scene.js の描画関数を使うので、そのあとに読む -->
+  <script src="src/boss.js"></script>
 
   <!-- 計器と7パラメーターのロジック -->
   <script src="src/main.js"></script>

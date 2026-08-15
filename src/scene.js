@@ -2326,6 +2326,7 @@ function setEnemiesHidden(on) {
     // 隠すときは無条件に消す。戻すときは「生きている敵だけ」出す
     e.group.visible = on ? false : e.alive;
   }
+  if (typeof setBossHidden === 'function') setBossHidden(on);
 }
 
 // ===================================================================
@@ -3553,6 +3554,12 @@ function detonateOrdnance(o) {
   let hitCount = 0;
   let killCountHere = 0;
 
+  // ボスの弱点にも爆風が届く。ただし「開いている弱点」だけ ―
+  // 弾で撃つのと同じ決まりにしないと、ボムだけ抜け道になってしまう。
+  if (typeof bossSplashDamage === 'function' && o.kind !== 'emp') {
+    bossSplashDamage(pos, cfg.RADIUS, o.kind === 'pyro' ? PYRO.DAMAGE : 2);
+  }
+
   for (const e of enemies) {
     if (!e.alive) continue;
     const d = e.group.position.distanceTo(pos);
@@ -3724,6 +3731,18 @@ function updateBolts(dt) {
     for (const e of enemies) {
       if (!e.alive) continue;
       if (hitsShip(bolt.mesh.position, e.group, e.arch.HIT_HALF)) { struck = e; break; }
+    }
+
+    // ボスは戦闘機と当たり方がまるで違う(装甲で弾かれ、弱点だけが通る)ので、
+    // 判定そのものを boss.js に任せる。true = この弾はそこで消える。
+    if (!struck && typeof bossTakeHit === 'function') {
+      const isFirst = (bolt.volleyId !== lastDamagedVolley);
+      if (bossTakeHit(bolt.mesh.position, isFirst ? bolt.damage : 0)) {
+        if (isFirst) lastDamagedVolley = bolt.volleyId;
+        scene.remove(bolt.mesh);
+        bolts.splice(i, 1);
+        continue;
+      }
     }
 
     if (struck) {
@@ -4928,6 +4947,10 @@ function updateScene(dt, elapsed) {
 
   // 発光(被弾の白い点滅 と 発射予告の光)は、止まっていても消えていくよう常に更新する
   for (const e of enemies) updateEnemyGlow(e, dt);
+
+  // ボス(boss.js)。中で「戦闘停止中は動かない」を見ているので、ここでは毎回呼ぶ。
+  // 撃破演出だけは戦闘停止の影響を受けずに最後まで流したいので、この位置に置く。
+  if (typeof updateBoss === 'function') updateBoss(dt);
 
   // 敵の速度は、戦闘が止まっていても測っておく。
   // 偏差照準がこれを使うので、未計測だと印が出なくなる。

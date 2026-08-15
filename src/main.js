@@ -490,6 +490,13 @@ const shieldRegenEl = document.getElementById('shield-regen');
 
 const killCountEl = document.getElementById('kill-count');
 const combatLogEl = document.getElementById('combat-log');
+
+// 戦艦パネル(boss.js が出す情報の表示先)
+const bossPanelEl    = document.getElementById('boss-panel');
+const bossVentListEl = document.getElementById('boss-vent-list');
+const bossDistEl     = document.getElementById('boss-dist');
+const bossVentEls    = [];   // 弱点1つにつき1行。最初の1回だけ作る
+
 const speedEl     = document.getElementById('speed');
 const aiStateEl   = document.getElementById('ai-state');
 const hullEl      = document.getElementById('hull');
@@ -1741,8 +1748,134 @@ function onKill() {
   addCombatLog('★ KILL', 'kill');
   console.log('KILL ― 累計撃墜数: ' + killCount);
 
-  // 勝利条件:制限時間内に規定数を撃墜する
-  if (killCount >= MISSION.KILL_GOAL) endMission('complete');
+  // 規定数を落とすと、戦闘機の相手はそこで終わり ― 戦艦が出てくる。
+  // 任務が終わるのは、その戦艦を沈めたとき(onBossDestroyed)。
+  if (killCount >= BOSS.SPAWN_KILLS && !bossStatus()) spawnBoss();
+}
+
+// ===================================================================
+// ボス(boss.js)からの通知をまとめて受ける場所
+//
+// 3Dの見た目は boss.js、音とログと計器は main.js ―
+// このゲームでずっと守っている役割分担をここでも通す。
+// ===================================================================
+
+// 出現した
+function onBossArrive() {
+  addCombatLog('▲ WARNING ― CAPITAL SHIP', 'alert');
+  addCombatLog(BOSS.NAME + ' 接近', 'alert');
+  speakVoice('CAPITAL_SHIP');
+  playLockWarning();
+  bossPanelEl.classList.add('on');
+  renderBossPanel();
+}
+
+// 片付けた(再出撃など)
+function onBossGone() {
+  if (bossPanelEl) bossPanelEl.classList.remove('on');
+}
+
+// 装甲に弾かれた。毎発ログを出すと流れてしまうので間引く
+let lastRicochetLog = 0;
+function onBossRicochet() {
+  const now = performance.now();
+  if (now - lastRicochetLog < 900) return;
+  lastRicochetLog = now;
+  addCombatLog('ARMOR ― 装甲に弾かれた', 'miss');
+}
+
+// 弱点が開いた。音でも知らせる ―
+// 画面のどこを見ていても「今だ」が分かるようにするため
+function onBossVentOpen(vent) {
+  playLockedBeep();
+  speakVoice('VENT_EXPOSED');
+}
+
+// 弱点に当たった
+function onBossVentHit(vent, ventsLeft) {
+  playEnemyHit();
+  addCombatLog('◎ VENT HIT ― ' + vent.labelJa, 'hit');
+  renderBossPanel();
+}
+
+// 弱点をひとつ潰した
+function onBossVentDown(vent, ventsLeft) {
+  playExplosion();
+  addCombatLog('★ VENT DESTROYED ― ' + vent.labelJa + ' 沈黙', 'kill');
+  addCombatLog('残る排熱口 ' + ventsLeft, 'kill');
+  speakVoice('TARGET_DESTROYED');
+  renderBossPanel();
+}
+
+// ミサイル発射の予告
+function onBossMissileWarn() {
+  addCombatLog('▲ MISSILE INBOUND ― 多数', 'alert');
+  speakVoice('MISSILE_INBOUND');
+  playMissileLockWarn();
+}
+
+// 主砲のチャージ開始
+function onBossBeamCharge() {
+  addCombatLog('▲ MAIN GUN CHARGING ― 退避', 'alert');
+  speakVoice('MAIN_GUN');
+  playLockWarning();
+  renderBossPanel();
+}
+
+// 主砲発射
+function onBossBeamFire() {
+  playExplosion();
+  addCombatLog('■ MAIN GUN FIRE', 'alert');
+  renderBossPanel();
+}
+
+// 撃破演出の開始
+function onBossDeathStart() {
+  addCombatLog('★★ 排熱口 全滅 ― 艦体崩壊', 'kill');
+  playExplosion();
+}
+
+// 沈んだ = 任務達成
+function onBossDestroyed() {
+  playExplosion();
+  if (bossPanelEl) bossPanelEl.classList.remove('on');
+  addCombatLog('★★★ ' + BOSS.NAME + ' 撃沈', 'kill');
+  endMission('complete');
+}
+
+// ===================================================================
+// ボスの計器パネル。弱点4つの状態をそのまま出す
+//
+// 「いま撃ってよいのはどれか」が一目で分かることが唯一の目的。
+// 開いている弱点だけが緑で光る。
+// ===================================================================
+function renderBossPanel() {
+  if (!bossPanelEl) return;
+  const st = bossStatus();
+  if (!st) { bossPanelEl.classList.remove('on'); return; }
+
+  bossDistEl.textContent = st.dist;
+  bossPanelEl.classList.toggle('beam', st.beam === 'charge' || st.beam === 'fire');
+
+  // 行が無ければ最初に作る。あとは中身だけ差し替える
+  if (bossVentEls.length === 0) {
+    for (const v of st.vents) {
+      const row = document.createElement('div');
+      row.className = 'boss-vent';
+      row.innerHTML = '<span class="lbl"></span><span class="bar"><i></i></span><span class="st"></span>';
+      bossVentListEl.appendChild(row);
+      bossVentEls.push(row);
+    }
+  }
+
+  st.vents.forEach((v, i) => {
+    const row = bossVentEls[i];
+    row.classList.toggle('open', v.open && v.alive);
+    row.classList.toggle('down', !v.alive);
+    row.querySelector('.lbl').textContent = v.labelJa;
+    row.querySelector('.bar > i').style.width = (v.hp / v.maxHp * 100) + '%';
+    row.querySelector('.st').textContent = !v.alive ? '沈黙' : (v.open ? 'OPEN' : '閉');
+  });
 }
 
 // 画面下のログに1行足す。時間が経つとCSSのアニメーションで自然に消える
@@ -1922,6 +2055,7 @@ function restartMission() {
   timerElMission.classList.remove('warn');
   timerElMission.textContent = formatTime(missionTime);   // 表示も即座に戻す
   setCombatFrozen(false);
+  resetBoss();   // ボスがいたら片付ける(boss.js)。撃墜数が規定に届くとまた出てくる
 
   // --- 7パラメーターを初期状態へ ---
   power.weapon = 25; power.shield = 25; power.engine = 25; power.sensor = 25;
@@ -2263,6 +2397,7 @@ function tickBody(now) {
   renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
   renderLockWarn(dt);  // 被ロック警報(視界の縁が脈打つ)
   renderDataPanel();   // 三人称のデータパネル
+  renderBossPanel();   // 戦艦の弱点パネル(開閉が毎コマ変わるので毎コマ描く)
   renderConsoleSway(); // 視点に応じてHTMLの計器盤を出し入れする
   if (isCockpitView()) renderConsole3D(dt);   // 計器を3Dの計器台に描く
 }
