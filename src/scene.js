@@ -1048,16 +1048,47 @@ let debrisGeometry = null;  // 破片の形(使い回す)
 function initScene() {
   // Three.js が読み込めていない(オフライン等)場合は、3Dなしで計器だけ動かす
   if (typeof THREE === 'undefined') {
-    document.getElementById('scene-error').style.display = 'flex';
-    console.error('Three.js を読み込めませんでした。3Dなしで続行します。');
+    showSceneError('Three.js を読み込めませんでした(vendor/three.min.js)');
     return false;
   }
+  // 中身は buildScene()。ここで囲うのは、途中で失敗しても
+  // 呼び出し元(main.js の起動処理)を巻き込んで止めないため。
+  try {
+    return buildScene();
+  } catch (e) {
+    // よくあるのは WebGL の初期化失敗。GPUの都合で「たまに」起きる。
+    console.error('3D空間の初期化に失敗しました', e);
+    showSceneError('3D空間を初期化できませんでした<br><span style="opacity:.7">' +
+                   String(e && e.message ? e.message : e) + '</span>');
+    sceneReady = false;
+    return false;
+  }
+}
 
+// 画面に赤い案内を出す。原因の文言をそのまま載せる(黙って壊れないため)
+function showSceneError(html) {
+  const el = document.getElementById('scene-error');
+  if (!el) return;
+  el.innerHTML = html +
+    '<br>Ctrl+F5 で再読み込みしてください。' +
+    '<br><span style="opacity:.7">この状態では自機・敵機・計器パネルが表示されません。</span>';
+  el.style.display = 'flex';
+}
+
+function buildScene() {
   const container = document.getElementById('scene');
 
   // --- 描画装置 ---
   // antialias = 輪郭のギザギザを滑らかにする設定
   renderer = new THREE.WebGLRenderer({ antialias: true });
+
+  // 描画中にGPUとの接続が切れることがある(ドライバの更新、省電力、タブの復帰など)。
+  // 黙って絵が止まるので、起きたことが分かるようにしておく。
+  renderer.domElement.addEventListener('webglcontextlost', (ev) => {
+    ev.preventDefault();
+    sceneReady = false;
+    showSceneError('GPUとの接続が切れました(WebGL context lost)');
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));  // 高精細画面対策
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x02040a, 1);   // 宇宙の背景色(ほぼ黒)

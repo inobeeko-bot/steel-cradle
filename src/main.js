@@ -2180,7 +2180,9 @@ function onPlayerEmp(seconds) {
 let lastTime = 0;
 let elapsed  = 0;   // 起動からの累計秒数(3D側の動きに使う)
 
-function tick(now) {
+// ループの本体。ここは「1コマぶんの処理」だけを書く。
+// 次のコマの予約は下の tick() が必ず行うので、ここでは予約しない。
+function tickBody(now) {
   // now はページを開いてからの経過ミリ秒。前回との差＝この1コマの長さ(秒)を出す。
   // Math.min(..., 0.1) は、別タブに移って戻ったときに時間が飛ぶのを防ぐための上限。
   const dt = Math.min((now - lastTime) / 1000, 0.1);
@@ -2192,28 +2194,24 @@ function tick(now) {
   if (screenState === 'menu') {
     updateMenuBackdrop(dt);   // screens.js:ゆるい旋回と巡航
     updateScene(dt, elapsed);
-    requestAnimationFrame(tick);
     return;
   }
 
   // --- ストーリー:サイドビューのADVパート。3Dは動かさない ---
   if (screenState === 'story') {
     updateStory(dt);          // story.js:歩き・会話・カメラ
-    requestAnimationFrame(tick);
     return;
   }
 
   // --- ギャラリー:機体を1機だけ置いて、ゆっくり回して見せる ---
   if (screenState === 'gallery') {
     updateGalleryView(dt, CRAFT[galleryIndex].key);   // scene.js が描画まで行う
-    requestAnimationFrame(tick);
     return;
   }
 
   // --- 一時停止:景色をそのまま止めて置く(背景も動かさない)---
   if (screenState === 'paused') {
     updateScene(dt, elapsed);
-    requestAnimationFrame(tick);
     return;
   }
 
@@ -2223,7 +2221,6 @@ function tick(now) {
     updateScene(dt, elapsed);   // 破片などは動き続ける
     renderHeat();
     renderStatus();
-    requestAnimationFrame(tick);
     return;
   }
 
@@ -2268,8 +2265,38 @@ function tick(now) {
   renderDataPanel();   // 三人称のデータパネル
   renderConsoleSway(); // 視点に応じてHTMLの計器盤を出し入れする
   if (isCockpitView()) renderConsole3D(dt);   // 計器を3Dの計器台に描く
+}
 
-  requestAnimationFrame(tick);   // 次のコマを予約(これで無限に回り続ける)
+// ===================================================================
+// ループの外枠。
+//
+// ここが「絶対に止まらない」ことがいちばん大事。
+// 以前は tickBody の中身と予約が一体で、最後の行で次のコマを予約していた。
+// つまり途中で1回でもエラーが出ると予約に届かず、ループが永久に停止した。
+// 画面はそのまま残るので、見た目は「メニューは出ているのに何も反応しない」。
+// 原因の表示も出ないので、何が起きたのか分からない ― これを潰す。
+// ===================================================================
+function tick(now) {
+  try {
+    tickBody(now);
+  } catch (e) {
+    reportRuntimeError('ループ', e);
+  }
+  requestAnimationFrame(tick);   // 何があっても次のコマを予約する
+}
+
+// 実行中のエラーを画面の上端に出す。同じ内容は1回だけ。
+// 遊べなくならないよう、細い帯にして操作の邪魔はしない(pointer-events: none)。
+const reportedErrors = new Set();
+function reportRuntimeError(where, e) {
+  const msg = where + ': ' + (e && e.message ? e.message : String(e));
+  console.error(msg, e);
+  if (reportedErrors.has(msg)) return;   // 毎コマ出ると読めないので1回だけ
+  reportedErrors.add(msg);
+  const el = document.getElementById('runtime-error');
+  if (!el) return;
+  el.textContent = 'ERROR ' + msg;
+  el.style.display = 'block';
 }
 
 // ===================================================================
@@ -2405,20 +2432,44 @@ function update(dt) {
 }
 
 // --- 起動 -----------------------------------------------------------
-document.getElementById('build').textContent = BUILD;   // 画面に版数を出す
+//
+// 起動処理は「1つ失敗しても残りは続ける」形にしてある。
+// 以前は素で並べていたので、どれか1つが例外を出すと
+// そこから下(ループの開始まで)が丸ごと実行されず、
+// メニューは出ているのに何をしても反応しない状態になっていた。
+// しかも画面には何も出ないので、原因が分からなかった。
+const bootErrors = [];
+function bootStep(name, fn) {
+  try {
+    fn();
+  } catch (e) {
+    console.error('起動処理でエラー: ' + name, e);
+    bootErrors.push(name + ': ' + (e && e.message ? e.message : e));
+  }
+}
+
+bootStep('build', () => { document.getElementById('build').textContent = BUILD; });
 console.log('STEEL CRADLE build: ' + BUILD);
 
-initAudio();                     // 音の準備(audio.js)。最初のキー入力で鳴り始める
-initVoice();                     // コックピット音声の準備(voice.js)
-initScene();                     // 3D空間の準備(scene.js)。失敗しても計器は動く
-setupRadar();                    // 敵の数だけ輝点とマーカーを用意する(initScene のあと)
+bootStep('audio', initAudio);       // 音の準備(audio.js)。最初のキー入力で鳴り始める
+bootStep('voice', initVoice);       // コックピット音声の準備(voice.js)
+bootStep('scene', initScene);       // 3D空間の準備(scene.js)。失敗しても計器は動く
+bootStep('radar', setupRadar);      // 敵の数だけ輝点とマーカーを用意する(initScene のあと)
 
 // 起動時の視点をオプションから決める
-applyViewMode(OPTIONS.startView === 'cockpit');
-render();                        // 電力ゲージの初期表示
-renderWeapon();                  // 兵装パネルの初期表示
-requestAnimationFrame((t) => {   // ループ開始。1回目は dt=0 になるよう時刻を合わせる
+bootStep('view',   () => applyViewMode(OPTIONS.startView === 'cockpit'));
+bootStep('render', render);         // 電力ゲージの初期表示
+bootStep('weapon', renderWeapon);   // 兵装パネルの初期表示
+
+// ループ開始。ここだけは何があっても必ず走らせる。
+// (これが走らないと、キーもマウスも効かない置物になる)
+requestAnimationFrame((t) => {   // 1回目は dt=0 になるよう時刻を合わせる
   lastTime = t;
   tick(t);
 });
+
+if (bootErrors.length > 0 && typeof showSceneError === 'function') {
+  showSceneError('起動処理で問題が起きました<br><span style="opacity:.7">' +
+                 bootErrors.join('<br>') + '</span>');
+}
 console.log('POWER DISTRIBUTION ONLINE');

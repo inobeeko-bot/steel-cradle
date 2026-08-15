@@ -56,6 +56,26 @@
       background: rgba(6, 10, 12, 0.92);
       line-height: 2;
       z-index: 90;
+      pointer-events: none;   /* 案内が操作を塞がないようにする */
+    }
+
+    /* 実行中に出たエラーを知らせる細い帯。遊びの邪魔をしない位置と大きさ */
+    #runtime-error {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: none;
+      padding: 4px 10px;
+      background: rgba(60, 8, 8, 0.9);
+      color: #ffb0b0;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      z-index: 95;
+      pointer-events: none;
     }
 
     /* ---- キャノピー枠。画面の四隅を暗く落として「窓から見ている」感を出す ---- */
@@ -1616,6 +1636,9 @@
     Ctrl+F5 で再読み込みしてください。<br>
     この状態では自機・敵機・計器パネルが表示されません。
   </div>
+
+  <!-- 実行中に出たエラーの表示。ふだんは非表示 -->
+  <div id="runtime-error"></div>
 
   <!-- キャノピーの枠(四隅を暗く落とすだけの飾り) -->
   <div class="canopy"></div>

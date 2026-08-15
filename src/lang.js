@@ -13,6 +13,27 @@
 // ※ コード内のコメントは日本語のままでよい。読むのは開発者だけなので。
 // ===================================================================
 
+// -------------------------------------------------------------------
+// エラーの受け皿。lang.js はいちばん最初に読まれるので、ここに置く。
+//
+// どこかで拾い損ねたエラーを、必ず画面に出すためのもの。
+// 黙って壊れると「たまに動かない」としか分からず、原因に辿り着けない。
+// reportRuntimeError は main.js で定義されるので、それより前に起きた分は
+// いったん貯めておき、あとでまとめて出す。
+// -------------------------------------------------------------------
+window.__earlyErrors = [];
+window.addEventListener('error', (ev) => {
+  // 画像やスクリプトの読み込み失敗も、ここに来る(ev.target がその要素)
+  const src = ev.target && ev.target.src;
+  const msg = src ? '読み込み失敗: ' + src
+                  : (ev.message || String(ev.error));
+  if (typeof reportRuntimeError === 'function') {
+    reportRuntimeError('未処理', { message: msg });
+  } else {
+    window.__earlyErrors.push(msg);
+  }
+}, true);   // true = 子要素で起きた読み込み失敗も拾う
+
 // 保存キー。次に開いたときも同じ言語で始まるようにする
 const LANG_STORE_KEY = 'steel-cradle-lang';
 
