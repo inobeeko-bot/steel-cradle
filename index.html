@@ -909,6 +909,11 @@
     .weapon-panel.low { border-color: #a83a26; }
     .weapon-panel.low .wp-ammo { color: #ff5a3c; }
 
+    /* 被弾で沈黙した主武器。R で他へ持ち替えれば戦い続けられる。
+       「弾が少ない」とは別物なので、名前ごと取り消し線で潰して区別する */
+    .weapon-panel.dead .wp-name { text-decoration: line-through; color: #6c4a44; }
+    .weapon-panel.dead .wp-ammo { color: #ff5a3c; }
+
     /* コックピットでは、右の推進剤/シールド計器の「左どなり」に置く。
        以前は同じ場所に重なっていて、あとから描かれる右計器の下に隠れていた。
        計器台の一列に並べることで、隠れず、かつ計器盤に組み込まれて見える。

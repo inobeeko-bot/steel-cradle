@@ -95,6 +95,15 @@ const SALVAGE = {
       color: 0x7fd4ff, edge: 0xd8f2ff,
       AMOUNT: 40,
     },
+    {
+      key: 'repair', labelJa: '修理パーツ', label: 'SPARE PART',
+      color: 0x9fe1cb, edge: 0xffffff,
+      // 壊れた計器を1つ直す。どれを直すかは main.js が決める(武器を優先)。
+      //
+      // ※ HULLの数字は戻さない。仕様書9.3「機体構造:戦闘中回復不可」を守る。
+      //   戻すのは「機能」だけで、受けた損傷そのものは消えない ―
+      //   壊れた部品を残骸から拾った同型部品に取り替える、という話にしてある。
+    },
   ],
 };
 
@@ -126,8 +135,16 @@ function spawnSalvage(position, forceKind) {
   if (!sceneReady) return false;
   if (salvages.length >= SALVAGE.MAX_ON_FIELD) return false;
 
+  // 抽選する候補。修理パーツは「壊れている計器があるとき」だけ混ぜる ―
+  // 無傷のときに出しても、拾っても何も起きない外れくじになってしまう。
+  let pool = SALVAGE.KINDS;
+  if (!forceKind) {
+    const needsRepair = (typeof salvageNeedsRepair === 'function') && salvageNeedsRepair();
+    if (!needsRepair) pool = SALVAGE.KINDS.filter((k) => k.key !== 'repair');
+  }
+
   const spec = forceKind ? salvageKind(forceKind)
-    : SALVAGE.KINDS[Math.floor(Math.random() * SALVAGE.KINDS.length)];
+    : pool[Math.floor(Math.random() * pool.length)];
 
   // 形は1つ作って全部で使い回す。拾うたびに作り直すと引っかかる
   if (!salvageGeometry) {

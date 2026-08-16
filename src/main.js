@@ -422,6 +422,32 @@ const BREAKAGE = {
 const brokenSystems = new Set();
 const isBroken = (key) => brokenSystems.has(key);
 
+// ===================================================================
+// 沈黙した主武器(ビーム/機関砲/ミサイルのうち、撃てなくなったもの)
+//
+// 【なぜ分けたか】
+// 以前は「武器系」がひとかたまりで、そこが壊れると3系統ぜんぶ撃てなくなった。
+// 壊れうる計器は8種、HULL5で終わるので死ぬまでに壊れるのは最大4種 ―
+// つまり約50%の試合で武器が全損する。勝利条件は戦艦の撃沈=撃つことなので、
+// 当たった瞬間に詰みだった。時間切れまで飛ぶだけの試合になる。
+//
+// 仕様書9.3は「武器系被弾で発射不可」と書いているが、その狙いは
+// 「どこを壊されたかが数字より重い」こと。何もできなくなる状態は
+// その狙いに貢献していない ― むしろ「どこを」が消える。
+//
+// そこで壊れるのは3系統のうち1つだけにした。
+//   ・その武器については「発射不可」が字義どおり成り立つ
+//   ・Rで持ち替えれば戦い続けられる(詰まない)
+//   ・機関砲を失うのとミサイルを失うのは全く別の事態になる
+//     = 「どこを壊されたか」が初めて意味を持つ
+//
+// BOMBS(パイロ/ボム/EMP)はこの集合の対象外。武器仕様書が
+// 「主武器3系統」と「範囲攻撃3種」を別の層として立てているので、
+// 別回路として扱う ― 主武器を1つ失っても範囲攻撃は残る。
+// ===================================================================
+const brokenWeapons = new Set();
+const isWeaponBroken = (key) => brokenWeapons.has(key);
+
 // --- 被弾・ミッション状態 -------------------------------------------
 let hullDamage    = 0;       // これまでに受けたHULL損傷の回数
 let hitsTaken     = 0;       // 被弾した回数(リザルト用)
@@ -1967,8 +1993,13 @@ function renderWeapon() {
   // 搭載数に対する割合(1/4以下)で判断する。
   const low = (left !== Infinity && left <= Math.max(2, Math.ceil(w.ammo * 0.25)));
   const noPower = (effectiveWeaponPower() < w.minPower);
-  weaponPanelEl.classList.toggle('low', low || noPower);
+  const dead = isWeaponBroken(w.key);
+  weaponPanelEl.classList.toggle('low', low || noPower || dead);
+  weaponPanelEl.classList.toggle('dead', dead);
   weaponPanelEl.classList.toggle('beam', w.key === 'BEAM');
+  // 沈黙した武器は、残弾ではなく理由を出す。
+  // 数字が並んでいると「撃てるのに撃てない」ように見えてしまう
+  if (dead) weaponAmmoEl.textContent = '×';
 
   // フレアの残数。熱が高いと効かないので、そのときは赤くする
   flareCountEl.textContent = flareCount;
@@ -2086,6 +2117,18 @@ function onSalvagePickup(kind) {
     addCombatLog('◆ 推進剤回収 ― +'
       + Math.round(propellant - before), 'kill');
     speakVoice('SALVAGE');
+
+  } else if (kind === 'repair') {
+    // 残骸から剥いだ同型部品で、壊れた計器を1つ取り替える。
+    // HULLの数字は戻さない(仕様書9.3「機体構造:戦闘中回復不可」)―
+    // 戻るのは機能だけで、受けた損傷そのものは消えない。
+    const fixed = repairOneInstrument();
+    if (fixed) {
+      addCombatLog('◆ 修理パーツ ― ' + fixed + ' 復旧', 'kill');
+      speakVoice('SALVAGE');
+    } else {
+      addCombatLog('◆ 修理パーツ ― 損傷なし', 'warn');
+    }
 
   } else {
     // シールド発生器のコンデンサバンク。HULLは治らない(仕様書9.3:戦闘中回復不可)
@@ -2345,8 +2388,87 @@ function breakRandomInstrument() {
   // 後方カメラは3D側が描いているので、描画そのものを止めてもらう
   if (key === 'mirror') setMirrorBroken(true);
 
+  // 武器系は「ひとかたまり」ではなく、主武器3系統のうち1つが沈黙する。
+  // 詳しい理由は brokenWeapons の説明を参照
+  if (key === 'weapon') {
+    const lost = breakOneWeapon();
+    if (lost) return lost + ' 発射不能';
+  }
+
   const info = BREAKAGE[key];
   return info ? (info.label + ' ' + info.lost) : null;
+}
+
+// ===================================================================
+// 修理パーツ(salvage.js)で、壊れたものを1つ直す
+//
+// 直した名前を返す。直すものが無ければ null。
+//
+// 【直す順番】沈黙した主武器 → それ以外の計器。
+// 撃てないことが試合をいちばん強く止めるので、そこを最優先で戻す。
+// 「拾ったのに直ってほしいところが直らない」を避けるための決め打ち。
+//
+// ※ HULLの数字(hullDamage)は戻さない。
+//   仕様書9.3「機体構造:戦闘中回復不可」を守る。
+//   戻すのは機能だけで、受けた損傷そのものは消えない。
+// ===================================================================
+function repairOneInstrument() {
+  // --- まず主武器 ---
+  if (brokenWeapons.size > 0) {
+    const key = brokenWeapons.values().next().value;
+    brokenWeapons.delete(key);
+    const w = WEAPONS.find((x) => x.key === key);
+    // 「武器」計器そのものの故障表示も一緒に戻す。
+    // ここを残すと、撃てるのに電力を武器へ配れないままになる
+    brokenSystems.delete('weapon');
+    const el = document.querySelector('[data-system="weapon"]');
+    if (el) el.classList.remove('broken');
+    renderWeapon();
+    return w ? w.jp : '主武器';
+  }
+
+  // --- 次にそれ以外の計器 ---
+  const el = document.querySelector('[data-system].broken');
+  if (!el) return null;
+
+  const key = el.dataset.system;
+  el.classList.remove('broken');
+  brokenSystems.delete(key);
+  if (key === 'mirror') setMirrorBroken(false);
+
+  const info = BREAKAGE[key];
+  return info ? info.label : key;
+}
+
+// 直すものがあるか(salvage.js が修理パーツを抽選に混ぜるか決めるのに使う)。
+// 無傷のときに修理パーツを出しても、拾って何も起きない外れくじになる。
+function salvageNeedsRepair() {
+  return brokenWeapons.size > 0 || brokenSystems.size > 0;
+}
+
+// 主武器3系統のうち、まだ生きているものを1つ選んで沈黙させる。
+// 沈黙させた武器の名前を返す(全部落ちていれば null)。
+//
+// 最後の1つは残す ― 撃つ手段がゼロになると、勝利条件(戦艦の撃沈)に
+// 手が届かなくなり、時間切れまで飛ぶだけの試合になってしまう。
+function breakOneWeapon() {
+  const alive = WEAPONS.filter((w) => !isWeaponBroken(w.key));
+  if (alive.length <= 1) return null;   // 最後の1系統は壊さない
+
+  const picked = alive[Math.floor(Math.random() * alive.length)];
+  brokenWeapons.add(picked.key);
+
+  // 今それを選んでいたら、生きているものへ勝手に持ち替える。
+  // 撃てない武器を握らせたまま放り出すと、何が起きたのか分からない
+  if (currentWeapon().key === picked.key) {
+    const next = WEAPONS.findIndex((w) => !isWeaponBroken(w.key));
+    if (next >= 0) {
+      weaponIndex = next;
+      addCombatLog(currentWeapon().jp + ' へ切替', 'warn');
+    }
+  }
+  renderWeapon();
+  return picked.jp;
 }
 
 // ===================================================================
@@ -2504,6 +2626,7 @@ function restartMission() {
     el.classList.remove('broken');
   }
   brokenSystems.clear();
+  brokenWeapons.clear();    // 沈黙した主武器も戻す
   setMirrorBroken(false);   // 後方カメラの映像を戻す
 
   // --- 戦果とログを消す ---
@@ -2537,9 +2660,10 @@ function fire() {
   const w = currentWeapon();
 
   // --- 撃てるかどうかの確認 ---
-  // 武器計器が壊れていると発射できない(仕様書9.3「武器系被弾で発射不可」)
-  if (isBroken('weapon')) {
-    addCombatLog('武器系 損傷', 'hull');
+  // 仕様書9.3「武器系被弾で発射不可」。ただし潰れるのは3系統のうち1つだけで、
+  // 持ち替えれば戦い続けられる(理由は brokenWeapons の説明を参照)
+  if (isWeaponBroken(w.key)) {
+    addCombatLog(w.jp + ' 発射不能 ― R で持ち替え', 'hull');
     playDenied();
     return;
   }
@@ -2642,7 +2766,10 @@ function updateBurst(dt) {
 function fireBomb() {
   const a = currentBomb();
 
-  if (isBroken('weapon')) { addCombatLog('武器系 損傷', 'hull'); playDenied(); return; }
+  // BOMBS は武器系の故障では止まらない。
+  // 武器仕様書が「主武器3系統」と「範囲攻撃3種」を別の層として立てているので、
+  // 別回路として扱う ― 主武器を失っても、これで戦い続けられる。
+  // (電力が要るのは変わらないので、EMPは武器への配分が足りないと撃てない)
   if (bombCooldown > 0) return;
 
   // EMPは電力を食う装備。武器へ配っていないと撃てない
