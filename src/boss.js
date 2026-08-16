@@ -67,16 +67,31 @@ const BOSS = {
   TURN_RATE:  0.16,     // 向きを変える速さ(ラジアン/秒)
   KEEP_DIST:  260,      // これより近づかれたら前進をやめる
 
-  // --- 装甲(弾かれる判定)-------------------------------------------
-  // 艦体は楔形なので、球ではなく「先へ行くほど細くなる箱」で判定する。
-  // NOSE_THIN = 艦首側の厚みの割合(0.25 = 最後部の1/4の厚み)
+  // --- 艦首の絞り(形と当たり判定の両方を決める)-----------------------
+  // 艦体は楔形。艦首がどれだけ細いかを、この2つで決める。
+  //   NOSE_THIN = 艦首の厚み(0.25 = 最後部の1/4)
+  //   NOSE_W    = 艦首の幅  (0.06 = 最後部の6%。ごく小さい平らな面)
+  //
+  // ※ 艦首を「1点」にはしない。理由は見た目ではなく当たり判定にある ―
+  //   幅も厚みも0の点に向かって絞ると、その断面の中で
+  //   「上端と下端のどのへんか」を割り算で出すときに 0÷0 になる。
+  //   ごく小さくても面を残しておけば、その破綻が起きない。
   NOSE_THIN: 0.25,
+  NOSE_W:    0.06,
 
   // --- 弱点(排熱口)-------------------------------------------------
   VENT: {
     COUNT_HP:    5,     // ベント1つを潰すのに必要なダメージ量
-    RADIUS:    4.6,     // 見た目の半径(全長210に対して4.6 = 極小)
-    HIT_RADIUS:6.2,     // 当たり判定の半径。見た目より少しだけ甘くする
+    RADIUS:    4.6,     // 光る芯の半径(全長210に対して4.6 = 極小)
+    // ダメージが通る半径。光る芯(4.6)より少しだけ甘くしてある。
+    HIT_RADIUS:6.2,
+    // 排熱口の装置そのものの外径。受け皿と金属の縁を含めた「見えている円」。
+    // buildBossVent が縁を RADIUS×1.62 まで描くので、その値と揃えること。
+    //
+    // ここが要る理由:排熱口は艦体から浮いているので、
+    // 縁だけを覆わずにおくと、そこを撃った弾が艦を素通りしてしまう。
+    // 芯に当たればダメージ、縁に当たれば弾かれる ― 見えたとおりに当たる。
+    RIM_RADIUS: 7.5,
     CYCLE:     7.4,     // 開閉の周期(秒)
     WARN_SEC:  1.0,     // 開く前に光り始める時間(予告)
     OPEN_SEC:  1.7,     // 開いている時間 ← ここが勝負どころ
@@ -178,6 +193,11 @@ let boss = null;          // { group, ... } 出現前は null
 let bossState = 'none';   // none / arriving / active / dying / dead
 let bossHullMats = [];    // 被弾で白く光らせるために覚えておく材質
 
+// 艦体からはみ出している部分(艦橋塔・探知球・溝の桟・舷側の段)の当たり判定。
+// 楔形の艦体だけでは、上に27も伸びている艦橋塔が素通りになってしまう。
+// buildBossHull が、見た目を作るのと同時にここへ積んでいく。
+let bossParts = [];
+
 
 // ===================================================================
 // 艦体の断面の大きさを返す。
@@ -187,13 +207,23 @@ let bossHullMats = [];    // 被弾で白く光らせるために覚えておく
 // 別々に書くと、寸法を変えたときに片方だけズレる。
 //   t: 0 = 艦首 / 1 = 艦尾
 // ===================================================================
+// ※ この関数が返す形が、そのまま艦体のメッシュの形になっている
+//   (buildBossHull は、t=0 と t=1 のここの値を頂点に使う)。
+//   だから「見えている形」と「当たる形」は、直しようがないほど一致する ―
+//   別々に書いていたときは、艦首側で当たり判定が3.75ぶん厚く、
+//   何も無い空間で弾が弾かれていた。
 function bossCrossSection(t) {
+  const wide = BOSS.NOSE_W    + (1 - BOSS.NOSE_W)    * t;
   const thin = BOSS.NOSE_THIN + (1 - BOSS.NOSE_THIN) * t;
   return {
-    halfW: (BOSS.WIDTH  / 2) * t,      // 幅は艦首で0(とがっている)
+    halfW: (BOSS.WIDTH  / 2) * wide,   // 幅は艦首でごく細い
     halfH: (BOSS.HEIGHT / 2) * thin,   // 厚みは艦首でも少し残す
   };
 }
+
+// 断面の上辺は下辺よりこの割合だけ狭い(= 断面が台形になる)。
+// 艦体を作るときも、当たり判定も、弱点の取り付け位置も、全部この1つを見る。
+const BOSS_TOP_RATIO = 0.72;
 
 // t(0〜1)を、モデルのZ座標に直す。艦首が -Z
 function bossZAt(t) {
@@ -210,28 +240,41 @@ function bossZAt(t) {
 function buildBossHull() {
   const g = new THREE.Group();
 
-  const halfL = BOSS.LENGTH / 2;
-  const rear  = bossCrossSection(1);
-  const topW  = rear.halfW * 0.72;   // 上面は下面より狭い = 断面が台形になる
+  // 当たり判定の部品リスト。見た目を作るのと同じ場所・同じ数字から登録していく。
+  // 「作る場所」と「当たる場所」を別々に書くと、片方だけ直したときに必ずズレる ―
+  // 実際、艦橋塔は見た目だけ作られていて当たり判定が無く、
+  // 撃っても弾がすり抜けていた。
+  bossParts = [];
 
-  // 5つの頂点だけで楔を作る。
-  //   0: 艦首の1点
-  //   1,2: 艦尾の下辺(左・右)
-  //   3,4: 艦尾の上辺(左・右)
+  const halfL = BOSS.LENGTH / 2;
+  const nose  = bossCrossSection(0);
+  const rear  = bossCrossSection(1);
+  const noseTopW = nose.halfW * BOSS_TOP_RATIO;
+  const rearTopW = rear.halfW * BOSS_TOP_RATIO;
+
+  // 8つの頂点で楔を作る。艦首も「ごく小さい台形の面」にしてある ―
+  // 断面の関数(bossCrossSection)が返す形をそのまま頂点にしているので、
+  // 当たり判定はこの形と完全に一致する。
+  //   0〜3: 艦首(左下・右下・左上・右上)
+  //   4〜7: 艦尾(同じ順)
   const v = [
-     0,            0,          -halfL,   // 0 艦首
-    -rear.halfW,  -rear.halfH,  halfL,   // 1 艦尾 左下
-     rear.halfW,  -rear.halfH,  halfL,   // 2 艦尾 右下
-    -topW,         rear.halfH,  halfL,   // 3 艦尾 左上
-     topW,         rear.halfH,  halfL,   // 4 艦尾 右上
+    -nose.halfW, -nose.halfH, -halfL,   // 0 艦首 左下
+     nose.halfW, -nose.halfH, -halfL,   // 1 艦首 右下
+    -noseTopW,    nose.halfH, -halfL,   // 2 艦首 左上
+     noseTopW,    nose.halfH, -halfL,   // 3 艦首 右上
+    -rear.halfW, -rear.halfH,  halfL,   // 4 艦尾 左下
+     rear.halfW, -rear.halfH,  halfL,   // 5 艦尾 右下
+    -rearTopW,    rear.halfH,  halfL,   // 6 艦尾 左上
+     rearTopW,    rear.halfH,  halfL,   // 7 艦尾 右上
   ];
   // 三角形の並び。表から見て反時計回りになる順に書く(これを間違えると裏返る)
   const idx = [
-    0, 2, 1,        // 下面
-    0, 3, 4,        // 上面
-    0, 1, 3,        // 左舷
-    0, 4, 2,        // 右舷
-    1, 2, 4,  1, 4, 3,   // 艦尾
+    0, 5, 4,  0, 1, 5,   // 下面
+    2, 6, 7,  2, 7, 3,   // 上面
+    0, 4, 6,  0, 6, 2,   // 左舷
+    1, 3, 7,  1, 7, 5,   // 右舷
+    4, 5, 7,  4, 7, 6,   // 艦尾
+    0, 2, 3,  0, 3, 1,   // 艦首
   ];
 
   const geo = new THREE.BufferGeometry();
@@ -262,10 +305,11 @@ function buildBossHull() {
   for (let i = 0; i < 7; i++) {
     const t = 0.30 + i * 0.095;
     const cs = bossCrossSection(t);
-    const w = cs.halfW * 0.72 * 1.5;
+    const w = cs.halfW * BOSS_TOP_RATIO * 1.5;
     const bar = new THREE.Mesh(new THREE.BoxGeometry(w, 1.6, 3.2), trenchMat);
     bar.position.set(0, cs.halfH + 0.4, bossZAt(t));
     g.add(bar);
+    addBossPart(bar, w, 1.6, 3.2);
   }
   // 左右の舷側にも段を付ける
   for (const side of [-1, 1]) {
@@ -273,8 +317,9 @@ function buildBossHull() {
       const t = 0.40 + i * 0.12;
       const cs = bossCrossSection(t);
       const blk = new THREE.Mesh(new THREE.BoxGeometry(3.0, 2.2, 9), trenchMat);
-      blk.position.set(side * (cs.halfW * 0.72), 0, bossZAt(t));
+      blk.position.set(side * (cs.halfW * BOSS_TOP_RATIO), 0, bossZAt(t));
       g.add(blk);
+      addBossPart(blk, 3.0, 2.2, 9);
     }
   }
 
@@ -294,10 +339,21 @@ function buildBossHull() {
   base.add(new THREE.LineSegments(new THREE.EdgesGeometry(base.geometry),
     new THREE.LineBasicMaterial({ color: BOSS.EDGE_COLOR })));
   g.add(base);
+  addBossPart(base, 34, 13, 30);
 
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(22, 8, 18), towerMat);
   bridge.position.set(0, base.position.y + 10.5, towerZ);
   g.add(bridge);
+  addBossPart(bridge, 22, 8, 18);
+
+  // 基部と司令室のあいだは、外からは1本の塔に見える。
+  // 見た目は空いていても、そこを弾がすり抜けたら嘘になるので、
+  // 判定だけは細い柱でつないでおく。
+  bossParts.push({
+    kind: 'box',
+    c: new THREE.Vector3(0, (base.position.y + bridge.position.y) / 2, towerZ),
+    half: new THREE.Vector3(9, (bridge.position.y - base.position.y) / 2, 8),
+  });
 
   // 探知球。艦橋の左右に1つずつ。低ポリの球(面が少ないほうがこの絵に合う)
   const domeMat = new THREE.MeshLambertMaterial({
@@ -308,6 +364,8 @@ function buildBossHull() {
     const dome = new THREE.Mesh(new THREE.IcosahedronGeometry(4.4, 0), domeMat);
     dome.position.set(side * 13, bridge.position.y + 6.5, towerZ);
     g.add(dome);
+    // 球は箱ではなく球で判定する。箱で包むと、角の何も無いところで弾かれる
+    bossParts.push({ kind: 'sphere', c: dome.position.clone(), r: 4.4 });
   }
 
   // --- 主機(艦尾のエンジン)-------------------------------------------
@@ -336,7 +394,40 @@ function buildBossHull() {
     g.add(ring);
   }
 
-  return { group: g, engines: engines };
+  return { group: g, engines: engines, parts: bossParts, radius: bossBoundRadius() };
+}
+
+// ===================================================================
+// 艦全体を包む球の半径
+//
+// 当たり判定は毎コマ何十回も呼ばれるので、まず「艦の中心からこれより
+// 遠ければ細かい判定はしない」で足切りする。その「これ」がこの半径。
+//
+// ここを目分量で決めてはいけない。全長の半分(105)を使っていたが、
+// 艦尾の下辺の角は中心から124.4 ― 差の19.4ぶん、艦体の角が素通りしていた。
+// 頂点と部品から実際に測って出す。
+// ===================================================================
+function bossBoundRadius() {
+  const rear = bossCrossSection(1);
+  // いちばん遠いのは艦尾の下辺の角
+  let r = Math.sqrt(rear.halfW * rear.halfW + rear.halfH * rear.halfH +
+                    (BOSS.LENGTH / 2) * (BOSS.LENGTH / 2));
+  for (const p of bossParts) {
+    // 部品の中心までの距離 + その部品自身の広がり(箱なら対角線の半分)
+    const reach = (p.kind === 'sphere') ? p.r : p.half.length();
+    r = Math.max(r, p.c.length() + reach);
+  }
+  return r;
+}
+
+// 作ったばかりの箱を、そのまま当たり判定の部品として登録する。
+// 位置は mesh.position をそのまま使うので、見た目と1ミリもズレようがない。
+function addBossPart(mesh, w, h, d) {
+  bossParts.push({
+    kind: 'box',
+    c: mesh.position.clone(),
+    half: new THREE.Vector3(w / 2, h / 2, d / 2),
+  });
 }
 
 
@@ -481,6 +572,14 @@ function spawnBoss() {
     vents.push(vent);
   });
 
+  // 艦を包む球に、排熱口のぶんも入れておく。
+  // 弱点は艦体から外へ突き出しているので、艦体だけで測った半径だと
+  // 足切りで弾かれて「弱点に当たらない」ことが起こりうる。
+  let radius = built.radius;
+  for (const v of vents) {
+    radius = Math.max(radius, v.group.position.length() + BOSS.VENT.RIM_RADIUS);
+  }
+
   // 艦首の主砲。ためている間ここが光り、ビームもここから出る
   if (!flareGlowTex) flareGlowTex = makeFlareGlowTexture();
   const chargeGlow = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -497,6 +596,16 @@ function spawnBoss() {
     engines: built.engines,
     vents: vents,
     chargeGlow: chargeGlow,
+    // 艦全体を包む球の半径。当たり判定の足切りに使う(実測値。目分量ではない)
+    radius: radius,
+
+    // 「世界の座標」を「艦から見た座標」に直す行列。毎コマ1回だけ作り直す。
+    //
+    // 当たり判定は弾1発ごとに座標を直す必要があるが、
+    // そのたびに艦じゅうの行列を作り直していた(艦は50個以上の部品でできている)。
+    // 弾が40発あれば40回 ― 1コマの4%を、同じ計算のくり返しに使っていた。
+    // 艦は1コマに1度しか動かないのだから、直す道具も1度作れば足りる。
+    invMatrix: new THREE.Matrix4(),
 
     arriveLeft: BOSS.ARRIVE_SEC,
     hitFlash: 0,
@@ -521,6 +630,7 @@ function spawnBoss() {
   };
 
   bossState = 'arriving';
+  bossRefreshMatrix();   // 出現した直後から当たり判定が効くようにしておく
 
   // 出現の演出:大きな閃光と、ふくらむ輪
   spawnFlash(group.position, 120, 0xffffff, 0.5);
@@ -596,11 +706,13 @@ function updateBoss(dt) {
       -(1 - k) * 120 * dt
     );
     if (boss.arriveLeft <= 0) bossState = 'active';
+    bossRefreshMatrix();   // 滑り込み中でも体当たり判定は効かせる
     return;
   }
 
   if (bossState === 'dying') {
     updateBossDeath(dt);
+    bossRefreshMatrix();
     return;
   }
 
@@ -612,12 +724,34 @@ function updateBoss(dt) {
   // 動かしたら、行列(位置と向きの計算結果)をすぐ作り直しておく。
   // localToWorld / worldToLocal はこの行列を見るので、更新しないと
   // 砲の発射位置も弱点の当たり判定も1コマぶん古い場所を指す。
-  boss.group.updateMatrixWorld(true);
+  bossRefreshMatrix();
 
   updateBossVents(dt);
   updateBossTurbo(dt);
   updateBossMissiles(dt);
   updateBossBeam(dt);
+}
+
+
+// ===================================================================
+// 艦の位置と向きの計算結果を作り直す ― 1コマに1回だけ
+//
+// updateMatrixWorld は艦じゅうの部品(50個以上)をたどり直す重い処理。
+// 艦が動くのは1コマに1度だけなので、ここで1回やれば足りる。
+// 当たり判定はここで作った invMatrix を使い回すだけにしてある。
+// ===================================================================
+function bossRefreshMatrix() {
+  boss.group.updateMatrixWorld(true);
+  // 逆行列 = 「世界の座標」を「艦から見た座標」へ引き戻す道具
+  boss.invMatrix.copy(boss.group.matrixWorld).invert();
+}
+
+// 世界座標の点を、艦から見た座標に直して返す。
+// 返るのは使い回しの入れ物なので、値が要るなら呼び出し側で写すこと。
+const _bossLocal = new THREE.Vector3();
+
+function bossToLocal(point) {
+  return _bossLocal.copy(point).applyMatrix4(boss.invMatrix);
 }
 
 
@@ -1034,30 +1168,32 @@ function clearBossBeam() {
 // 返り値 true = この弾はここで消える。
 //
 // 判定は2段構え:
-//   1. 弱点の近くか? → 開いていればダメージ、閉じていれば弾かれる
-//   2. 艦体の中か?   → いつでも弾かれる
+//   1. 弱点の装置に触れたか? → 開いた芯ならダメージ、それ以外は弾かれる
+//   2. 艦体の中か?           → いつでも弾かれる
 // ===================================================================
 function bossTakeHit(point, damage) {
   if (!boss || bossState !== 'active') return false;
-  boss.group.updateMatrixWorld(true);   // 判定の前に必ず最新の位置にする
+
+  // 飛んでいる弾ぜんぶが毎コマここへ来る。艦を包む球より外なら、
+  // 行列の作り直しも座標変換もせずに帰る(いちばん効く節約)。
+  const rough = boss.radius + BOSS.VENT.RIM_RADIUS;
+  if (boss.group.position.distanceToSquared(point) > rough * rough) return false;
 
   // --- 1. 弱点 ---
-  const local = boss.group.worldToLocal(point.clone());
-  for (const vent of boss.vents) {
-    if (!vent.alive) continue;
-    if (local.distanceTo(vent.group.position) > BOSS.VENT.HIT_RADIUS) continue;
-
-    if (vent.open) {
-      damageBossVent(vent, point, damage);
+  const local = bossToLocal(point);
+  const vent = bossVentAt(local, 0);
+  if (vent) {
+    if (vent.hitCore && vent.vent.alive && vent.vent.open) {
+      damageBossVent(vent.vent, point, damage);
     } else {
-      // 閉じている弱点も、ただの装甲として弾く
+      // 縁の金属・閉じた蓋・潰したあとの残骸。どれもただの装甲として弾く
       bossRicochet(point);
     }
     return true;
   }
 
   // --- 2. 艦体 ---
-  if (bossPointInsideHull(local)) {
+  if (bossPointInsideBody(local)) {
     bossRicochet(point);
     return true;
   }
@@ -1065,14 +1201,39 @@ function bossTakeHit(point, damage) {
   return false;
 }
 
-// 艦体(楔形)の中に入っているか
+// ===================================================================
+// その点が、どの排熱口の装置に触れているか
+//
+// 「見えている円のどこかに当たったか」と「芯に当たったか」は別の話。
+//   芯(HIT_RADIUS)  … 開いていればダメージが通る
+//   縁(RIM_RADIUS)  … ただの金属。弾かれるが、すり抜けはしない
+// 縁まで見ておかないと、排熱口は艦体から浮いているので
+// そこを撃った弾が艦を素通りしてしまう。
+//
+// local は艦から見た座標。margin は近接信管ぶんの甘さ。
+// 見つからなければ null。
+// ===================================================================
+function bossVentAt(local, margin) {
+  const m = margin || 0;
+  for (const v of boss.vents) {
+    const d = local.distanceTo(v.group.position);
+    if (d > BOSS.VENT.RIM_RADIUS + m) continue;
+    return { vent: v, hitCore: d <= BOSS.VENT.HIT_RADIUS + m };
+  }
+  return null;
+}
+
+// 艦体(楔形の本体)の中に入っているか
 //
 // ※ 断面は「箱」ではなく「台形」。上へ行くほど狭い。
 //   箱で判定すると、舷側の斜面の外側 ― 実際には何も無い空間 ―
 //   でも弾が弾かれ、艦のそばを掠めただけで火花が散ってしまう。
 //   見えている形と当たる形は必ず一致させる。
+//
+// この関数が見ている形は、buildBossHull が頂点に使っている
+// bossCrossSection そのもの。だから食い違いようがない。
 // margin を渡すと、その距離ぶん外側まで「艦体」とみなす(体当たりの判定用)
-function bossPointInsideHull(local, margin) {
+function bossPointInsideWedge(local, margin) {
   const m = margin || 0;
   const halfL = BOSS.LENGTH / 2 + m;
   if (local.z < -halfL || local.z > halfL) return false;
@@ -1083,11 +1244,35 @@ function bossPointInsideHull(local, margin) {
   if (Math.abs(local.y) > cs.halfH + m) return false;
 
   // その高さでの実際の半幅。下辺 halfW から上辺 halfW×0.72 へ線形に狭まる
-  const topW = cs.halfW * 0.72;
+  const topW = cs.halfW * BOSS_TOP_RATIO;
   const k = Math.max(0, Math.min(1,
     (local.y + cs.halfH) / (2 * cs.halfH)));        // 0=下端 1=上端
   const halfWHere = cs.halfW + (topW - cs.halfW) * k;
   return Math.abs(local.x) <= halfWHere + m;
+}
+
+// ===================================================================
+// 艦のどこかに触れているか(艦体 + はみ出している部分すべて)
+//
+// 艦体は楔形ひとつで足りるが、艦橋塔・探知球・溝の桟・舷側の段は
+// その外側に出ている。そこを見ないと、艦橋を撃った弾がすり抜ける。
+// bossParts に積んである部品を、箱は箱として・球は球として順に見る。
+// ===================================================================
+function bossPointInsideBody(local, margin) {
+  if (bossPointInsideWedge(local, margin)) return true;
+
+  const m = margin || 0;
+  for (const p of bossParts) {
+    if (p.kind === 'sphere') {
+      const r = p.r + m;
+      if (local.distanceToSquared(p.c) <= r * r) return true;
+    } else {
+      if (Math.abs(local.x - p.c.x) <= p.half.x + m &&
+          Math.abs(local.y - p.c.y) <= p.half.y + m &&
+          Math.abs(local.z - p.c.z) <= p.half.z + m) return true;
+    }
+  }
+  return false;
 }
 
 
@@ -1103,13 +1288,11 @@ function bossRamCheck(point, radius) {
   if (bossState !== 'arriving' && bossState !== 'active' && bossState !== 'dying') return false;
   if (!boss.group.visible) return false;
 
-  // まず大まかに:艦の中心から遠ければ、細かい判定はしない(毎コマ呼ぶので軽く)
-  const rough = BOSS.LENGTH / 2 + (radius || 0) + BOSS.RAM_MARGIN;
+  // まず大まかに:艦を包む球より遠ければ、細かい判定はしない(毎コマ呼ぶので軽く)
+  const rough = boss.radius + (radius || 0) + BOSS.RAM_MARGIN;
   if (boss.group.position.distanceToSquared(point) > rough * rough) return false;
 
-  boss.group.updateMatrixWorld(true);
-  const local = boss.group.worldToLocal(point.clone());
-  return bossPointInsideHull(local, (radius || 0) + BOSS.RAM_MARGIN);
+  return bossPointInsideBody(bossToLocal(point), (radius || 0) + BOSS.RAM_MARGIN);
 }
 
 
@@ -1126,24 +1309,24 @@ function bossMissileHit(point, damage, fuse) {
   if (!boss || bossState !== 'active') return null;
 
   const f = fuse || 0;
-  const rough = BOSS.LENGTH / 2 + f + 12;
+  const rough = boss.radius + f + BOSS.VENT.RIM_RADIUS;
   if (boss.group.position.distanceToSquared(point) > rough * rough) return null;
 
-  boss.group.updateMatrixWorld(true);
+  const local = bossToLocal(point);
 
   // --- 1. 排熱口 ---
   // 近接信管ぶんだけ甘くする。ロックして撃った弾が縁で滑るのは気持ちが悪い。
-  for (const vent of boss.vents) {
-    if (!vent.alive) continue;
-    if (vent.mark.position.distanceTo(point) > BOSS.VENT.HIT_RADIUS + f) continue;
-    if (!vent.open) return 'armor';       // 閉じていれば、ただの分厚い蓋
-    damageBossVent(vent, point, damage);
-    return 'vent';
+  const vent = bossVentAt(local, f);
+  if (vent) {
+    if (vent.hitCore && vent.vent.alive && vent.vent.open) {
+      damageBossVent(vent.vent, point, damage);
+      return 'vent';
+    }
+    return 'armor';       // 閉じた蓋・縁の金属・潰したあとの残骸
   }
 
   // --- 2. 艦体 ---
-  const local = boss.group.worldToLocal(point.clone());
-  if (bossPointInsideHull(local, f * 0.5)) return 'armor';
+  if (bossPointInsideBody(local, f * 0.5)) return 'armor';
 
   return null;
 }
@@ -1206,7 +1389,8 @@ function bossVentsLeft() {
 // 威力は中心からの距離で落ちる ― 艦体に押しつけるほど効く。
 function bossSplashDamage(center, radius, damage) {
   if (!boss || bossState !== 'active') return false;
-  boss.group.updateMatrixWorld(true);
+  // 排熱口の世界座標(mark)は updateBossVents が毎コマ書き写しているので、
+  // ここで行列を作り直す必要はない。
   let hit = false;
   for (const vent of boss.vents) {
     if (!vent.alive || !vent.open) continue;
