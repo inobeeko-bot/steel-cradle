@@ -5182,6 +5182,59 @@ const COLLIDE = {
   SHAKE:         1.4,    // 衝突時の画面の揺れ
 };
 
+// ===================================================================
+// 近接警告 ― 「あとどれくらいでぶつかるか」
+//
+// コックピット視点では距離感がまるでつかめない。
+// 三人称なら自機と相手の間隔が見えるが、コックピットには自機が映らないうえ、
+// 全長210の戦艦は遠くにいても近くにいても「画面いっぱい」にしか見えない。
+// 艦体に触れたら即死なので、これは知らせないと理不尽になる。
+//
+// 返す値:{ level, dist, deadly }
+//   level  … 0(安全)〜 1(接触寸前)。警告の色と点滅の速さに使う
+//   dist   … 相手の表面までの距離
+//   deadly … 触れたら即死か(戦艦)。色を分けるのに使う
+// ===================================================================
+const PROXIMITY = {
+  // 敵機:ぶつかるとシールドが飛んでHULLが1減る。近くまで来てから知らせる
+  ENEMY_DIST: 30,
+  // 戦艦:触れたら即死。しかも巨大で近づいていることに気づきにくいので、
+  // ずっと手前から知らせる
+  BOSS_DIST:  80,
+};
+
+function proximityWarning() {
+  if (!sceneReady) return null;
+
+  let best = null;   // いちばん切迫しているもの
+
+  // --- 戦艦 ---
+  // 表面までの距離を boss.js に出してもらう(楔形+22部品なので式では解けない)
+  if (typeof bossSurfaceDistance === 'function') {
+    const d = bossSurfaceDistance(playerShip.position, PROXIMITY.BOSS_DIST);
+    if (d < PROXIMITY.BOSS_DIST) {
+      best = {
+        level: 1 - d / PROXIMITY.BOSS_DIST,
+        dist: d,
+        deadly: true,
+      };
+    }
+  }
+
+  // --- 敵機 ---
+  // ぶつかる距離(自機の半径+敵の半径)を引いて、表面どうしの間隔にする
+  const touch = COLLIDE.PLAYER_RADIUS + ENEMY.HIT_RADIUS;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const d = Math.max(e.group.position.distanceTo(playerShip.position) - touch, 0);
+    if (d >= PROXIMITY.ENEMY_DIST) continue;
+    const level = 1 - d / PROXIMITY.ENEMY_DIST;
+    if (!best || level > best.level) best = { level: level, dist: d, deadly: false };
+  }
+
+  return best;
+}
+
 function updateCollisions() {
   // --- 自機 対 戦艦 ---
   //

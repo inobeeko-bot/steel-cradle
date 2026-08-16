@@ -397,6 +397,43 @@
       font-variant-numeric: tabular-nums;
     }
 
+    /* ---- 近接警告 ----
+       画面のふち全体を光らせる。コックピットでは正面を見ているので、
+       文字より「視界の縁が光る」ほうが気づける。
+       色と明るさは JS が毎コマ書き換える(黄→橙→赤)。 */
+    .proximity {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      z-index: 60;
+    }
+    .proximity.on { display: block; }
+    /* ふちの光。box-shadow の内側への影はグラデーションになるので、
+       枠を描くより「滲み込んでくる」感じが出る */
+    .proximity::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      box-shadow: inset 0 0 var(--prox-spread, 60px) var(--prox-color, #ffcf6a);
+      opacity: var(--prox-alpha, 0);
+    }
+    .prox-label {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      top: 96px;
+      font-size: 12px;
+      letter-spacing: 0.28em;
+      color: var(--prox-color, #ffcf6a);
+      text-shadow: 0 0 10px currentColor;
+      opacity: var(--prox-alpha, 0);
+      white-space: nowrap;
+    }
+    .prox-label b { font-variant-numeric: tabular-nums; }
+    /* コックピットでは後方ミラーが上中央にあるので、その下へ逃がす */
+    .hud.cockpit .prox-label { top: 150px; }
+
     /* ---- 戦闘ログ(HIT / KILL)----
        左下は仕様書9.6でレーダースコープの位置なので、ログは右下へ移した。
        (右下は将来の兵装パネルの位置。そちらの実装時に再配置する) */
@@ -2035,6 +2072,12 @@
         <div><span>BURST</span><b id="dp-burst">12</b></div>
         <div><span>T-HEAT</span><b id="dp-theat">0</b></div>
       </div>
+    </div>
+
+    <!-- 近接警告。画面のふちが光り、近いほど黄→赤へ変わる。
+         コックピットでは距離感がつかめないので、視界の隅で分かる形にしてある -->
+    <div class="proximity" id="proximity">
+      <div class="prox-label"><span id="prox-text">PROXIMITY</span> <b id="prox-dist">0</b></div>
     </div>
 
     <!-- 戦闘ログ(HIT / KILL) -->

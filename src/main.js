@@ -551,6 +551,9 @@ const bombRowEl     = document.getElementById('wp-bomb-row');
 const empBadgeEl    = document.getElementById('emp-badge');
 const salvageBadgeEl = document.getElementById('salvage-badge');
 const salvageBuffEl  = document.getElementById('salvage-buff');
+const proximityEl   = document.getElementById('proximity');
+const proxTextEl    = document.getElementById('prox-text');
+const proxDistEl    = document.getElementById('prox-dist');
 
 const timerElMission = document.getElementById('mission-timer');
 const resultPanel    = document.getElementById('result-panel');
@@ -1975,6 +1978,74 @@ function renderWeapon() {
 }
 
 // ===================================================================
+// 近接警告 ― ぶつかりそうなものが近づくと、画面のふちが光る
+//
+// コックピット視点は距離感がつかめない。自機が映らないうえ、
+// 全長210の戦艦は遠くにいても近くにいても画面いっぱいにしか見えない。
+// 艦体に触れたら即死なので、知らせないと理不尽になる。
+//
+// 見せ方:
+//   ・遠い … 黄色でゆっくり点滅
+//   ・近い … 赤で速く点滅し、ふちの光が濃く・広くなる
+// 色相を 48(黄)から 0(赤)へ動かすだけで「黄→橙→赤」が出る。
+// 段階で切り替えるのではなく連続で変えているので、
+// 「じわじわ赤くなってきた」が距離そのものの手がかりになる。
+// ===================================================================
+const PROX_LOOK = {
+  HUE_FAR:    48,    // 遠いときの色相(黄)
+  HUE_NEAR:    0,    // 近いときの色相(赤)
+  BLINK_FAR: 1.6,    // 遠いときの点滅の速さ(往復/秒)
+  BLINK_NEAR: 7.5,   // 近いときの点滅の速さ
+  ALPHA_MIN: 0.30,   // 点滅のいちばん暗いところ
+  ALPHA_MAX: 0.95,
+  SPREAD_FAR:  40,   // ふちの光の広がり(px)
+  SPREAD_NEAR: 190,
+};
+
+let proxBlinkPhase = 0;   // 点滅の位相。速さを変えても飛ばないよう自前で進める
+
+function renderProximity(dt) {
+  if (!proximityEl) return;
+
+  const w = (typeof proximityWarning === 'function' && missionState === 'active')
+    ? proximityWarning() : null;
+
+  if (!w) {
+    proximityEl.classList.remove('on');
+    proxBlinkPhase = 0;
+    return;
+  }
+  proximityEl.classList.add('on');
+
+  // level 0〜1 をそのまま「切迫度」として使う。
+  // 二乗しているのは、近づいた終盤で急に強まるようにするため ―
+  // 線形だと、まだ余裕がある距離から画面が真っ赤になって鬱陶しい。
+  const k = w.level * w.level;
+
+  // 点滅。近いほど速い
+  const hz = PROX_LOOK.BLINK_FAR + (PROX_LOOK.BLINK_NEAR - PROX_LOOK.BLINK_FAR) * k;
+  proxBlinkPhase += dt * hz * Math.PI * 2;
+  const blink = 0.5 + 0.5 * Math.sin(proxBlinkPhase);
+
+  // 色。黄 → 赤へ連続で動かす
+  const hue = PROX_LOOK.HUE_FAR + (PROX_LOOK.HUE_NEAR - PROX_LOOK.HUE_FAR) * k;
+  const color = 'hsl(' + hue.toFixed(0) + ', 100%, ' + (58 - k * 8).toFixed(0) + '%)';
+
+  const alpha = (PROX_LOOK.ALPHA_MIN
+    + (PROX_LOOK.ALPHA_MAX - PROX_LOOK.ALPHA_MIN) * blink) * (0.35 + 0.65 * k);
+  const spread = PROX_LOOK.SPREAD_FAR
+    + (PROX_LOOK.SPREAD_NEAR - PROX_LOOK.SPREAD_FAR) * k;
+
+  proximityEl.style.setProperty('--prox-color', color);
+  proximityEl.style.setProperty('--prox-alpha', alpha.toFixed(3));
+  proximityEl.style.setProperty('--prox-spread', spread.toFixed(0) + 'px');
+
+  // 触れたら即死のもの(戦艦)は、文字でもそう言う
+  proxTextEl.textContent = w.deadly ? 'COLLISION − FATAL' : 'PROXIMITY';
+  proxDistEl.textContent = Math.round(w.dist);
+}
+
+// ===================================================================
 // 残骸から機材を回収した ― salvage.js から呼ばれる
 //
 // 3D側は「拾った」ことだけを知らせ、効果・音・ログは main.js が決める。
@@ -2762,6 +2833,7 @@ function tickBody(now) {
   renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
   renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
   renderLockWarn(dt);  // 被ロック警報(視界の縁が脈打つ)
+  renderProximity(dt); // 近接警告(ぶつかりそうなものが近いと、ふちが黄→赤に光る)
   renderDataPanel();   // 三人称のデータパネル
   renderBossPanel();   // 戦艦の弱点パネル(開閉が毎コマ変わるので毎コマ描く)
   renderConsoleSway(); // 視点に応じてHTMLの計器盤を出し入れする
