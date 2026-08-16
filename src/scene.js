@@ -1174,7 +1174,10 @@ function buildScene() {
   // --- カメラ(コックピットの目)---
   // PerspectiveCamera(視野角, 画面の縦横比, 映る最短距離, 映る最長距離)
   // 視野角70度は「窓から覗いている」感じに近い値
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 3000);
+  // 描画限界(最後の数字)は 3000 → 4600 に伸ばしてある。
+  // 背景の巨大コロニー(colony.js)は自機から2800の距離に半径1150で置くので、
+  // いちばん遠い縁が4115。3000のままだと、そこだけ切り取られて消える。
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 4600);
   camera.position.set(0, 0, 0);   // 自機＝原点。カメラは初期状態で -Z方向(奥)を向いている
   // 回転の適用順。'YXZ' = 先に左右(Y)、次に上下(X)。
   // この順にしないと、上を向いた状態で左右に振ったときに首がねじれてしまう。
@@ -1182,7 +1185,9 @@ function buildScene() {
 
   // --- 後方確認ミラー用のカメラ ---
   // 本カメラと同じ空間を、後ろ向きに、もう一度描くために使う
-  mirrorCamera = new THREE.PerspectiveCamera(MIRROR.FOV, 2, 0.1, 3000);
+  // 本カメラと描画限界を揃える。ここだけ 3000 のままだと、
+  // 後方ミラーの中でだけコロニーが消える
+  mirrorCamera = new THREE.PerspectiveCamera(MIRROR.FOV, 2, 0.1, 4600);
 
   // --- 光 ---
   // フラットシェーディング(面ごとに単色)を活かすため、光は2つだけの単純構成にする。
@@ -1200,6 +1205,11 @@ function buildScene() {
 
   starsNear = createNearStars();
   scene.add(starsNear);
+
+  // --- 背景の巨大コロニー(colony.js)---
+  // 星より外、描画限界より内に置く。星と同じく自機について来るので、
+  // どこまで飛んでも空に浮かんだままになる
+  if (typeof createColony === 'function') createColony();
 
   // --- 流れる宇宙塵 ---
   dust = createDustField();
@@ -2270,6 +2280,12 @@ function updateFlight(dt, enginePercent) {
   updateDust();
 }
 
+// コロニーは「星と同じ層」なので、視点の更新と同じ場所で動かす。
+// 中で自機について来させ、ゆっくり回している(colony.js)
+function updateColonyIfPresent(dt) {
+  if (typeof updateColony === 'function') updateColony(dt);
+}
+
 // ドリフトの入切。main.js が Shift の押し具合を見て毎コマ呼ぶ
 // ===================================================================
 // 回避バースト:機首方向へ瞬間的に速度を足す
@@ -2394,6 +2410,8 @@ function updateGalleryView(dt, which) {
 
   // 星空は自機について来る作りなので、原点へ寄せておく
   stars.position.set(0, 0, 0);
+  // コロニーも同じ層。ここで置き直さないと、直前の戦闘での位置に取り残される
+  updateColonyIfPresent(0);
 
   renderer.render(scene, camera);
 }
@@ -5461,6 +5479,10 @@ function updateScene(dt, elapsed) {
   // 戦闘停止中も明滅と寿命だけは進める ― 止めると、
   // ミッション終了の瞬間に画面が固まって見える。
   if (typeof updateSalvage === 'function') updateSalvage(dt);
+
+  // 背景のコロニー(colony.js)。自機について来させ、ゆっくり回す。
+  // 戦闘停止中も回し続ける ― リザルト画面の背景でも生きている街に見せたい
+  updateColonyIfPresent(dt);
 
   // 敵の速度は、戦闘が止まっていても測っておく。
   // 偏差照準がこれを使うので、未計測だと印が出なくなる。
