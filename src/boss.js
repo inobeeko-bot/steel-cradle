@@ -82,19 +82,48 @@ const BOSS = {
   // --- 弱点(排熱口)-------------------------------------------------
   VENT: {
     COUNT_HP:    5,     // ベント1つを潰すのに必要なダメージ量
-    RADIUS:    4.6,     // 光る芯の半径(全長210に対して4.6 = 極小)
-    // ダメージが通る半径。光る芯(4.6)より少しだけ甘くしてある。
+    RADIUS:    4.6,     // 井戸(穴)の半径(全長210に対して4.6 = 極小)
+    // ダメージが通る半径。井戸の口(4.6)より少しだけ甘くしてある。
     HIT_RADIUS:6.2,
-    // 排熱口の装置そのものの外径。受け皿と金属の縁を含めた「見えている円」。
-    // buildBossVent が縁を RADIUS×1.62 まで描くので、その値と揃えること。
+
+    // --- 排熱口の立体としての寸法 -----------------------------------
+    // 以前は「艦の表面に貼った厚みゼロの円板」だった。
+    // それだと面を横切る弾しか当たらず、真横を通る弾はいくら近くても
+    // すり抜ける ― 上面の排熱口は「上から降りてきて撃つ」以外に手が無かった。
     //
-    // ここが要る理由:排熱口は艦体から浮いているので、
-    // 縁だけを覆わずにおくと、そこを撃った弾が艦を素通りしてしまう。
-    // 芯に当たればダメージ、縁に当たれば弾かれる ― 見えたとおりに当たる。
-    RIM_RADIUS: 7.5,
-    CYCLE:     7.4,     // 開閉の周期(秒)
-    WARN_SEC:  1.0,     // 開く前に光り始める時間(予告)
-    OPEN_SEC:  1.7,     // 開いている時間 ← ここが勝負どころ
+    // 実際の排熱口は、艦体に穿たれた井戸(縦穴)である。
+    // 縦穴として作れば、見た目も判定も「穴に撃ち込む」ことになり、
+    // 斜めからでも口に入りさえすれば通る。
+    WELL_DEPTH:  9.0,   // 艦体へ沈み込んでいる深さ
+    RIM_RADIUS:  8.5,   // まわりの装甲リングの外径
+    RIM_H:       2.4,   // 装甲リングの高さ(艦体表面からの出っ張り)
+
+    // 口のどれだけ外側までを「穴に入った」とみなすか。
+    //
+    // ここが厳しさを決めるいちばん大事な数字。0にすると、
+    // 表面すれすれを平行に飛ぶ弾が全部すり抜ける。
+    // 井戸の口の上に、この高さぶんの見えない筒があると思えばよい。
+    // 羽根が開ききって立ち上がった高さ(6.4)より大きくしてある ―
+    // 見えている羽根の先が判定の外に出ていると、そこを撃った弾がすり抜ける。
+    MOUTH_OUT:   7.0,
+
+    PETALS:        6,   // シャッターの羽根の枚数
+    PETAL_LEN:   6.4,   // 羽根の長さ。閉じると中心を越えて噛み合う
+    PETAL_LIFT: 1.42,   // 開ききったときに何ラジアン起き上がるか(約81度)
+    // --- 開閉の周期(秒)-------------------------------------------
+    // 【なぜ長くしたか】
+    // 予告1.0 + 開放1.7 = 窓2.7秒では、ミサイルが仕様上まったく当たらなかった。
+    // 戦艦は距離260を保ち、ミサイルの弾速は95 ― 飛翔だけで2.74秒かかる。
+    // ロック(センサー配分で0.42〜1.55秒)を足すと、どの配分でも
+    // 窓が閉じたあとに着弾することになる。
+    //   センサー100%でも 0.42 + 2.74 = 3.16秒 > 2.7秒
+    // 機関砲で狙うにも1.7秒は短すぎた。
+    //
+    // 窓を5.1秒(予告1.5 + 開放3.6)にすると、
+    // どの配分でも「予告で捉える → 開いてから着弾」が成立する。
+    CYCLE:     8.6,
+    WARN_SEC:  1.5,     // 開く前に光り始める時間(予告。ここからロックできる)
+    OPEN_SEC:  3.6,     // 開いている時間 ← ここが勝負どころ
     // 4つの位置。face = 艦体のどの面か、t = 艦首0.0 〜 艦尾1.0
     // 位置は艦体の傾斜から自動で出すので、艦の寸法を変えても面から浮かない。
     LIST: [
@@ -302,12 +331,21 @@ function buildBossHull() {
     color: BOSS.DARK_COLOR, flatShading: true,
   });
   bossHullMats.push(trenchMat);
+  // 上面の排熱口(背部)が座る場所には桟を置かない。
+  // 排熱口は艦体に穿たれた井戸で、装甲リングが半径8.5まで張り出すので、
+  // そこへ桟が食い込むと口が塞がって見える。
+  const dorsal = BOSS.VENT.LIST.find((s) => s.face === 'top');
+  const dorsalZ = dorsal ? bossZAt(dorsal.t) : Infinity;
+
   for (let i = 0; i < 7; i++) {
     const t = 0.30 + i * 0.095;
+    const zHere = bossZAt(t);
+    if (Math.abs(zHere - dorsalZ) < BOSS.VENT.RIM_RADIUS + 3) continue;
+
     const cs = bossCrossSection(t);
     const w = cs.halfW * BOSS_TOP_RATIO * 1.5;
     const bar = new THREE.Mesh(new THREE.BoxGeometry(w, 1.6, 3.2), trenchMat);
-    bar.position.set(0, cs.halfH + 0.4, bossZAt(t));
+    bar.position.set(0, cs.halfH + 0.4, zHere);
     g.add(bar);
     addBossPart(bar, w, 1.6, 3.2);
   }
@@ -453,18 +491,20 @@ function buildBossVent(spec) {
   let pos, rot;
   const topW  = cs.halfW * 0.72;
   const sideX = (cs.halfW + topW) / 2;   // 高さ0での舷側の面
+  // ※ 原点は「艦体の表面ちょうど」に置く。
+  //   井戸はそこから内側へ沈み、装甲リングは外側へ出っ張る ―
+  //   表面を基準にしないと、穴が浮いたり埋まったりする。
   if (spec.face === 'top') {
-    // 上面には溝の桟(高さ1.6)が並んでいる。そこへめり込まないよう少し浮かせる
-    pos = new THREE.Vector3(0, cs.halfH + 1.8, z);
+    pos = new THREE.Vector3(0, cs.halfH, z);
     rot = new THREE.Euler(-Math.PI / 2, 0, 0);
   } else if (spec.face === 'bottom') {
-    pos = new THREE.Vector3(0, -cs.halfH - 1.6, z);
+    pos = new THREE.Vector3(0, -cs.halfH, z);
     rot = new THREE.Euler(Math.PI / 2, 0, 0);
   } else if (spec.face === 'left') {
-    pos = new THREE.Vector3(-sideX - 5.0, 0, z);
+    pos = new THREE.Vector3(-sideX, 0, z);
     rot = new THREE.Euler(0, -Math.PI / 2, 0);
   } else {
-    pos = new THREE.Vector3(sideX + 5.0, 0, z);
+    pos = new THREE.Vector3(sideX, 0, z);
     rot = new THREE.Euler(0, Math.PI / 2, 0);
   }
 
@@ -477,36 +517,103 @@ function buildBossVent(spec) {
   // 艦体に対して動かないので、ここで1回作れば以後ずっと使える。
   g.updateMatrix();
 
-  const R = BOSS.VENT.RADIUS;
+  const C = BOSS.VENT;
+  const R = C.RADIUS;
 
-  // 1. 受け皿(閉じている状態の見た目)
-  const dishMat = new THREE.MeshBasicMaterial({ color: 0x20262c });
-  const dish = new THREE.Mesh(new THREE.CircleGeometry(R * 1.35, 10), dishMat);
-  g.add(dish);
-  // 縁の金属リング
-  const rimMat = new THREE.MeshBasicMaterial({ color: 0x9aa6b0 });
-  const rim = new THREE.Mesh(new THREE.RingGeometry(R * 1.35, R * 1.62, 10), rimMat);
-  rim.position.z = 0.05;
-  g.add(rim);
+  // === 1. 井戸(艦体に穿たれた縦穴)=================================
+  // 内側の壁が見えるよう BackSide で描く。これが「穴」の正体で、
+  // 当たり判定もこの筒に合わせてある ― 見えている穴に撃ち込めば通る。
+  const wellMat = new THREE.MeshLambertMaterial({
+    color: 0x171c21, flatShading: true, side: THREE.BackSide,
+  });
+  const well = new THREE.Mesh(
+    new THREE.CylinderGeometry(R * 1.28, R * 1.05, C.WELL_DEPTH, 12, 1, true),
+    wellMat);
+  well.rotation.x = Math.PI / 2;            // 筒の軸を法線(z)に合わせる
+  well.position.z = -C.WELL_DEPTH / 2;      // 表面から内側へ沈める
+  g.add(well);
 
-  // 2. 光る芯。開いているときだけ明るい
+  // === 2. 底の光 ====================================================
+  // 開いているとき、艦の内側に溜まった熱がここから見える
   const coreMat = new THREE.MeshBasicMaterial({
     color: 0x203040, transparent: true, opacity: 1,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
-  const core = new THREE.Mesh(new THREE.CircleGeometry(R, 10), coreMat);
-  core.position.z = 0.12;
+  const core = new THREE.Mesh(new THREE.CircleGeometry(R * 1.05, 12), coreMat);
+  core.position.z = -C.WELL_DEPTH + 0.4;
   g.add(core);
 
-  // 3. ぼんやりした光。scene.js のフレア用テクスチャを借りる
+  // === 3. 装甲リング(口を囲む出っ張り)=============================
+  // 低ポリのトーラスを1つ。分割を粗くしてあるので面が数えられ、
+  // 遠目にも「機械の口」に見える。
+  //
+  // ※ 箱を12個並べて輪にする作りも試したが、箱の角が半径8.70まで届き、
+  //   判定の外径8.50をはみ出した ― 見えているのに当たらない角ができる。
+  //   トーラスなら外径が「主半径+管半径」で決まるので、はみ出しようがない。
+  const rimMat = new THREE.MeshLambertMaterial({
+    color: 0x9aa6b0, flatShading: true,
+  });
+  const rimTube = (C.RIM_RADIUS - R * 1.28) / 2;
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(C.RIM_RADIUS - rimTube, rimTube, 4, 12), rimMat);
+  rim.position.z = rimTube * 0.35;
+  g.add(rim);
+  rim.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(rim.geometry),
+    new THREE.LineBasicMaterial({ color: 0xd8e6f0 })));
+
+  // === 4. 虹彩シャッター(開閉する羽根)=============================
+  // ここが「ハッチ」そのもの。閉じているときは羽根が中央で噛み合い、
+  // 開くと外へ引っ込んで穴が姿を現す。
+  //
+  // 色や明るさを変えるだけでは「開いた」ことが伝わらなかったので、
+  // 実際に動く板にした。開いた瞬間が目で分かることが、この相手の肝。
+  const petalMat = new THREE.MeshLambertMaterial({
+    color: 0x7c8792, flatShading: true, side: THREE.DoubleSide,
+  });
+  // 羽根は「口の縁に蝶番で留まった扉」として作る。
+  // 閉じているときは口の上に寝て中心で噛み合い、開くと縁を支点に立ち上がる。
+  //
+  // 外へ滑らせて逃がす作りも試したが、それだと開いたとき羽根が
+  // 装甲リングの外まではみ出し、見えているのに当たらない部分ができる。
+  // 縁で立てれば、羽根は最後まで口の真上に収まったままになる。
+  const petals = [];
+  const hinge = C.HIT_RADIUS;          // 蝶番の位置(口の縁)
+  for (let i = 0; i < C.PETALS; i++) {
+    const a = (i / C.PETALS) * Math.PI * 2;
+
+    // 腕:口のまわりに等間隔で置く「向き」だけを持つ入れ物
+    const arm = new THREE.Group();
+    arm.rotation.z = a;
+    arm.position.z = 0.35;
+    g.add(arm);
+
+    // 蝶番:ここを回すと扉が起き上がる
+    const pivot = new THREE.Group();
+    pivot.position.x = hinge;
+    arm.add(pivot);
+
+    // 扉そのもの。蝶番から内側(−x)へ伸びる
+    const petal = new THREE.Mesh(
+      new THREE.BoxGeometry(C.PETAL_LEN, R * 1.15, 0.5), petalMat);
+    petal.position.x = -C.PETAL_LEN / 2;
+    pivot.add(petal);
+
+    petals.push(pivot);   // 動かすのは蝶番のほう
+  }
+
+  // === 5. 滲む光 ====================================================
+  // 遠くからでも位置が分かるように。scene.js のフレア用テクスチャを借りる
   if (!flareGlowTex) flareGlowTex = makeFlareGlowTexture();
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: flareGlowTex, color: 0x8ff0ff, transparent: true, opacity: 0,
     blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   halo.scale.setScalar(R * 5);
-  halo.position.z = 0.4;
+  halo.position.z = 0.8;
   g.add(halo);
+
+  const dishMat = wellMat;   // 破壊時に色を変える先(井戸の内壁)
 
   const vent = {
     key: spec.key,
@@ -515,6 +622,9 @@ function buildBossVent(spec) {
     coreMat: coreMat,
     rimMat: rimMat,
     dishMat: dishMat,
+    petalMat: petalMat,
+    petals: petals,      // 虹彩シャッターの羽根。開閉で位置を動かす
+    petalOpen: 0,        // 0=閉じきり 1=開ききり。なめらかに寄せる
     halo: halo,
     hp: BOSS.VENT.COUNT_HP,
     alive: true,
@@ -887,7 +997,28 @@ function updateBossVents(dt) {
     vent.target.alive = lockable;
     // シーカーが見る熱量。開いてからが本番なので、予告中は控えめにしておく
     vent.target.heat = vent.open ? BOSS.VENT.HEAT : (lockable ? BOSS.VENT.HEAT * 0.25 : 0);
+
+    // --- 虹彩シャッターを動かす ---
+    // 色だけ変えても「開いた」ことは伝わらない。羽根を実際に引かせる。
+    // 予告中は少しだけ緩む(0.25)ようにして、開く前触れを形でも見せる。
+    const want = vent.open ? 1 : (vent.warn ? 0.25 : 0);
+    // 一気に切り替えず寄せる。機械の蓋が動く感じは、この間(ま)で決まる
+    vent.petalOpen += (want - vent.petalOpen) * Math.min(dt * 7.5, 1);
+    setVentPetals(vent, vent.petalOpen);
   }
+}
+
+// 虹彩シャッターの羽根を、開き具合(0=閉じきり 1=開ききり)に合わせて置く。
+//
+// 羽根は「腕」の先に付いていて、腕は口のまわりに等間隔で回してある。
+// 羽根を腕に沿って外へ滑らせると、中央が空いていく ―
+// 実物の虹彩絞りと同じ動き方になる。
+function setVentPetals(vent, open) {
+  if (!vent.petals) return;
+  // 蝶番を回すだけ。0 で寝て口を塞ぎ、PETAL_LIFT で立って口が開く。
+  // Y軸まわりに負の向きで回すと、内側の端が艦の外(+z)へ持ち上がる
+  const lift = -open * BOSS.VENT.PETAL_LIFT;
+  for (const pivot of vent.petals) pivot.rotation.y = lift;
 }
 
 
@@ -1312,54 +1443,71 @@ function bossSegmentInsideBody(from, to) {
 // 縁まで見ておかないと、排熱口は艦体から浮いているので
 // そこを撃った弾が艦を素通りしてしまう。
 //
-// 【球ではなく円板で見る理由】
-// 排熱口は艦の表面に貼られた平らな円板で、厚みはほぼ無い。
-// これを半径7.5の球で判定していたので、円板の真上7.5の
-// 何も無い空間を通った弾まで当たっていた ―
-// 「超狭い弱点を、開いた瞬間に狙う」はずが、見た目よりずっと当たりやすかった。
+// 【円板ではなく「井戸(縦穴)」で見る理由】
 //
-// 排熱口から見た座標に直すと、円板は必ず XY 平面に寝ているので、
-//   面内の半径 = √(x² + y²)   … 円板からどれだけ横にずれているか
-//   面からの浮き = |z|          … 円板からどれだけ浮いているか
-// の2つを別々に見られる。これが「見えているとおり」の判定になる。
+// はじめは半径7.5の球で見ていた。穴の真上7.5の何も無い空間を通った弾まで
+// 当たるので、「超狭い弱点」のはずが見た目よりずっと当たりやすかった。
+//
+// そこで厚みゼロの円板にしたら、今度は逆に厳しくなりすぎた。
+// 面を横切る弾しか当たらないので、上面の排熱口は
+// 「真上から降りてきて撃つ」以外に手が無くなる ―
+// 艦の真横を平行に飛ぶ弾は、口のすぐ上を通ってもすり抜けてしまう。
+//
+// 正しい形はどちらでもなく「筒」だった。
+// 排熱口は艦体に穿たれた井戸で、見た目もそう作ってある(buildBossVent)。
+// 筒として判定すれば、
+//   ・斜めからでも、口に入りさえすれば通る
+//   ・口から外れていれば、どんなに近くても通らない
+// という、見たとおりの当たり方になる。
+//
+// 排熱口から見た座標では、筒の軸は必ず z。だから
+//   面内の半径 = √(x² + y²)   … 口の中心からどれだけ横にずれているか
+//   深さ       = z            … + が艦の外、− が井戸の底
+// の2つで読める。
 //
 // from / to は艦から見た座標で、弾が1コマで通った線分の両端。
-// to だけを見ると、1コマ1.5跳ぶ弾が薄い円板を飛び越してしまう(トンネリング)ので、
-// 線分が円板の面を横切った点で判定する。
+// 1コマで1.5跳ぶので、終点だけ見ると細い筒を跳び越す。線分を刻んで確かめる。
 // margin は近接信管ぶんの甘さ(ミサイル用)。見つからなければ null。
 // ===================================================================
-const _discFrom = new THREE.Vector3();
-const _discTo   = new THREE.Vector3();
-const _discAt   = new THREE.Vector3();
+const _ventFrom = new THREE.Vector3();
+const _ventTo   = new THREE.Vector3();
+const _ventAt   = new THREE.Vector3();
 
 function bossVentAt(from, to, margin) {
   const m = margin || 0;
-  // 円板の「厚み」。面ぴったり0だと、線分が面をまたがない限り当たらなくなる。
-  // 弾そのものの太さぶんは持たせておく。
-  const halfThick = 0.9 + m;
+  const C = BOSS.VENT;
 
   for (const v of boss.vents) {
-    _discFrom.copy(from).applyMatrix4(v.toDisc);
-    _discTo.copy(to).applyMatrix4(v.toDisc);
+    _ventFrom.copy(from).applyMatrix4(v.toDisc);
+    _ventTo.copy(to).applyMatrix4(v.toDisc);
 
-    // --- 線分のうち、円板の面にいちばん近いところを選ぶ ---
-    let p = _discAt.copy(_discTo);
-    const dz = _discTo.z - _discFrom.z;
-    if (Math.abs(dz) > 1e-6) {
-      // 面(z=0)を横切っているなら、その交点で見る。
-      // これがトンネリング対策の本体 ― 通り抜けた弾もここで捕まる
-      const t = -_discFrom.z / dz;
-      if (t >= 0 && t <= 1) p.lerpVectors(_discFrom, _discTo, t);
+    // 線分を刻んで、どこかが筒に入っていないか見る。
+    // 刻み幅0.7は、いちばん薄い部品(装甲リングの高さ2.4)の半分より小さい
+    const span = _ventFrom.distanceTo(_ventTo);
+    const steps = Math.max(1, Math.ceil(span / 0.7));
+
+    for (let i = 0; i <= steps; i++) {
+      _ventAt.lerpVectors(_ventFrom, _ventTo, i / steps);
+      const r = Math.sqrt(_ventAt.x * _ventAt.x + _ventAt.y * _ventAt.y);
+      const z = _ventAt.z;
+
+      // --- 井戸の中(ここに入ればダメージが通る)---
+      // 上は口の外 MOUTH_OUT まで、下は井戸の底まで。
+      // 口の上に余裕を持たせてあるおかげで、
+      // 表面すれすれを平行に飛ぶ弾も拾える ― ここが厳しさを決めている
+      if (r <= C.HIT_RADIUS + m &&
+          z <= C.MOUTH_OUT + m && z >= -C.WELL_DEPTH - m) {
+        return { vent: v, hitCore: true };
+      }
+
+      // --- まわりの装甲リング(ただの金属。弾かれる)---
+      // 下限を −2 まで取ってあるのは、リングのトーラスが管半径ぶん
+      // 表面より少し沈んでいるため。見えている分は覆いきること
+      if (r <= C.RIM_RADIUS + m && r > C.HIT_RADIUS &&
+          z <= C.RIM_H + m && z >= -2 - m) {
+        return { vent: v, hitCore: false };
+      }
     }
-
-    // 面から浮きすぎているものは当たっていない
-    if (Math.abs(p.z) > halfThick) continue;
-
-    // 面内でどれだけ中心からずれているか
-    const r = Math.sqrt(p.x * p.x + p.y * p.y);
-    if (r > BOSS.VENT.RIM_RADIUS + m) continue;
-
-    return { vent: v, hitCore: r <= BOSS.VENT.HIT_RADIUS + m };
   }
   return null;
 }
@@ -1547,6 +1695,11 @@ function damageBossVent(vent, point, damage) {
   vent.coreMat.opacity = 1;
   vent.rimMat.color.setHex(0x3a2a22);
   vent.halo.material.opacity = 0;
+  // 虹彩シャッターは吹き飛んだ扱い。羽根を開いたまま焼けた色で固める ―
+  // 潰した排熱口が閉じた蓋のままだと、まだ生きているように見えてしまう
+  if (vent.petalMat) vent.petalMat.color.setHex(0x3a2a22);
+  setVentPetals(vent, 1);
+  vent.petalOpen = 1;
 
   const p = vent.group.getWorldPosition(new THREE.Vector3());
   spawnFlash(p, 44, 0xffffff, 0.3);
