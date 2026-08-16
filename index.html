@@ -988,6 +988,32 @@
       text-shadow: 0 0 11px rgba(255, 205, 100, 1);
     }
 
+    /* 戦艦。戦闘機3機と混ざらないよう、大きく・青白く・角を付ける。
+       ▲▼ の高さ記号は戦闘機と共通なので、読み方は変わらない。 */
+    .radar-blip.capital {
+      color: #9ff6ff;
+      font-size: 17px;
+      width: 19px; height: 19px;
+      margin: -9.5px 0 0 -9.5px;
+      line-height: 19px;
+      text-shadow: 0 0 12px rgba(159, 246, 255, 1);
+      z-index: 3;
+    }
+    /* 大きさを伝える四角い枠。戦闘機の輝点には無い */
+    .radar-blip.capital::after {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border: 1px solid rgba(159, 246, 255, 0.75);
+    }
+    /* 主砲チャージ中。撃たれる前に色で分かる */
+    .radar-blip.capital.hot {
+      color: #ff8b5a;
+      text-shadow: 0 0 14px rgba(255, 90, 60, 1);
+      animation: blipAlert 0.4s steps(2) infinite;
+    }
+    .radar-blip.capital.hot::after { border-color: #ff5a3c; }
+
     /* 接近してくるミサイル。白く光らせ、輪を付けて速く点滅させる。
        敵機の輝点と同じ ▲▼ を使うので、高さの読み方は同じまま。 */
     .radar-blip.missile {
@@ -1064,6 +1090,29 @@
     }
     .enemy-marker.hot span  { border-color: #ffcf6a; }
     .enemy-marker.hot .dist { color: #ffcf6a; }
+
+    /* ---- 戦艦のマーカー ----
+       戦闘機の枠と同じ形のまま、色と大きさだけ変える。
+       括弧を長くしてあるのは、枠が大きくなっても「四隅」に見えるようにするため。 */
+    .enemy-marker.capital span { width: 18px; height: 18px; border-color: #9ff6ff; }
+    .enemy-marker.capital .dist { color: #9ff6ff; }
+    /* 艦名と残る排熱口の数。枠の真上に出す */
+    .enemy-marker .tag {
+      position: absolute;
+      bottom: calc(100% + 3px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: auto; height: auto;
+      border: 0;
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      white-space: nowrap;
+      color: #9ff6ff;
+    }
+    /* 主砲チャージ中は枠ごと赤に振る。撃たれる前に気づけるように */
+    .enemy-marker.capital.hot span  { border-color: #ff5a3c; }
+    .enemy-marker.capital.hot .dist,
+    .enemy-marker.capital.hot .tag  { color: #ff8b5a; }
 
     /* ---- 照準(仕様書9.6「中央:キャノピー+HUD(照準…)」)---- */
     .crosshair {

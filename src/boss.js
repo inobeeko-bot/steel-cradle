@@ -557,10 +557,20 @@ function spawnBoss() {
   const built = buildBossHull();
   const group = built.group;
 
-  // 自機の正面、遠くに置く。向きは自機のほうを向ける。
+  // 自機の正面、遠くに置く。艦首(-Z)を自機のほうへ向ける。
+  //
+  // ※ ここで group.lookAt() を使ってはいけない。
+  //   three.js の Object3D.lookAt は、カメラと光源以外では内部で引数を入れ替える
+  //   (Matrix4.lookAt(目標, 位置) の順で呼ぶ)ので、素の Matrix4.lookAt とは
+  //   向きがちょうど逆になる ― つまり +Z が相手を向く。
+  //   このゲームは機首を -Z と決めているので、それでは真後ろを向いて出てくる。
+  //   実際そうなっていて、戦艦は後ろ向きに現れ、登場演出で自機から遠ざかり、
+  //   そのあと20秒近くかけてその場で回頭していた。
+  //   敵機(updateEnemyAI)と同じ Matrix4.lookAt(位置, 目標) に揃える。
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
   group.position.copy(playerShip.position).addScaledVector(forward, BOSS.SPAWN_DIST);
-  group.lookAt(playerShip.position);
+  group.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(
+    group.position, playerShip.position, new THREE.Vector3(0, 1, 0)));
 
   // 弱点を4つ取り付ける
   const vents = [];
@@ -903,6 +913,59 @@ function bossHeatSources() {
 function clearBossLocks() {
   if (!boss) return;
   for (const v of boss.vents) { v.target.alive = false; v.target.heat = 0; }
+}
+
+
+// ===================================================================
+// レーダーに映すための情報(main.js の renderRadar が使う)
+//
+// 戦艦は enemies の配列に入っていないので、戦闘機用の getContacts では
+// いつまでも映らない ― 画面いっぱいに見えているのにレーダーは空、という
+// 状態になっていた。ここで戦艦のぶんだけ別に作って渡す。
+//
+// 【索敵半径に縛らない理由】
+// 戦闘機は「冷えていれば見つからない」が成立する。全長3の機体だから。
+// 全長210・主機5基を焚いている艦にそれは通らない ―
+// 目で見えているものがレーダーに無いほうが、よほど嘘になる。
+// 圏外なら輝点はスコープの縁に貼り付く(placeBlip が丸めてくれる)ので、
+// 「遠くにいる」ことは距離の数字と縁の位置で伝わる。
+//
+// 戻り値は getContacts の1件ぶんと同じ形。main.js は同じ描画処理を使える。
+// 出ていなければ null。
+// ===================================================================
+const _contactInv  = new THREE.Quaternion();   // 使い回し(毎コマ2回呼ばれる)
+const _contactTo   = new THREE.Vector3();
+const _contactNdc  = new THREE.Vector3();
+const _contactView = new THREE.Vector3();   // 前後の判定用。ndc と兼用しないこと
+
+function bossContact() {
+  if (!boss || !bossOnField() || !boss.group.visible) return null;
+
+  // 自機の向きの「逆回転」。これを掛けると世界の座標が
+  // 「自機から見た前後左右」になる(機首が常に上のレーダーの要)
+  _contactInv.copy(playerShip.quaternion).invert();
+
+  _contactTo.subVectors(boss.group.position, playerShip.position);
+  const dist = _contactTo.length();
+  const local = _contactTo.applyQuaternion(_contactInv);
+
+  const ndc = _contactNdc.copy(boss.group.position).project(camera);
+  const inFront = camera.worldToLocal(_contactView.copy(boss.group.position)).z < 0;
+
+  return {
+    localX: local.x,
+    localY: local.y,
+    localZ: local.z,
+    dist: dist,
+    // 主砲をためている間は「熱い」扱いにする。輝点の色が変わるので、
+    // レーダーを見ているだけでも「今チャージしている」が分かる。
+    hot: (boss.beamState === 'charge' || boss.beamState === 'fire'),
+    ndcX: ndc.x,
+    ndcY: ndc.y,
+    inFront: inFront,
+    // 残っている排熱口の数。マーカーに出す
+    ventsLeft: bossVentsLeft(),
+  };
 }
 
 

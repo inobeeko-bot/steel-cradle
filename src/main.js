@@ -1262,6 +1262,14 @@ const radarBlips   = [];   // 敵の輝点
 const missileBlips = [];   // 接近ミサイルの輝点
 const enemyMarkers = [];   // 3D画面に重ねる敵マーカー
 
+// 戦艦の輝点とマーカー。戦闘機の枠を使い回さず、専用に1組だけ持つ。
+//
+// 使い回すと、戦闘機が落ちて配列が縮むたびに戦艦の割り当て先がずれ、
+// 表示が別の輝点に飛び移ってちらつく。1隻しか出ないのだから、
+// 専用の枠を1つ用意しておくのがいちばん素直で確実。
+let bossBlip   = null;
+let bossMarker = null;
+
 function setupRadar() {
   const count = (typeof enemyCount === 'function') ? enemyCount() : 0;
 
@@ -1272,6 +1280,17 @@ function setupRadar() {
     radarEl.appendChild(mb);
     missileBlips.push(mb);
   }
+
+  // 戦艦用(1隻ぶん)
+  bossBlip = document.createElement('div');
+  bossBlip.className = 'radar-blip capital';
+  radarEl.appendChild(bossBlip);
+
+  bossMarker = document.createElement('div');
+  bossMarker.className = 'enemy-marker capital';
+  bossMarker.innerHTML = '<span></span><span></span><span></span><span></span>' +
+                         '<span class="dist"></span><span class="tag"></span>';
+  markerLayer.appendChild(bossMarker);
 
   for (let i = 0; i < count; i++) {
     const blip = document.createElement('div');
@@ -1491,6 +1510,10 @@ function renderConsole3D(dt) {
 
     contacts: getContacts(sensorPct),
     inbound: missileContacts(sensorPct),
+    // 戦艦は enemies に入っていないので、contacts には含まれない。
+    // 索敵半径にも縛らないので、別の枠で渡す(いなければ null)。
+    capital: (typeof bossContact === 'function')
+      ? bossContact() : null,
     sensorRange: sensorRange(sensorPct),
     sensorPct: sensorPct,
     radarNoisy: isBroken('sensor') || empLeft > 0,
@@ -1635,6 +1658,8 @@ function renderRadar() {
     }
   }
 
+  renderBossBlip(range);
+
   // --- 接近しているミサイル ---
   // 敵機と同じ形の輝点だが、色と点滅で「これは弾ではなく脅威」と分かるようにする
   const inbound = missileContacts(sensorPct);
@@ -1646,6 +1671,49 @@ function renderRadar() {
     // フレアに引っかかったミサイルは、もう自機を狙っていないので落ち着いた色に
     mb.classList.toggle('decoyed', m.decoyed);
   }
+}
+
+// ===================================================================
+// 戦艦の輝点とマーカー
+//
+// 戦闘機とは別枠で描く。理由は2つ:
+//   1. 見分けがつかないと困る。戦闘機3機と戦艦1隻が同じ点では読めない
+//   2. 索敵半径に縛らない(boss.js の bossContact 参照)。
+//      全長210の艦が画面いっぱいに見えているのにレーダーが空、では嘘になる
+//
+// 圏外にいるあいだは輝点がスコープの縁に貼り付く(placeBlip が丸める)。
+// 「あの方角の、ずっと遠く」がそれで伝わる。
+// ===================================================================
+function renderBossBlip(range) {
+  if (!bossBlip) return;
+
+  const c = (typeof bossContact === 'function')
+    ? bossContact() : null;
+
+  if (!c) {
+    bossBlip.style.display = 'none';
+    bossMarker.style.display = 'none';
+    return;
+  }
+
+  placeBlip(bossBlip, c, range);
+  bossBlip.classList.toggle('hot', c.hot);   // 主砲チャージ中は色が変わる
+
+  if (!c.inFront) { bossMarker.style.display = 'none'; return; }
+
+  bossMarker.style.display = 'block';
+  bossMarker.style.left = ((c.ndcX * 0.5 + 0.5) * 100) + '%';
+  bossMarker.style.top  = ((-c.ndcY * 0.5 + 0.5) * 100) + '%';
+
+  // 枠は戦闘機よりずっと大きく。艦の大きさに合わせて距離で変える
+  const size = Math.max(70, Math.min(26000 / Math.max(c.dist, 1), 320));
+  bossMarker.style.width  = size + 'px';
+  bossMarker.style.height = size + 'px';
+
+  bossMarker.classList.toggle('hot', c.hot);
+  bossMarker.querySelector('.dist').textContent = Math.round(c.dist);
+  bossMarker.querySelector('.tag').textContent =
+    BOSS.NAME + '  VENT ' + c.ventsLeft + '/' + BOSS.VENT.LIST.length;
 }
 
 // レーダーに使う索敵半径の熱補正。ミサイルは噴射で燃えているぶん遠くから映る

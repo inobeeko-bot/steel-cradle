@@ -196,6 +196,24 @@ function drawRadar(g, cx, cy, r, s) {
   };
 
   for (const c of s.contacts) place(c, c.hot ? CONSOLE3D.AMBER : '#ff6a4d', 20);
+
+  // --- 戦艦 ---
+  // 戦闘機とは別に受け取る(索敵半径に縛らずに映すため)。
+  // 大きく青白い記号 + 四角い枠で、戦闘機の点と混ざらないようにする。
+  if (s.capital) {
+    const cap = s.capital;
+    const capColor = cap.hot ? '#ff8b5a' : '#9ff6ff';
+    place(cap, capColor, 30);
+    // 位置を place と同じやり方で出し直して、枠を重ねる
+    let nx = cap.localX / s.sensorRange;
+    let ny = cap.localZ / s.sensorRange;
+    const rr = Math.hypot(nx, ny);
+    if (rr > 0.94) { nx = (nx / rr) * 0.94; ny = (ny / rr) * 0.94; }
+    g.strokeStyle = capColor;
+    g.lineWidth = 2;
+    g.strokeRect(cx + nx * r - 13, cy + ny * r - 13, 26, 26);
+  }
+
   // 迫るミサイルは白く点滅させる
   const blink = (Math.sin(consoleTick * 14) > 0);
   for (const m of s.inbound) {
