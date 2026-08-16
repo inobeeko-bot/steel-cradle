@@ -804,15 +804,59 @@ const ENEMY_BOLT = {
   HIT_HALF:  { x: 2.1, y: 0.85, z: 1.6 },
 };
 
+// ===================================================================
+// 編隊(小隊)― 敵は3機1組で来る
+//
+// これまで敵は1機ずつ勝手に動いていた。3機いても3つの点でしかなく、
+// 「軍隊と戦っている」感じにならない。
+//
+// そこで3機を1組(小隊)にして、先頭の1機だけがAIで考え、
+// 残りの2機は「長機(ちょうき)から見た決まった位置」をひたすら守る。
+//   長機 ●          ← slot 0。今までどおりのAIで動く
+//   僚機 ● ●        ← slot 1 / 2。左右斜め後ろに付く = 三角形
+// 僚機は自分では進路を決めないので、3機の動きが自然にそろう。
+// 長機が落ちたら、残った機のうちいちばん若い番号が繰り上がって長機になる。
+//
+// ※ 数字の単位は「戦闘機の全幅が約6」の世界。
+//   SPREAD 12 なら翼と翼のあいだが6ほど空く ― 近すぎず、離れすぎず。
+const SQUAD = {
+  GROUPS:  3,     // 小隊の数
+  SIZE:    3,     // 1小隊の機数(3 = 三角形)
+
+  SPREAD: 12,     // 僚機が長機から左右に開く距離
+  BACK:   10,     // 後ろに下がる距離(これが三角形の奥行き)
+  DROP:    2.0,   // わずかに下げる。真横一直線より立体的に見える
+
+  // 定位置とのずれを詰める強さ。長機の速度にこれ×ずれを足して追う。
+  // 大きいほどきびきび付いてくるが、上げすぎると位置を行き過ぎて振動する。
+  CATCHUP: 1.9,
+  // 追いつくときに出せる速さの上限(そのタイプの回避速度の何倍まで)
+  MAX_SPEED_MULT: 1.5,
+};
+
 // --- 敵機の管理 -----------------------------------------------------
-// 常に3機を保つ(撃墜されるたびリスポーンして、常に交戦相手がいる状態を維持)。
-// 機体を作り直すと重いので、3機ぶんを最初に作って「生きている/死んでいる」を
+// 3機×3小隊 = 9機を常に保つ(撃墜されるたびリスポーンする)。
+// 機体を作り直すと重いので、9機ぶんを最初に作って「生きている/死んでいる」を
 // 切り替えて使い回す。
 //
 // ※ これが「同時に出てくる敵の数の上限」でもある。
-//   10分で10撃墜という難度はこの数で釣り合いを取ってあるので、
 //   増やすときは、戦艦が出るまでの撃墜数(BOSS.SPAWN_KILLS)も一緒に見直すこと。
-const ENEMY_COUNT = 3;
+const ENEMY_COUNT = SQUAD.GROUPS * SQUAD.SIZE;
+
+// --- 機体どうしをぶつけない(分離)----------------------------------
+// 9機が同じ相手(自機)を目指すと、当然たがいにぶつかる。
+// 統率の取れていない軍隊に見えるうえ、勝手に相討ちして数が減っていく。
+//
+// 2段構えで防ぐ:
+//   1. 分離(ステアリング)… 近くの機から離れる向きを進路に足す。ふだんはこれで足りる
+//   2. 押し戻し           … それでも重なったら、力ずくで引き離す(最後の砦)
+// 編隊の間隔(SPREAD 12)より RADIUS を小さくしてあるので、
+// 小隊の中では分離が働かない ― 三角形は崩れない。
+const AVOID = {
+  RADIUS:  9,     // この距離まで近づいたら避け始める
+  FORCE:   1.4,   // 避ける向きを進路にどれだけ強く足すか
+  MIN_GAP: 7.0,   // これ以上は絶対に近づけない(押し戻す距離)
+};
 
 // ===================================================================
 // 敵の3タイプ(アーキタイプ)
@@ -944,6 +988,18 @@ const AI_ARCHETYPES = {
 // sort に「毎回でたらめな正負」を返す比較を渡すのが、いちばん短い混ぜ方。
 function shuffledArchetypes() {
   return Object.keys(AI_ARCHETYPES).sort(() => Math.random() - 0.5);
+}
+
+// 小隊ごとのタイプ表(3小隊ぶん)。
+// 1小隊は3機とも同じタイプでそろえる ― そうしないと
+// 「あの三角形は狙撃機の編隊だ」という読み方ができない。
+// 先頭の小隊だけは必ず SOLDIER にする。
+// 初手から狙撃機や追撃機の編隊に当たると、何が起きているのか分からないため。
+function squadLineup() {
+  const list = shuffledArchetypes();
+  const i = list.indexOf('SOLDIER');
+  if (i > 0) { list[i] = list[0]; list[0] = 'SOLDIER'; }
+  return list;
 }
 
 // 出現比率の抽選。WEIGHT の合計を出し、その中のどこに当たったかで決める。
@@ -1166,18 +1222,35 @@ function buildScene() {
   camQuat      = new THREE.Quaternion();   // カメラの向き(機体より少し遅れる)
   shipQuat     = new THREE.Quaternion();   // 操縦で作られる機体の向き
 
-  // --- 敵機(2機)---
+  // --- 敵機(3機×3小隊 = 9機)---
+  //
+  // 配列に入れる順番がそのまま「小隊の番号」と「小隊内の位置」になる。
+  //   i = 0,1,2 → 第1小隊(長機・僚機・僚機)
+  //   i = 3,4,5 → 第2小隊 …
+  // 順番どおりに更新されるので、長機は必ず僚機より先に動く ―
+  // 僚機が「今コマの長機の位置」を見られるのは、この並びのおかげ。
+
+  // 3小隊 × 3タイプなので、ちょうど1小隊に1タイプずつ行き渡る
+  const squadTypes = squadLineup();
+
   for (let i = 0; i < ENEMY_COUNT; i++) {
     const e = createEnemy();
-    // 最初の1機は必ず SOLDIER にする。
-    // 初弾から狙撃機や追撃機に当たると、まず何が起きているのか分からない。
-    // 基準になる相手から始めて、そのあと抽選に任せる。
-    assignArchetype(e, i === 0 ? 'SOLDIER' : pickArchetype());
+    e.squad = Math.floor(i / SQUAD.SIZE);
+    e.slot  = i % SQUAD.SIZE;
+
+    assignArchetype(e, squadTypes[e.squad % squadTypes.length]);
     e.hp = e.arch.MAX_HP;
-    // 最初は自機の前方に、左右へ広げて配置する。
-    // (i - 中央) で -1 / 0 / +1 のように並び、機数が変わっても勝手に散る
-    const spread = i - (ENEMY_COUNT - 1) / 2;
-    e.group.position.set(spread * 26, 0, ENEMY.DISTANCE - i * 14);
+    // 小隊ごとに前方の別々の場所へ置き、その中で三角形に並べる。
+    // 機首はこちらを向いているので、定位置の左右と前後は反転する
+    // (機体から見た「後ろ」は、こちらから見れば「奥」になる)。
+    const spread = e.squad - (SQUAD.GROUPS - 1) / 2;
+    const off = formationOffset(e.slot);
+    e.group.position.set(
+      spread * 52 - off.x,
+      off.y,
+      ENEMY.DISTANCE - e.squad * 30 - off.z
+    );
+    e.group.rotateY(Math.PI);   // 機首をこちらへ向ける
     enemies.push(e);
   }
 
@@ -2404,14 +2477,34 @@ function resetFlight() {
   ordnance.length = 0;
   blasts.length = 0;
 
-  // 敵を全機復活させて前方に置き直す
-  // 出撃のたびに敵を初期化する。
-  // 最初の編成は抽選せず、3タイプを1機ずつ・順番だけ入れ替えて配る。
-  // 抽選に任せると同じタイプが3機並ぶ出撃が出てしまい、
+  // 敵を全機復活させて前方に置き直す。
+  //
+  // 最初の編成は抽選せず、3タイプを1小隊ずつ・順番だけ入れ替えて配る。
+  // 抽選に任せると同じタイプの小隊ばかりの出撃が出てしまい、
   // 「3種類いる」ということ自体が伝わらないため。
   // (撃墜後のリスポーンは均等な抽選に任せる)
-  const lineup = shuffledArchetypes();
-  enemies.forEach((e, i) => respawnEnemy(e, lineup[i % lineup.length]));
+  const lineup = squadLineup();
+
+  // いったん全機を「落ちている」ことにする。
+  // こうしないと、前回の出撃で生き残っていた機を小隊の基準にしてしまい、
+  // 新しい編隊が古い位置に引っぱられる。
+  for (const e of enemies) e.alive = false;
+
+  enemies.forEach((e) => {
+    respawnEnemy(e, lineup[e.squad % lineup.length]);
+
+    // 長機だけは小隊ごとに離れた場所へ置き直す。
+    // 僚機は respawnEnemy のなかで、すでに長機の定位置に付いている
+    // (配列は長機 → 僚機の順に並んでいるので、この置き直しが先に効く)。
+    if (e.slot === 0) {
+      const spread = e.squad - (SQUAD.GROUPS - 1) / 2;
+      e.group.position.set(spread * 52, 0, ENEMY.DISTANCE - e.squad * 30);
+      e.group.quaternion.identity();   // 全機、同じ向きに揃える
+      e.group.rotateY(Math.PI);        // 機首をこちらへ向ける
+      // 位置を飛ばしたので、速度の測定もやり直す(古い位置との差で暴れないように)
+      if (e.prevPos) e.prevPos.copy(e.group.position);
+    }
+  });
 }
 
 // エンジンの電力配分(0〜100%)から速度を決める
@@ -2523,7 +2616,12 @@ function updateAim(dt, sensorPercent, allowLock) {
   let best = null;
   let bestAhead = Infinity;
 
-  for (const e of enemies) {
+  // 捉える対象は「生きている敵機」と「開いている戦艦の排熱口」。
+  // 排熱口は boss.js が敵機と同じ形の入れ物にして渡してくるので、
+  // ここでは両方を同じ扱いで回せる。
+  const bossTargets = (typeof bossLockTargets === 'function') ? bossLockTargets() : null;
+
+  for (const e of (bossTargets && bossTargets.length) ? enemies.concat(bossTargets) : enemies) {
     if (!e.alive) continue;
 
     const toEnemy = e.group.position.clone().sub(playerShip.position);
@@ -2537,7 +2635,8 @@ function updateAim(dt, sensorPercent, allowLock) {
     const offset = toEnemy.clone().addScaledVector(forward, -ahead).length();
 
     // 捕捉半径。遠いほど少し広げる(遠距離でも狙えるように)
-    const captureRadius = ENEMY.HIT_RADIUS * AIM.CAPTURE_MULT + ahead * AIM.CAPTURE_SPREAD;
+    const hitR = e.isBossVent ? BOSS.VENT.HIT_RADIUS : ENEMY.HIT_RADIUS;
+    const captureRadius = hitR * AIM.CAPTURE_MULT + ahead * AIM.CAPTURE_SPREAD;
 
     if (offset < captureRadius && ahead < bestAhead) {
       best = e;
@@ -3184,12 +3283,29 @@ function seekerAim(m) {
     if (e === m.target || v > lockedHeat) consider(e.group.position, v, e === m.target, false);
   }
 
+  // --- 戦艦の排熱口 ---
+  //
+  // 開いている排熱口は、艦の内側に溜め込んだ熱を宇宙へ捨てている真っ最中。
+  // この戦場でずばぬけて熱い点になる ― だからミサイルは自分でそこへ吸い込まれる。
+  //
+  // 「弱点だから当たる」のではなく「いちばん熱いから当たる」。
+  // 逆に言えば、閉じてしまえばただの装甲なので、ミサイルは無駄になる。
+  // 敵のミサイル(fromEnemy)は自艦を狙わないので対象外。
+  if (!m.fromEnemy && typeof bossHeatSources === 'function') {
+    for (const src of bossHeatSources()) {
+      consider(src.pos, src.heat, src.target === m.target, false);
+    }
+  }
+
   return bestPos ? { pos: bestPos, isFlare: bestIsFlare } : null;
 }
 
 // このミサイルが今狙っている相手の熱量。乗り換えの基準になる
 function lockedHeatValue(m) {
   if (m.fromEnemy) return playerHeatValue();
+  // 戦艦の排熱口をロックしている場合。熱量はすでに熱源の尺度で入っているので、
+  // 機体用の換算(shipHeatValue)は通さない
+  if (m.target && m.target.isBossVent) return m.target.alive ? m.target.heat : 0;
   if (m.target && m.target.alive) return shipHeatValue(m.target.heat);
   return 0;   // 目標を失っている = どんな熱源でも乗り換えてよい
 }
@@ -3259,6 +3375,30 @@ function updateMissiles(dt) {
         missiles.splice(i, 1);
       }
       continue;
+    }
+
+    // --- 戦艦への命中 ---
+    //
+    // 開いている排熱口に入ればダメージが通る。
+    // 閉じていた・艦体に当たった場合は装甲に弾かれ、弾だけが無駄になる ―
+    // 機関砲と同じ決まりなので、ミサイルだけの抜け道はない。
+    if (typeof bossMissileHit === 'function') {
+      const res = bossMissileHit(m.mesh.position, BOSS.DAMAGE.MISSILE, MISSILE.HIT_RADIUS);
+      if (res) {
+        if (res === 'vent') {
+          spawnFlash(m.mesh.position, 26, 0xffffff, 0.3);
+          spawnBlast(m.mesh.position, 12, 0xa8f4ff);
+          spawnDebris(m.mesh.position, 12, 0.3, 18, 0xd0faff, true);
+        } else {
+          // 弾かれた。派手な爆発は出さず、装甲で潰れた感じにする
+          spawnFlash(m.mesh.position, 12, 0xbfd6ff, 0.2);
+          spawnDebris(m.mesh.position, 8, 0.22, 12, 0xdfe8ff, true);
+          onBossRicochet();
+        }
+        scene.remove(m.mesh);
+        missiles.splice(i, 1);
+        continue;
+      }
     }
 
     let struck = null;
@@ -3564,6 +3704,15 @@ function updateOrdnance(dt) {
       if (o.fuse <= 0) blow = true;
     }
 
+    // --- 接触信管:戦艦の艦体に触れたら、その場で炸裂する ---
+    //
+    // これが無いと、投げた弾は艦体をすり抜けて内側や向こう側で爆発し、
+    // 「艦に当てたのに何も起きない」ことになる。
+    // 表面で爆発してこそ、そばの排熱口を爆風で焼ける。
+    if (!blow && typeof bossRamCheck === 'function' && bossRamCheck(o.mesh.position, 1.0)) {
+      blow = true;
+    }
+
     if (blow) {
       detonateOrdnance(o);
       scene.remove(o.mesh);
@@ -3595,8 +3744,13 @@ function detonateOrdnance(o) {
 
   // ボスの弱点にも爆風が届く。ただし「開いている弱点」だけ ―
   // 弾で撃つのと同じ決まりにしないと、ボムだけ抜け道になってしまう。
+  //
+  // 威力は排熱口までの距離で落ちる(bossSplashDamage の中で減衰する)。
+  // ボムを艦体に押しつけるほど効く = 近づく危険と釣り合わせてある。
+  // EMPは電力を落とす弾なので、装甲板には何も起きない。
   if (typeof bossSplashDamage === 'function' && o.kind !== 'emp') {
-    bossSplashDamage(pos, cfg.RADIUS, o.kind === 'pyro' ? PYRO.DAMAGE : 2);
+    bossSplashDamage(pos, cfg.RADIUS,
+      o.kind === 'pyro' ? BOSS.DAMAGE.PYRO : BOSS.DAMAGE.BOMB);
   }
 
   for (const e of enemies) {
@@ -3819,7 +3973,7 @@ function createEnemy() {
   // リスポーンのたびに作り直すと、そのたびに一瞬引っかかる。
   // 最初に3つ作って親にぶら下げ、表示を切り替えるだけにすれば、
   // タイプが変わっても作り直しは起きない。
-  // (3機 × 3タイプ = 9モデル。この規模なら持っていて問題ない)
+  // (9機 × 3タイプ = 27モデル。単色の低ポリゴンなので、この規模なら問題ない)
   const group = new THREE.Group();
   group.scale.setScalar(ENEMY.SCALE);   // 大きさは親にまとめて掛ける
   scene.add(group);
@@ -3853,6 +4007,11 @@ function createEnemy() {
     alive: true,
     respawnLeft: 0,      // リスポーンまでの残り秒数
     hitFlash: 0,         // 被弾時に白く光る残り時間
+
+    // 編隊。どちらも buildScene で配るので、ここでは仮の値
+    squad: 0,            // 所属する小隊の番号
+    slot:  0,            // 小隊内の位置。0 = 長機 / 1・2 = 僚機
+    moveSpeed: 0,        // このコマで出した速さ(僚機が長機に合わせるのに使う)
 
     // AIの状態。'approach'(接近) / 'attack'(攻撃) / 'evade'(回避)の3つ
     state: 'approach',
@@ -3958,6 +4117,128 @@ function houndAimDirection(e, A, out) {
   out.normalize();
 }
 
+// ===================================================================
+// 編隊(小隊)まわりの計算
+// ===================================================================
+
+// その小隊の長機(先頭機)を返す。
+//
+// 「誰が長機か」をどこかに書いて覚えておくと、その機が落ちたときに
+// 書き換え忘れが必ず起きる。そうではなく、毎回
+//   「生きている中でいちばん若い番号の機」
+// と決めておけば、長機が落ちた瞬間に自動で繰り上がる ― 覚える必要がない。
+function squadLeader(e) {
+  let lead = null;
+  for (const o of enemies) {
+    if (o.squad !== e.squad || !o.alive) continue;
+    if (!lead || o.slot < lead.slot) lead = o;
+  }
+  return lead;
+}
+
+// 僚機の定位置(長機から見た位置)を返す。
+//
+//   slot 1 → 左斜め後ろ / slot 2 → 右斜め後ろ … で三角形になる。
+//   4機以上に増やしても、左右交互にもう一段外側へ並ぶだけで破綻しない。
+const _slotOffset = new THREE.Vector3();
+const _slotBase   = new THREE.Vector3();
+
+function formationOffset(slot, out) {
+  const side = (slot % 2 === 1) ? -1 : 1;      // 奇数=左 / 偶数=右
+  const rank = Math.ceil(slot / 2);            // 何段目か(1段目・2段目…)
+  return (out || _slotOffset).set(
+    side * SQUAD.SPREAD * rank,
+    -SQUAD.DROP * rank,
+    SQUAD.BACK * rank                          // +Z = 機体の後ろ
+  );
+}
+
+// 定位置を世界座標で求めて out に書き込む。
+//
+// ref は基準にする機。ふつうは長機だが、長機が落ちて2番機が繰り上がった
+// 場合もあるので、「ref 自身の定位置」との差で計算する ―
+// こうしておけば、誰が基準になっても3機の位置関係は変わらない。
+//
+// ※ localToWorld は使えない。敵機のグループには ENEMY.SCALE(1.4)が
+//   掛かっているので、間隔まで1.4倍されてしまう。
+//   向きだけ借りて、位置は自分で足す。
+function formationSlotPoint(ref, slot, out) {
+  formationOffset(slot,     _slotOffset);
+  formationOffset(ref.slot, _slotBase);
+  return out.copy(_slotOffset).sub(_slotBase)
+            .applyQuaternion(ref.group.quaternion)
+            .add(ref.group.position);
+}
+
+// 自分以外で生きている同じ小隊の機(いちばん若い番号)。
+// リスポーンしたとき、まだ小隊が残っていればそこへ合流させるのに使う。
+function squadMate(e) {
+  let mate = null;
+  for (const o of enemies) {
+    if (o === e || o.squad !== e.squad || !o.alive) continue;
+    if (!mate || o.slot < mate.slot) mate = o;
+  }
+  return mate;
+}
+
+// ===================================================================
+// 分離:近くにいる他機から離れる向きを作る
+//
+// 近いほど強く押しのける。全機ぶんを足し合わせるので、
+// 2機に挟まれたら「その中間から抜ける向き」が自然に出てくる。
+// ===================================================================
+// 使い回す計算用の入れ物。毎コマ9機ぶん new すると、
+// そのぶん掃除(ガベージコレクション)が走って画面が引っかかる。
+const _sepAway = new THREE.Vector3();
+const _sepOut  = new THREE.Vector3();
+const _formTmp = new THREE.Vector3();
+
+function enemySeparation(e, out) {
+  out.set(0, 0, 0);
+  for (const o of enemies) {
+    if (o === e || !o.alive) continue;
+    _sepAway.subVectors(e.group.position, o.group.position);
+    const d = _sepAway.length();
+    if (d > AVOID.RADIUS) continue;
+    // 完全に重なっているときは向きが出ないので、適当な向きへ逃がす
+    if (d < 0.001) { out.x += 1; continue; }
+    out.addScaledVector(_sepAway.divideScalar(d), 1 - d / AVOID.RADIUS);
+  }
+  return out;
+}
+
+// ===================================================================
+// 押し戻し:それでも重なってしまった機体を引き離す
+//
+// AIを全機動かし終えたあとに1回だけ呼ぶ。
+// 相討ちで消すのではなく、単に位置をずらして「ぶつからなかったこと」にする ―
+// 目の前で敵が2機まとめて消えるより、すれ違って離れていくほうが自然に見える。
+// ===================================================================
+const _pushAxis = new THREE.Vector3();
+
+function resolveEnemyOverlap() {
+  for (let i = 0; i < enemies.length; i++) {
+    const a = enemies[i];
+    if (!a.alive) continue;
+    for (let j = i + 1; j < enemies.length; j++) {
+      const b = enemies[j];
+      if (!b.alive) continue;
+
+      _pushAxis.subVectors(a.group.position, b.group.position);
+      const d = _pushAxis.length();
+      if (d >= AVOID.MIN_GAP) continue;
+
+      // ちょうど重なっているときは押す向きが決まらない。横へどかす
+      if (d < 0.001) _pushAxis.set(1, 0, 0);
+      else           _pushAxis.divideScalar(d);
+
+      const push = (AVOID.MIN_GAP - d) / 2;    // 半分ずつ、たがいに離れる
+      a.group.position.addScaledVector(_pushAxis,  push);
+      b.group.position.addScaledVector(_pushAxis, -push);
+    }
+  }
+}
+
 function updateEnemyAI(e, dt) {
   const A = e.arch;          // このタイプの数字の表(以降ずっと使う)
   e.stateTime += dt;
@@ -4025,12 +4306,26 @@ function updateEnemyAI(e, dt) {
   const seen = enemyCanSee(distance);
   e.seesPlayer = seen;
 
+  // --- 編隊にいるか ---
+  // 僚機(長機以外)は、自分では進路も状態も決めない。
+  // ただし「自分が」被弾して逃げている間(evade)だけは編隊を離れて散る。
+  const lead = squadLeader(e);
+  const inForm = !!lead && lead !== e && e.state !== 'evade';
+
   // --- 状態の切り替え ---
   //
   // 「時間で終わる状態」(回避・離脱)は、自機を見失っていても必ず終わらせる。
   // ここを見失い判定より後ろに置くと、離れて見失った瞬間に時間切れの判定が
   // 素通りされ、そのまま永遠に離れ続けてしまう(実際にそうなった)。
-  if (e.state === 'evade' && e.stateTime > AI.EVADE_SEC) {
+  if (inForm) {
+    // 僚機は長機と同じ状態に合わせる。
+    // 3機がそろって攻撃に移り、そろって離脱する ― これが「動きがそろう」の正体。
+    //
+    // ただし長機の evade(被弾して逃げている)だけは写さない。
+    // 写すと僚機まで evade になり、次のコマには編隊から外れてしまう。
+    // 位置だけ守らせておけば、3機そろって同じ回避運動をしているように見える。
+    if (lead.state !== 'evade' && e.state !== lead.state) setEnemyState(e, lead.state);
+  } else if (e.state === 'evade' && e.stateTime > AI.EVADE_SEC) {
     setEnemyState(e, 'approach');
   } else if (e.state === 'extend' && (!A.DIVE || e.stateTime > A.DIVE.EXTEND_SEC)) {
     // 抜け終わった。もう一度、正面から入り直す
@@ -4056,7 +4351,24 @@ function updateEnemyAI(e, dt) {
   const move = new THREE.Vector3();
   let speed = 0;
 
-  if (e.state === 'evade') {
+  if (inForm) {
+    // --- 僚機:長機から見た定位置をひたすら守る ---
+    //
+    // 「自機を追う」のではなく「長機を追う」。長機が曲がれば定位置も回るので、
+    // 3機は形を保ったまま曲がる。攻撃も回避も長機の判断がそのまま伝わる。
+    const slotPoint = formationSlotPoint(lead, e.slot, _formTmp);
+    const toSlot = slotPoint.sub(e.group.position);
+    const gap = toSlot.length();
+    if (gap > 0.3) move.copy(toSlot).divideScalar(gap);
+
+    // 長機と同じ速さ + ずれているぶんの詰め足し。
+    // 前者だけだと永久に追いつけず、後者だけだと定位置で止まってしまう。
+    speed = Math.min(
+      (lead.moveSpeed || 0) + gap * SQUAD.CATCHUP,
+      A.SPEED.EVADE * SQUAD.MAX_SPEED_MULT
+    );
+
+  } else if (e.state === 'evade') {
     move.copy(e.evadeDir);
     speed = A.SPEED.EVADE;
 
@@ -4116,7 +4428,9 @@ function updateEnemyAI(e, dt) {
   // 的になり、動きが単調に見える原因になる。
   // そこで、時間とともにゆっくり向きを変える横揺れを足して軌道を崩す。
   // 進む向きそのものは変えないので、AIの判断は壊れない。
-  if (e.arch.WANDER && e.state !== 'evade') {
+  // 編隊にいる僚機は揺らさない。1機ずつ勝手に蛇行すると三角形が崩れる ―
+  // 編隊の見どころは「そろっていること」なので、ここでは単調さより形を取る。
+  if (e.arch.WANDER && e.state !== 'evade' && !inForm) {
     const t = sceneTime * e.arch.WANDER.RATE + e.wanderPhase;
     // move と直角な2方向(横と上)を作り、その組み合わせで揺らす
     const side = move.clone().cross(new THREE.Vector3(0, 1, 0));
@@ -4128,16 +4442,32 @@ function updateEnemyAI(e, dt) {
         .normalize();
   }
 
+  // --- 分離:他機とぶつからないよう進路をずらす ---
+  // 進む向きに「離れる向き」を足すだけ。速度も判断も変えないので、
+  // AIの動きはそのままに、機体どうしがすり抜けようとするのだけが直る。
+  const sep = enemySeparation(e, _sepOut);
+  if (sep.lengthSq() > 1e-6) move.addScaledVector(sep, AVOID.FORCE).normalize();
+
   e.group.position.addScaledVector(move, speed * dt);
 
-  // --- 機首を自機へ向ける ---
-  // Matrix4.lookAt は「-Z が相手を向く」向きを作る。敵機の機首も -Z なのでそのまま使える。
-  // slerp = 回転をなめらかにつなぐ命令。いきなり向くとロボットのようになる。
-  const lookMatrix = new THREE.Matrix4().lookAt(
-    e.group.position, playerShip.position, new THREE.Vector3(0, 1, 0)
-  );
-  const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
-  e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-A.TURN_RATE * dt));
+  // この速さを覚えておく。僚機が「長機と同じ速さ」を出すのに使う
+  e.moveSpeed = speed;
+
+  // --- 機首の向き ---
+  if (inForm) {
+    // 編隊中は長機と同じ向きに合わせる。
+    // 各機が思い思いに機首を振ると、位置がそろっていても編隊には見えない。
+    // (弾は機首の向きと関係なく偏差射撃で飛ぶので、攻撃力は落ちない)
+    e.group.quaternion.slerp(lead.group.quaternion, 1 - Math.exp(-A.TURN_RATE * 1.6 * dt));
+  } else {
+    // Matrix4.lookAt は「-Z が相手を向く」向きを作る。敵機の機首も -Z なのでそのまま使える。
+    // slerp = 回転をなめらかにつなぐ命令。いきなり向くとロボットのようになる。
+    const lookMatrix = new THREE.Matrix4().lookAt(
+      e.group.position, playerShip.position, new THREE.Vector3(0, 1, 0)
+    );
+    const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
+    e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-A.TURN_RATE * dt));
+  }
 
   // --- ミサイル(攻撃状態のときだけ)---
   updateEnemyMissileLogic(e, dt, distance);
@@ -4812,6 +5142,17 @@ const COLLIDE = {
 };
 
 function updateCollisions() {
+  // --- 自機 対 戦艦 ---
+  //
+  // 全長210・幅130の質量に、全長3の戦闘機がぶつかる。
+  // シールドもHULLも関係ない ― 艦体に触れた時点で機体は残らない。
+  // 弱点を狙って近づくほど、この壁が近くなる。
+  if (typeof bossRamCheck === 'function' &&
+      bossRamCheck(playerShip.position, COLLIDE.PLAYER_RADIUS)) {
+    onPlayerRamBoss();   // main.js:即座に MISSION FAILED
+    return;
+  }
+
   // --- 自機 対 敵機 ---
   const reach = COLLIDE.PLAYER_RADIUS + ENEMY.HIT_RADIUS;
   for (const e of enemies) {
@@ -4830,24 +5171,14 @@ function updateCollisions() {
   }
 
   // --- 敵機どうし ---
-  // 撃墜数には数えない。こちらが仕留めたわけではないため。
-  for (let i = 0; i < enemies.length; i++) {
-    const a = enemies[i];
-    if (!a.alive) continue;
-    for (let j = i + 1; j < enemies.length; j++) {
-      const b = enemies[j];
-      if (!b.alive) continue;
-      if (a.group.position.distanceTo(b.group.position) > ENEMY.HIT_RADIUS * 2) continue;
-
-      const mid = a.group.position.clone().add(b.group.position).multiplyScalar(0.5);
-      spawnFlash(mid, 34, 0xffffff, 0.30);
-      spawnBlast(mid, 15, 0xffc070);
-      killEnemy(a, false);
-      killEnemy(b, false);
-      onEnemyCollide();      // main.js:ログと音
-      return;
-    }
-  }
+  //
+  // 以前はここで両方とも爆散させていた。1小隊3機・3小隊の9機になると
+  // それでは編隊を組んだ瞬間に相討ちが多発して、戦わずに数が減っていく。
+  //
+  // ぶつかったら消すのではなく、そもそもぶつからないようにする ―
+  //   ・updateEnemyAI の分離(近づいたら避ける)
+  //   ・resolveEnemyOverlap(それでも重なったら押し戻す)
+  // の2つが受け持っている。ここではもう何もしない。
 }
 
 // ===================================================================
@@ -4863,16 +5194,25 @@ function respawnEnemy(e, forceType) {
   e.group.visible = true;
   e.respawnLeft = 0;
 
-  // 自機は空間を移動していくので、リスポーン地点は「今の自機の前方」に取る。
-  // そうしないと、飛び去ったあと遠い原点付近に湧いて見つけられなくなる。
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
-  e.group.position.copy(playerShip.position)
-    .addScaledVector(forward, 90)
-    .add(new THREE.Vector3(
-      (Math.random() - 0.5) * 40,
-      (Math.random() - 0.5) * 24,
-      (Math.random() - 0.5) * 40
-    ));
+  // 小隊がまだ生き残っていれば、そこへ合流させる。
+  // 別々の場所に湧かせると、せっかくの編隊がいつまでも組み直されない。
+  const mate = squadMate(e);
+  if (mate) {
+    formationSlotPoint(mate, e.slot, e.group.position);
+    e.group.quaternion.copy(mate.group.quaternion);
+  } else {
+    // 小隊が全滅していた(または自分が長機)。新しい編隊として前方に出す。
+    // 自機は空間を移動していくので、湧く場所は「今の自機の前方」に取る ―
+    // そうしないと、飛び去ったあと遠い原点付近に湧いて見つけられなくなる。
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
+    e.group.position.copy(playerShip.position)
+      .addScaledVector(forward, 90)
+      .add(new THREE.Vector3(
+        (Math.random() - 0.5) * 40,
+        (Math.random() - 0.5) * 24,
+        (Math.random() - 0.5) * 40
+      ));
+  }
 
   // AIを初期状態に戻す
   setEnemyState(e, 'approach');
@@ -5041,7 +5381,8 @@ function updateScene(dt, elapsed) {
     updateEnemyAI(e, dt);
   }
 
-  updateCollisions();   // 機体どうしがぶつかっていないか
+  resolveEnemyOverlap();   // 敵機どうしが重なっていたら引き離す
+  updateCollisions();      // 自機がぶつかっていないか
 
   renderer.render(scene, camera);
   renderRearMirror();

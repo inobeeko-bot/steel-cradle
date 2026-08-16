@@ -1072,11 +1072,30 @@ function onPlayerCollide() {
   }
 }
 
-// 敵機どうしが激突した(こちらの戦果にはしない)
+// 敵機どうしが激突した(こちらの戦果にはしない)。
+// ※ 今は敵どうしが衝突しないよう scene.js 側で避け合うので、ここは呼ばれない。
+//   編隊の間隔を詰めるなど、避けきれない設定にしたときのために残してある。
 function onEnemyCollide() {
   if (missionState !== 'active') return;
   playExplosion();
   addCombatLog('敵機 接触 ― 相討ち', 'kill');
+}
+
+// ===================================================================
+// 戦艦の艦体に激突した ― 即死
+//
+// 敵機との接触(onPlayerCollide)は HULL を1つ削るだけの「重い被弾」だが、
+// こちらは相手が全長210の艦体。質量が違いすぎて、立て直す余地がない。
+// 弱点に近づくほどこの壁も近くなる、という緊張がこの判定の役目。
+// ===================================================================
+function onPlayerRamBoss() {
+  if (missionState !== 'active') return;
+  addCombatLog('■ 艦体に接触 ― 機体消失', 'hull');
+  speakVoice('CRITICAL_DAMAGE');
+  hitsTaken += 1;
+  hullDamage = HULL.MAX_DAMAGE;   // 計器も「全損」を指す
+  // 中で爆散と効果音が鳴る。理由は「撃墜された」ではないので書き分ける
+  endMission('failed', BOSS.NAME + ' 艦体に激突');
 }
 
 // 敵がロックしたのに撃たずに解いた。
@@ -1783,6 +1802,9 @@ function onBossArrive(withdrew) {
   // 戦闘機が引いたことは、必ず伝える。
   // 黙って消すと「撃ち落としたのか、バグで消えたのか」が分からない。
   if (withdrew > 0) addCombatLog('敵戦闘機 ' + withdrew + '機 離脱 ― 単艦戦闘', 'warn');
+  // 戦艦相手にだけ通用する決まりを、最初に1度だけ知らせる。
+  // 説明書を読ませずに済ませるための1行(戦闘中に気づくのは難しい)
+  addCombatLog('排熱口が開く直前からロック可 ― 艦体への接触は即死', 'warn');
   speakVoice('CAPITAL_SHIP');
   playLockWarning();
   bossPanelEl.classList.add('on');
@@ -1890,10 +1912,14 @@ function renderBossPanel() {
   st.vents.forEach((v, i) => {
     const row = bossVentEls[i];
     row.classList.toggle('open', v.open && v.alive);
+    // 開く直前(予告)。ここからミサイルのロックを始められるので、
+    // 「開いた/閉じた」の2状態では足りない ― 3つ目の表示を出す。
+    row.classList.toggle('warn', !!v.warn && v.alive);
     row.classList.toggle('down', !v.alive);
     row.querySelector('.lbl').textContent = v.labelJa;
     row.querySelector('.bar > i').style.width = (v.hp / v.maxHp * 100) + '%';
-    row.querySelector('.st').textContent = !v.alive ? '沈黙' : (v.open ? 'OPEN' : '閉');
+    row.querySelector('.st').textContent =
+      !v.alive ? '沈黙' : (v.open ? 'OPEN' : (v.warn ? '開放前' : '閉'));
   });
 }
 
@@ -2050,7 +2076,8 @@ function formatTime(seconds) {
 }
 
 // ミッション終了。result は 'complete' / 'failed' / 'timeup'
-function endMission(result) {
+// reason を渡すと、失敗の理由文をその文字列にする(省略すると既定の「機体構造 崩壊」)
+function endMission(result, reason) {
   if (missionState !== 'active') return;   // 二重に終わらせない
 
   missionState = result;
@@ -2076,7 +2103,7 @@ function endMission(result) {
     startShake(1.6);
     playMissionFailed(1.1);
     resultTitleEl.textContent = 'MISSION FAILED';
-    resultReasonEl.textContent = '機体構造 崩壊';
+    resultReasonEl.textContent = reason || '機体構造 崩壊';
   }
 
   // ロックオン表示を消す(戦闘が止まるので、出しっぱなしにしない)

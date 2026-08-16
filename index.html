@@ -499,13 +499,19 @@
       width: 100%;
       background: #56636d;
     }
-    .boss-vent .st { width: 34px; text-align: right; }
+    .boss-vent .st { width: 46px; text-align: right; }
 
     /* 開いている = 撃つべき瞬間。ここだけが明るい */
     .boss-vent.open { color: #9ff6ff; }
     .boss-vent.open .bar { border-color: #9ff6ff; }
     .boss-vent.open .bar > i { background: #9ff6ff; }
     .boss-vent.open .st { color: #ffffff; }
+
+    /* 開く直前(予告)。ここからミサイルのロックを始めておくと間に合う */
+    .boss-vent.warn { color: #ffc06a; }
+    .boss-vent.warn .bar { border-color: #ffa53c; }
+    .boss-vent.warn .st { color: #ffa53c; animation: ventWarn 0.5s infinite; }
+    @keyframes ventWarn { 50% { opacity: 0.35; } }
 
     /* 潰した弱点 */
     .boss-vent.down { color: #4a3a34; text-decoration: line-through; }

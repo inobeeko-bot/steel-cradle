@@ -88,7 +88,34 @@ const BOSS = {
       { key: 'PORT',    labelJa: '左舷',  face: 'left',   t: 0.66 },
       { key: 'STARB',   labelJa: '右舷',  face: 'right',  t: 0.66 },
     ],
+
+    // 開いた排熱口は、艦の内側に溜まった熱を宇宙へ捨てている最中 ―
+    // この戦場でずばぬけて熱い点になる。だからミサイルはここへ吸い込まれる。
+    // 数字は scene.js のシーカーと同じ尺度(フレア1個 = 1050)。
+    HEAT: 2400,
+
+    // ミサイルのロックを、開く前の「予告」の段階から許すかどうか。
+    // 許さないと、開いている1.7秒のあいだにロック(最大1.55秒)を
+    // 満たしてから撃つことになり、事実上ミサイルが使えない。
+    // 予告(1.0秒)から数えれば2.7秒 ― 狙う余地が生まれる。
+    LOCK_ON_WARN: true,
   },
+
+  // --- 弱点に通るダメージ(武器ごと)------------------------------------
+  // 弱点のHPは VENT.COUNT_HP(5)。ここの数字が「何発で1基潰せるか」になる。
+  //   機関砲   … 1発1.5(武器表の値がそのまま入る)→ 開いている間に4発
+  //   ミサイル … 3.0 → 2発。ただし着弾までに閉じてしまえば装甲に弾かれる
+  //   ボム     … 2.5(中心)→ 2発。距離で減るので艦体に押しつけるほど効く
+  DAMAGE: {
+    MISSILE: 3.0,
+    BOMB:    2.5,
+    PYRO:    1.0,
+  },
+
+  // --- 体当たり ---------------------------------------------------------
+  // 全長210・幅130の質量に戦闘機がぶつかれば、結果は1つしかない。
+  // 艦体の表面からこれだけ外側でも「接触した」とみなす(自機の当たり半径ぶん)。
+  RAM_MARGIN: 2.2,
 
   // --- 主砲(ターボレーザー)-----------------------------------------
   // 数が多く、重い。まっすぐ来るので避けられるが、当たると痛い。
@@ -385,7 +412,7 @@ function buildBossVent(spec) {
   halo.position.z = 0.4;
   g.add(halo);
 
-  return {
+  const vent = {
     key: spec.key,
     labelJa: spec.labelJa,
     group: g,
@@ -397,8 +424,35 @@ function buildBossVent(spec) {
     alive: true,
     phase: 0,        // 開閉の位相(秒)。出現時にずらす
     open: false,
+    warn: false,     // 開く直前(予告中)か
     fireLeft: 0,     // 破壊後に吹き出す炎の残り時間
+
+    // 世界座標の目印。
+    // 上の group は艦体の子なので、group.position は「艦から見た位置」―
+    // 照準もシーカーも世界座標で物を見るので、そのままでは使えない。
+    // 毎コマ世界座標を書き写す入れ物を1つ持たせておく。
+    mark: new THREE.Object3D(),
+    prevMark: new THREE.Vector3(),   // 1コマ前の位置(速度を測るのに使う)
+    hasPrev: false,
   };
+
+  // --- ミサイルのロック対象 -------------------------------------------
+  // scene.js の照準は「敵機の配列」を見て回る作りになっている。
+  // 排熱口をそこへ混ぜられるよう、敵機と同じ形をした最小限の入れ物を作る。
+  //   alive … 開いている(または予告中の)あいだだけ true
+  //   group … 世界座標を持つ目印
+  //   vel/acc … 偏差照準が読む。排熱口は艦と一緒に動くだけなので0でよい
+  vent.target = {
+    isBossVent: true,
+    vent: vent,
+    group: vent.mark,
+    alive: false,
+    heat: 0,                       // シーカーが見る熱量。開いている間だけ入る
+    vel: new THREE.Vector3(),
+    acc: new THREE.Vector3(),
+  };
+
+  return vent;
 }
 
 
@@ -490,6 +544,7 @@ function bossOnField() {
 // ===================================================================
 function resetBoss() {
   if (boss) {
+    clearBossLocks();   // 消える艦をロックしたままにしない
     if (boss.beamMesh) scene.remove(boss.beamMesh);
     if (boss.beamCoreMesh) scene.remove(boss.beamCoreMesh);
     scene.remove(boss.group);
@@ -594,16 +649,35 @@ function updateBossMove(dt) {
 //   [ずっと閉じている] → [予告で光る] → [開く] → 閉じる
 // をくり返す。開いている間だけダメージが通る。
 // ===================================================================
+const _ventVel = new THREE.Vector3();   // 速度の計算に使い回す入れ物
+
 function updateBossVents(dt) {
   const C = BOSS.VENT;
 
   for (const vent of boss.vents) {
+    // 世界座標の目印を毎コマ更新する。
+    // 照準・シーカー・爆風の判定は、すべてこの1点を見る。
+    vent.group.getWorldPosition(vent.mark.position);
+
+    // 動いた量から速度を出す。艦がゆっくりでも、舷側の排熱口は
+    // 艦が向きを変えるだけで大きく振られる ―
+    // 偏差照準(先読みの印)がこれを読むので、測っておかないと印がずれる。
+    //
+    // 1コマぶんの差をそのまま使うと細かく震えて印が落ち着かないので、
+    // 敵機の速度測定と同じように、前の値へ少しずつ寄せる(なまし)。
+    if (vent.hasPrev && dt > 1e-4) {
+      _ventVel.subVectors(vent.mark.position, vent.prevMark).divideScalar(dt);
+      vent.target.vel.lerp(_ventVel, 1 - Math.exp(-dt / 0.12));
+    }
+    vent.prevMark.copy(vent.mark.position);
+    vent.hasPrev = true;
+
     if (!vent.alive) {
       // 潰したあとは、焼け跡から炎が吹き出し続ける
       vent.fireLeft -= dt;
       if (vent.fireLeft <= 0) {
         vent.fireLeft = 0.28;
-        const p = vent.group.getWorldPosition(new THREE.Vector3());
+        const p = vent.mark.position;
         spawnFlash(p, 7 + Math.random() * 5, 0xff9040, 0.3);
         spawnDebris(p, 2, 0.4, 9, 0xffb060, true);
       }
@@ -621,6 +695,7 @@ function updateBossVents(dt) {
       // 閉→開に変わった最初のコマだけ知らせる。毎コマ呼ぶと音が鳴り続ける
       if (!vent.open) onBossVentOpen(vent);
       vent.open = true;
+      vent.warn = false;
       // 開いた直後がいちばん明るく、閉じぎわに少し落ちる
       const k = 1 - (vent.phase - openStart) / C.OPEN_SEC;
       const flick = 0.82 + Math.sin(performance.now() / 40) * 0.18;
@@ -633,6 +708,7 @@ function updateBossVents(dt) {
       // --- 予告(開く直前)---
       // だんだん速く点滅させる。「そろそろ来る」が音無しで伝わる
       vent.open = false;
+      vent.warn = true;
       const k = (vent.phase - warnStart) / C.WARN_SEC;
       const blink = 0.5 + 0.5 * Math.sin(k * k * 46);
       vent.coreMat.color.setHex(0xffa53c);
@@ -643,12 +719,56 @@ function updateBossVents(dt) {
     } else {
       // --- 閉じている ---
       vent.open = false;
+      vent.warn = false;
       vent.coreMat.color.setHex(0x203040);
       vent.coreMat.opacity = 0.5;
       vent.rimMat.color.setHex(0x9aa6b0);
       vent.halo.material.opacity = 0;
     }
+
+    // --- ロック対象としての状態を更新する ---
+    // 開いている(設定によっては予告中も)あいだだけ、
+    // ミサイルの照準はこの排熱口を捉えられる。
+    const lockable = vent.open || (BOSS.VENT.LOCK_ON_WARN && vent.warn);
+    vent.target.alive = lockable;
+    // シーカーが見る熱量。開いてからが本番なので、予告中は控えめにしておく
+    vent.target.heat = vent.open ? BOSS.VENT.HEAT : (lockable ? BOSS.VENT.HEAT * 0.25 : 0);
   }
+}
+
+
+// ===================================================================
+// ミサイルの照準が捉えられる的の一覧(scene.js の updateAim が使う)
+//
+// 敵機の配列に混ぜて回してもらうので、返すのは敵機と同じ形の入れ物。
+// ボスがいない・開いている排熱口が無いときは空の配列。
+// ===================================================================
+const _noBossTargets = [];
+
+function bossLockTargets() {
+  if (!boss || bossState !== 'active') return _noBossTargets;
+  const list = [];
+  for (const v of boss.vents) if (v.alive && v.target.alive) list.push(v.target);
+  return list;
+}
+
+// シーカー(ミサイルの目)から見た熱源の一覧。
+// 開いている排熱口だけを、けた違いに熱い点として差し出す。
+function bossHeatSources() {
+  if (!boss || bossState !== 'active') return _noBossTargets;
+  const list = [];
+  for (const v of boss.vents) {
+    if (!v.alive || !v.open) continue;
+    list.push({ pos: v.mark.position, heat: BOSS.VENT.HEAT, target: v.target });
+  }
+  return list;
+}
+
+// ロックを全部落とす(艦を消すとき・沈み始めたとき)。
+// これを忘れると、もう無い排熱口をロックしたままの表示が残る。
+function clearBossLocks() {
+  if (!boss) return;
+  for (const v of boss.vents) { v.target.alive = false; v.target.heat = 0; }
 }
 
 
@@ -951,18 +1071,81 @@ function bossTakeHit(point, damage) {
 //   箱で判定すると、舷側の斜面の外側 ― 実際には何も無い空間 ―
 //   でも弾が弾かれ、艦のそばを掠めただけで火花が散ってしまう。
 //   見えている形と当たる形は必ず一致させる。
-function bossPointInsideHull(local) {
-  const halfL = BOSS.LENGTH / 2;
+// margin を渡すと、その距離ぶん外側まで「艦体」とみなす(体当たりの判定用)
+function bossPointInsideHull(local, margin) {
+  const m = margin || 0;
+  const halfL = BOSS.LENGTH / 2 + m;
   if (local.z < -halfL || local.z > halfL) return false;
-  const t = (local.z + halfL) / BOSS.LENGTH;     // 0=艦首 1=艦尾
+  // t は margin を含めない素の艦体で測る(端では0〜1をはみ出すので丸める)
+  const t = Math.max(0, Math.min(1,
+    (local.z + BOSS.LENGTH / 2) / BOSS.LENGTH));    // 0=艦首 1=艦尾
   const cs = bossCrossSection(t);
-  if (Math.abs(local.y) > cs.halfH) return false;
+  if (Math.abs(local.y) > cs.halfH + m) return false;
 
   // その高さでの実際の半幅。下辺 halfW から上辺 halfW×0.72 へ線形に狭まる
   const topW = cs.halfW * 0.72;
-  const k = (local.y + cs.halfH) / (2 * cs.halfH);   // 0=下端 1=上端
+  const k = Math.max(0, Math.min(1,
+    (local.y + cs.halfH) / (2 * cs.halfH)));        // 0=下端 1=上端
   const halfWHere = cs.halfW + (topW - cs.halfW) * k;
-  return Math.abs(local.x) <= halfWHere;
+  return Math.abs(local.x) <= halfWHere + m;
+}
+
+
+// ===================================================================
+// 艦体に触れたか(体当たり・投下兵装の接触信管)
+//
+// point は世界座標、radius はぶつかる側の当たり半径。
+// 自機がこれに引っかかったら、そこで終わり ―
+// 戦闘機の質量では、全長210の艦体に勝ち目はない。
+// ===================================================================
+function bossRamCheck(point, radius) {
+  if (!boss) return false;
+  if (bossState !== 'arriving' && bossState !== 'active' && bossState !== 'dying') return false;
+  if (!boss.group.visible) return false;
+
+  // まず大まかに:艦の中心から遠ければ、細かい判定はしない(毎コマ呼ぶので軽く)
+  const rough = BOSS.LENGTH / 2 + (radius || 0) + BOSS.RAM_MARGIN;
+  if (boss.group.position.distanceToSquared(point) > rough * rough) return false;
+
+  boss.group.updateMatrixWorld(true);
+  const local = boss.group.worldToLocal(point.clone());
+  return bossPointInsideHull(local, (radius || 0) + BOSS.RAM_MARGIN);
+}
+
+
+// ===================================================================
+// ミサイル1発ぶんの命中判定
+//
+// 近接信管なので、少し離れていても弱点なら効く。
+// 返り値:
+//   'vent'  … 開いている排熱口に吸い込まれた(ダメージが通った)
+//   'armor' … 装甲・閉じた排熱口に当たった(弾かれた。弾は無駄になる)
+//   null    … 当たっていない
+// ===================================================================
+function bossMissileHit(point, damage, fuse) {
+  if (!boss || bossState !== 'active') return null;
+
+  const f = fuse || 0;
+  const rough = BOSS.LENGTH / 2 + f + 12;
+  if (boss.group.position.distanceToSquared(point) > rough * rough) return null;
+
+  boss.group.updateMatrixWorld(true);
+
+  // --- 1. 排熱口 ---
+  // 近接信管ぶんだけ甘くする。ロックして撃った弾が縁で滑るのは気持ちが悪い。
+  for (const vent of boss.vents) {
+    if (!vent.alive) continue;
+    if (vent.mark.position.distanceTo(point) > BOSS.VENT.HIT_RADIUS + f) continue;
+    if (!vent.open) return 'armor';       // 閉じていれば、ただの分厚い蓋
+    damageBossVent(vent, point, damage);
+    return 'vent';
+  }
+
+  // --- 2. 艦体 ---
+  const local = boss.group.worldToLocal(point.clone());
+  if (bossPointInsideHull(local, f * 0.5)) return 'armor';
+
+  return null;
 }
 
 // 装甲に弾かれた:火花だけ出して、ダメージは入らない
@@ -988,6 +1171,9 @@ function damageBossVent(vent, point, damage) {
   // --- 弱点をひとつ潰した ---
   vent.alive = false;
   vent.open  = false;
+  vent.warn  = false;
+  vent.target.alive = false;   // ロックしていた場合は、ここで外れる
+  vent.target.heat  = 0;
   vent.coreMat.color.setHex(0x120806);
   vent.coreMat.opacity = 1;
   vent.rimMat.color.setHex(0x3a2a22);
@@ -1013,19 +1199,24 @@ function bossVentsLeft() {
   return n;
 }
 
-// 爆発の範囲でまとめて判定する(ボム・ミサイルの炸裂用)。
-// 開いている弱点だけが対象。
+// 爆発の範囲でまとめて判定する(ボム・パイロ弾の炸裂用)。
+//
+// 対象は「開いている弱点」だけ。閉じた排熱口まで爆風で潰せてしまうと、
+// タイミングを計らずボムを投げるだけの相手になってしまう。
+// 威力は中心からの距離で落ちる ― 艦体に押しつけるほど効く。
 function bossSplashDamage(center, radius, damage) {
   if (!boss || bossState !== 'active') return false;
   boss.group.updateMatrixWorld(true);
   let hit = false;
   for (const vent of boss.vents) {
     if (!vent.alive || !vent.open) continue;
-    const p = vent.group.getWorldPosition(new THREE.Vector3());
-    if (p.distanceTo(center) <= radius) {
-      damageBossVent(vent, p, damage);
-      hit = true;
-    }
+    const d = vent.mark.position.distanceTo(center);
+    if (d > radius) continue;
+    const falloff = 1 - d / radius;          // 1 = 中心 / 0 = 半径のふち
+    const dealt = damage * falloff;
+    if (dealt <= 0.05) continue;             // ふちをかすめただけでは効かない
+    damageBossVent(vent, vent.mark.position, dealt);
+    hit = true;
   }
   return hit;
 }
@@ -1041,6 +1232,7 @@ function startBossDeath() {
   bossState = 'dying';
   boss.deathLeft = BOSS.DEATH.SEC;
   boss.popLeft   = 0;
+  clearBossLocks();
   clearBossBeam();
   boss.chargeGlow.material.opacity = 0;
   startShake(1.2);
@@ -1108,6 +1300,8 @@ function bossStatus() {
       labelJa: v.labelJa,
       alive: v.alive,
       open: v.open,
+      warn: v.warn,                 // まもなく開く(この段階からロックを始められる)
+      lockable: v.target.alive,     // ミサイルのロックが乗るか
       hp: Math.max(v.hp, 0),
       maxHp: BOSS.VENT.COUNT_HP,
     })),
