@@ -3323,6 +3323,9 @@ function lockedHeatValue(m) {
   return 0;   // 目標を失っている = どんな熱源でも乗り換えてよい
 }
 
+// 1コマ前のミサイルの位置(使い回し)。戦艦の判定を線分で行うのに使う
+const _missilePrev = new THREE.Vector3();
+
 // ミサイルを進め、熱源へ向きを曲げ、当たったら爆発させる
 function updateMissiles(dt) {
   for (let i = missiles.length - 1; i >= 0; i--) {
@@ -3360,6 +3363,9 @@ function updateMissiles(dt) {
       m.direction.lerp(want, Math.min(MISSILE.TURN_RATE * dt, 1)).normalize();
     }
 
+    // 進む前の位置を控える(戦艦の判定を線分で行うため。弾と同じ理由)
+    _missilePrev.copy(m.mesh.position);
+
     m.mesh.position.addScaledVector(m.direction, MISSILE.SPEED * dt);
     // 弾頭を進行方向へ向ける
     m.mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(
@@ -3396,7 +3402,8 @@ function updateMissiles(dt) {
     // 閉じていた・艦体に当たった場合は装甲に弾かれ、弾だけが無駄になる ―
     // 機関砲と同じ決まりなので、ミサイルだけの抜け道はない。
     if (typeof bossMissileHit === 'function') {
-      const res = bossMissileHit(m.mesh.position, BOSS.DAMAGE.MISSILE, MISSILE.HIT_RADIUS);
+      const res = bossMissileHit(m.mesh.position, BOSS.DAMAGE.MISSILE,
+                                 MISSILE.HIT_RADIUS, _missilePrev);
       if (res) {
         if (res === 'vent') {
           spawnFlash(m.mesh.position, 26, 0xffffff, 0.3);
@@ -3918,11 +3925,20 @@ function updateBlasts(dt) {
   }
 }
 
+// 1コマ前の弾の位置を控える入れ物(使い回し)。
+// 戦艦の当たり判定を「点」ではなく「線分」で行うために要る。
+const _boltPrev = new THREE.Vector3();
+
 // 飛んでいる弾を進め、命中判定をして、寿命が尽きたものを消す
 function updateBolts(dt) {
   // 後ろから前へ回すのがコツ。途中で要素を消しても番号がずれない
   for (let i = bolts.length - 1; i >= 0; i--) {
     const bolt = bolts[i];
+
+    // 進む前の位置を控えておく。戦艦の判定はこの2点を結ぶ線分で行う ―
+    // 弾は1コマで1.5ほど跳ぶので、点だけで見ると排熱口の円板(厚みほぼ0)や
+    // 溝の桟(高さ1.6)を飛び越して素通りしてしまう。
+    _boltPrev.copy(bolt.mesh.position);
 
     // addScaledVector(向き, 距離) = その向きへ指定した距離だけ進める
     bolt.mesh.position.addScaledVector(bolt.direction, BOLT.SPEED * dt);
@@ -3943,7 +3959,7 @@ function updateBolts(dt) {
     // 判定そのものを boss.js に任せる。true = この弾はそこで消える。
     if (!struck && typeof bossTakeHit === 'function') {
       const isFirst = (bolt.volleyId !== lastDamagedVolley);
-      if (bossTakeHit(bolt.mesh.position, isFirst ? bolt.damage : 0)) {
+      if (bossTakeHit(bolt.mesh.position, isFirst ? bolt.damage : 0, _boltPrev)) {
         if (isFirst) lastDamagedVolley = bolt.volleyId;
         scene.remove(bolt.mesh);
         bolts.splice(i, 1);

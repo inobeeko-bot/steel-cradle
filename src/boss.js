@@ -471,6 +471,11 @@ function buildBossVent(spec) {
   const g = new THREE.Group();
   g.position.copy(pos);
   g.rotation.copy(rot);
+  // 艦から見た位置と向きを行列にしておく。
+  // 排熱口は「艦の表面に貼った平らな円板」なので、当たり判定も円板で行う。
+  // そのために、点を「排熱口から見た座標」へ引き戻す道具(逆行列)が要る。
+  // 艦体に対して動かないので、ここで1回作れば以後ずっと使える。
+  g.updateMatrix();
 
   const R = BOSS.VENT.RADIUS;
 
@@ -525,6 +530,11 @@ function buildBossVent(spec) {
     mark: new THREE.Object3D(),
     prevMark: new THREE.Vector3(),   // 1コマ前の位置(速度を測るのに使う)
     hasPrev: false,
+
+    // 「艦から見た座標」→「排熱口から見た座標」に直す行列。
+    // 排熱口から見ると、円板は必ず XY 平面に寝ていて、法線は Z ―
+    // だから半径は √(x²+y²)、面からの浮きは |z| で読める。
+    toDisc: new THREE.Matrix4().copy(g.matrix).invert(),
   };
 
   // --- ミサイルのロック対象 -------------------------------------------
@@ -1234,17 +1244,31 @@ function clearBossBeam() {
 //   1. 弱点の装置に触れたか? → 開いた芯ならダメージ、それ以外は弾かれる
 //   2. 艦体の中か?           → いつでも弾かれる
 // ===================================================================
-function bossTakeHit(point, damage) {
+// prevPoint = 1コマ前の位置。渡すと、その間を通った線分で判定する。
+// 弾は1コマに1.5ほど跳ぶので、点だけで見ると薄い部品(溝の桟は高さ1.6、
+// 排熱口の円板はほぼ厚み0)を飛び越して素通りする。
+// 省略すると点として扱う(爆風など、動いていないものの判定用)。
+const _sweepFrom = new THREE.Vector3();
+const _sweepTo   = new THREE.Vector3();
+const _sweepAt   = new THREE.Vector3();
+
+function bossTakeHit(point, damage, prevPoint) {
   if (!boss || bossState !== 'active') return false;
 
   // 飛んでいる弾ぜんぶが毎コマここへ来る。艦を包む球より外なら、
   // 行列の作り直しも座標変換もせずに帰る(いちばん効く節約)。
-  const rough = boss.radius + BOSS.VENT.RIM_RADIUS;
+  // 線分ぶんの長さも足しておかないと、跨いだコマを取りこぼす。
+  const span = prevPoint ? prevPoint.distanceTo(point) : 0;
+  const rough = boss.radius + BOSS.VENT.RIM_RADIUS + span;
   if (boss.group.position.distanceToSquared(point) > rough * rough) return false;
 
-  // --- 1. 弱点 ---
-  const local = bossToLocal(point);
-  const vent = bossVentAt(local, 0);
+  // 線分の両端を、艦から見た座標にしておく
+  _sweepTo.copy(bossToLocal(point));
+  if (prevPoint) _sweepFrom.copy(bossToLocal(prevPoint));
+  else           _sweepFrom.copy(_sweepTo);
+
+  // --- 1. 弱点(平らな円板として、線分で見る)---
+  const vent = bossVentAt(_sweepFrom, _sweepTo, 0);
   if (vent) {
     if (vent.hitCore && vent.vent.alive && vent.vent.open) {
       damageBossVent(vent.vent, point, damage);
@@ -1256,11 +1280,26 @@ function bossTakeHit(point, damage) {
   }
 
   // --- 2. 艦体 ---
-  if (bossPointInsideBody(local)) {
+  // 線分を細かく刻んで確かめる。刻み幅は、いちばん薄い部品(溝の桟の高さ1.6)の
+  // 半分より小さくしておけば、跨いで見落とすことはない。
+  if (bossSegmentInsideBody(_sweepFrom, _sweepTo)) {
     bossRicochet(point);
     return true;
   }
 
+  return false;
+}
+
+// 線分のどこかが艦に入っているか。
+// 点で見ると跳び越してしまう薄い部品を、刻んで拾う。
+function bossSegmentInsideBody(from, to) {
+  const span = from.distanceTo(to);
+  // 0.7 = 溝の桟の高さ1.6の半分より小さい。これ以下なら跨げない
+  const steps = Math.max(1, Math.ceil(span / 0.7));
+  for (let i = 0; i <= steps; i++) {
+    _sweepAt.lerpVectors(from, to, i / steps);
+    if (bossPointInsideBody(_sweepAt, 0)) return true;
+  }
   return false;
 }
 
@@ -1273,15 +1312,54 @@ function bossTakeHit(point, damage) {
 // 縁まで見ておかないと、排熱口は艦体から浮いているので
 // そこを撃った弾が艦を素通りしてしまう。
 //
-// local は艦から見た座標。margin は近接信管ぶんの甘さ。
-// 見つからなければ null。
+// 【球ではなく円板で見る理由】
+// 排熱口は艦の表面に貼られた平らな円板で、厚みはほぼ無い。
+// これを半径7.5の球で判定していたので、円板の真上7.5の
+// 何も無い空間を通った弾まで当たっていた ―
+// 「超狭い弱点を、開いた瞬間に狙う」はずが、見た目よりずっと当たりやすかった。
+//
+// 排熱口から見た座標に直すと、円板は必ず XY 平面に寝ているので、
+//   面内の半径 = √(x² + y²)   … 円板からどれだけ横にずれているか
+//   面からの浮き = |z|          … 円板からどれだけ浮いているか
+// の2つを別々に見られる。これが「見えているとおり」の判定になる。
+//
+// from / to は艦から見た座標で、弾が1コマで通った線分の両端。
+// to だけを見ると、1コマ1.5跳ぶ弾が薄い円板を飛び越してしまう(トンネリング)ので、
+// 線分が円板の面を横切った点で判定する。
+// margin は近接信管ぶんの甘さ(ミサイル用)。見つからなければ null。
 // ===================================================================
-function bossVentAt(local, margin) {
+const _discFrom = new THREE.Vector3();
+const _discTo   = new THREE.Vector3();
+const _discAt   = new THREE.Vector3();
+
+function bossVentAt(from, to, margin) {
   const m = margin || 0;
+  // 円板の「厚み」。面ぴったり0だと、線分が面をまたがない限り当たらなくなる。
+  // 弾そのものの太さぶんは持たせておく。
+  const halfThick = 0.9 + m;
+
   for (const v of boss.vents) {
-    const d = local.distanceTo(v.group.position);
-    if (d > BOSS.VENT.RIM_RADIUS + m) continue;
-    return { vent: v, hitCore: d <= BOSS.VENT.HIT_RADIUS + m };
+    _discFrom.copy(from).applyMatrix4(v.toDisc);
+    _discTo.copy(to).applyMatrix4(v.toDisc);
+
+    // --- 線分のうち、円板の面にいちばん近いところを選ぶ ---
+    let p = _discAt.copy(_discTo);
+    const dz = _discTo.z - _discFrom.z;
+    if (Math.abs(dz) > 1e-6) {
+      // 面(z=0)を横切っているなら、その交点で見る。
+      // これがトンネリング対策の本体 ― 通り抜けた弾もここで捕まる
+      const t = -_discFrom.z / dz;
+      if (t >= 0 && t <= 1) p.lerpVectors(_discFrom, _discTo, t);
+    }
+
+    // 面から浮きすぎているものは当たっていない
+    if (Math.abs(p.z) > halfThick) continue;
+
+    // 面内でどれだけ中心からずれているか
+    const r = Math.sqrt(p.x * p.x + p.y * p.y);
+    if (r > BOSS.VENT.RIM_RADIUS + m) continue;
+
+    return { vent: v, hitCore: r <= BOSS.VENT.HIT_RADIUS + m };
   }
   return null;
 }
@@ -1360,6 +1438,47 @@ function bossRamCheck(point, radius) {
 
 
 // ===================================================================
+// 艦体の表面まで、あとどれくらいか
+//
+// コックピットからは距離感がつかめない ― 全長210の艦は、
+// 遠くにいても近くにいても「画面いっぱい」にしか見えないため。
+// 近接警告(main.js)に渡す数字をここで出す。
+//
+// 艦体は楔形+22個の部品でできていて、表面までの距離を式で解くのは面倒。
+// 代わりに「margin だけ太らせた艦の中に自機が入っているか」を
+// 挟み撃ちで何回か聞いて、境目を割り出す。
+//
+// maxDist より遠ければ Infinity(いちばん多い場合を1回の判定で切り上げる)。
+// ===================================================================
+function bossSurfaceDistance(point, maxDist) {
+  if (!boss) return Infinity;
+  if (bossState !== 'arriving' && bossState !== 'active' && bossState !== 'dying') return Infinity;
+  if (!boss.group.visible) return Infinity;
+
+  // 大まかな足切り。ほとんどのコマはここで帰る
+  const rough = boss.radius + maxDist;
+  if (boss.group.position.distanceToSquared(point) > rough * rough) return Infinity;
+
+  const local = bossToLocal(point).clone();
+
+  // maxDist まで太らせても届かないなら、警告する距離にはいない
+  if (!bossPointInsideBody(local, maxDist)) return Infinity;
+  // すでに艦体の中(=接触している)
+  if (bossPointInsideBody(local, 0)) return 0;
+
+  // 挟み撃ち。8回も回せば maxDist/256 まで絞れる ―
+  // 警告の色を決めるには十分すぎる精度
+  let lo = 0, hi = maxDist;
+  for (let i = 0; i < 8; i++) {
+    const mid = (lo + hi) / 2;
+    if (bossPointInsideBody(local, mid)) hi = mid;   // まだ届く = 表面はもっと近い
+    else                                  lo = mid;  // 届かない = 表面はもっと遠い
+  }
+  return hi;
+}
+
+
+// ===================================================================
 // ミサイル1発ぶんの命中判定
 //
 // 近接信管なので、少し離れていても弱点なら効く。
@@ -1368,18 +1487,22 @@ function bossRamCheck(point, radius) {
 //   'armor' … 装甲・閉じた排熱口に当たった(弾かれた。弾は無駄になる)
 //   null    … 当たっていない
 // ===================================================================
-function bossMissileHit(point, damage, fuse) {
+// prevPoint = 1コマ前の位置。ミサイルは弾速95で1コマ1.6ほど跳ぶので、
+// 弾と同じく線分で見ないと薄いところを飛び越す。
+function bossMissileHit(point, damage, fuse, prevPoint) {
   if (!boss || bossState !== 'active') return null;
 
   const f = fuse || 0;
-  const rough = boss.radius + f + BOSS.VENT.RIM_RADIUS;
+  const span = prevPoint ? prevPoint.distanceTo(point) : 0;
+  const rough = boss.radius + f + BOSS.VENT.RIM_RADIUS + span;
   if (boss.group.position.distanceToSquared(point) > rough * rough) return null;
 
-  const local = bossToLocal(point);
+  const local = bossToLocal(point).clone();
+  const prevLocal = prevPoint ? bossToLocal(prevPoint).clone() : local;
 
   // --- 1. 排熱口 ---
   // 近接信管ぶんだけ甘くする。ロックして撃った弾が縁で滑るのは気持ちが悪い。
-  const vent = bossVentAt(local, f);
+  const vent = bossVentAt(prevLocal, local, f);
   if (vent) {
     if (vent.hitCore && vent.vent.alive && vent.vent.open) {
       damageBossVent(vent.vent, point, damage);
@@ -1389,7 +1512,7 @@ function bossMissileHit(point, damage, fuse) {
   }
 
   // --- 2. 艦体 ---
-  if (bossPointInsideBody(local, f * 0.5)) return 'armor';
+  if (bossSegmentInsideBody(prevLocal, local)) return 'armor';
 
   return null;
 }
