@@ -41,6 +41,8 @@ const VOICE = {
     CAPITAL_SHIP:    { text: 'WARNING. CAPITAL SHIP.',       priority: 2 },
     MAIN_GUN:        { text: 'MAIN GUN CHARGING. EVADE.', priority: 2, cooldown: 8 },
     VENT_EXPOSED:    { text: 'VENT EXPOSED.',      priority: 1, cooldown: 6 },
+    // 残骸回収(salvage.js)。拾うたびに喋られるとうるさいので間隔を空ける
+    SALVAGE:         { text: 'SALVAGE SECURED.',   priority: 1, cooldown: 5 },
 
     // 状態通知(低優先・割り込まれる側)
     TARGET_ACQUIRED:  { text: 'TARGET ACQUIRED.',            priority: 1 },

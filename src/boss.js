@@ -1432,6 +1432,14 @@ function damageBossVent(vent, point, damage) {
   spawnDebris(p, 18, 0.5, 20, 0xffd9a0, true);
   startShake(1.0);
 
+  // 排熱口を1基潰すごとに、確定で回収物が1つ吹き出す(salvage.js)。
+  //
+  // 戦艦戦は1対1で戦闘機が出ないので、これが無いとボス戦のあいだ
+  // アイテムがひとつも手に入らない。いちばん難しいところが報われる形にした。
+  // 拾いに行くには艦体のすぐ脇まで寄ることになる ―
+  // 艦体に触れたら即死なので、報酬と危険がそこで釣り合う。
+  if (typeof spawnSalvage === 'function') spawnSalvage(p);
+
   onBossVentDown(vent, bossVentsLeft());
 
   if (bossVentsLeft() <= 0) startBossDeath();

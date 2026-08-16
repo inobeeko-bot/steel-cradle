@@ -697,6 +697,8 @@ function drawConsole3D(s, dt) {
   ];
   items.push(['A-TRK', s.autoTrack ? 'ON' : 'OFF']);
   if (s.empLeft > 0) items.push(['EMP', s.empLeft.toFixed(1) + 's']);
+  // 回収した機材の効果。効いているときだけ欄が増える(EMPと同じ扱い)
+  if (s.salvageBuff) items.push(['SALVAGE', s.salvageBuff]);
 
   let ix = 250;
   g.textAlign = 'left';
@@ -706,7 +708,8 @@ function drawConsole3D(s, dt) {
     g.fillText(k, ix, 274);
     const kw = g.measureText(k).width;
     g.font = 'bold 15px monospace';
-    g.fillStyle = (k === 'EMP') ? '#7fd4ff' : CONSOLE3D.TEXT;
+    g.fillStyle = (k === 'EMP') ? '#7fd4ff'
+                : (k === 'SALVAGE') ? '#9ff6ff' : CONSOLE3D.TEXT;
     g.fillText(String(v), ix + kw + 8, 274);
     ix += kw + 10 + g.measureText(String(v)).width + 28;
     // 仕切り線

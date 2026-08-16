@@ -332,12 +332,12 @@ let radiatorHold = 0;   // 次に開閉してよくなるまでの残り秒
 
 // ラジエーターの開閉を変えたときの熱収支(毎秒)。
 // 「今このまま閉じていたらどうなるか」を先に計算するために使う。
+//
+// ※ 式は currentHeatRate と同じものを共有している。
+//   別々に書くと、回収した機材の効果を片方だけ入れ忘れた瞬間に
+//   「計器の予測」と「実際に起きること」が食い違う。
 function heatRateIfRadiator(open) {
-  const gain = power.weapon * HEAT.PER_WEAPON
-             + (isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE);
-  const vent = HEAT.VENT_BASE * (driftInput ? HEAT.DRIFT_VENT_MULT : 1)
-             + (open ? HEAT.VENT_RADIATOR : 0);
-  return gain - vent;
+  return heatGainRate() - heatVentRate(open);
 }
 
 // 閉じたままなら、あと何秒で天井(CEILING)に届くか。
@@ -549,6 +549,8 @@ const bombNameEl    = document.getElementById('wp-bomb-name');
 const bombAmmoEl    = document.getElementById('wp-bomb-ammo');
 const bombRowEl     = document.getElementById('wp-bomb-row');
 const empBadgeEl    = document.getElementById('emp-badge');
+const salvageBadgeEl = document.getElementById('salvage-badge');
+const salvageBuffEl  = document.getElementById('salvage-buff');
 
 const timerElMission = document.getElementById('mission-timer');
 const resultPanel    = document.getElementById('result-panel');
@@ -643,6 +645,9 @@ function renderHeat() {
   empBadgeEl.classList.toggle('on', empLeft > 0);
   if (empLeft > 0) empBadgeEl.querySelector('b').textContent = empLeft.toFixed(1);
 
+  // 回収した機材の効果。効いているものを短く並べて、残り秒を出す
+  renderSalvageBadge();
+
   // いちばん近い敵の熱。パイロ弾がどれだけ効いているかを見せる
   const eHeat = nearestEnemyHeat();
   const ventDown = nearestEnemyVentDown();
@@ -703,31 +708,135 @@ function renderStatus() {
   shieldRegenEl.style.color = regen > 0 ? '#8fd8ff' : '';
 }
 
+// ===================================================================
+// 回収した機材の効果(salvage.js のドロップを拾うと点く)
+//
+// 【いちばん大事な決まり】
+// 電力セルが上げるのは「配分の合計」ではなく「発電量」。
+//
+// 仕様書9.3:「毎秒供給される発電量を4系統に手動配分。合計100%を超えられない」
+// ― 100%はあくまで“発電した量の取り分”なので、発電量が増えれば
+// 同じ配分30%がより多くの出力になる。配分UIは100%のまま動かさない。
+//
+// これは言葉遊びではなく、山場を守るための線引きでもある。
+// 仕様書9.2は「自機100%配分だったUIが艦隊電力プールに接続される。
+// いつものUIが化ける瞬間」をレビヤタン最終戦のために予約している。
+// そこを拾い物ひとつで先に使ってしまうわけにはいかない。
+// ===================================================================
+let powerBoostLeft   = 0;   // 発電量アップの残り秒
+let powerBoostMult   = 1;   // そのときの倍率
+let coolantLeft      = 0;   // 放熱アップの残り秒
+let coolantVentMult  = 1;   // そのときの倍率
+
+// 今の発電量の倍率。電力に由来する値は、すべてこれを掛けて使う
+function powerOutputMult() {
+  return powerBoostLeft > 0 ? powerBoostMult : 1;
+}
+
+// 今の放熱の倍率(冷却材)
+function coolantMult() {
+  return coolantLeft > 0 ? coolantVentMult : 1;
+}
+
+// 武器に実際に届いている電力(%)。
+// 「武器への配分が minPower に足りているか」の判定は全部これを見る。
+// 発電量が上がっていれば、配分を動かさなくても撃てるようになることがある。
+function effectiveWeaponPower() {
+  return power.weapon * powerOutputMult();
+}
+
+// 効いている効果を「PWR+20% 12s」のような短い文字列にする。
+// 何も効いていなければ null(バッジごと隠す)。
+// HTMLの計器と3Dの計器で同じ文字列を使うので、作るのは1か所だけにしてある。
+function salvageBuffText() {
+  const parts = [];
+  if (powerBoostLeft > 0) {
+    parts.push('PWR+' + Math.round((powerBoostMult - 1) * 100) + '% '
+      + Math.ceil(powerBoostLeft) + 's');
+  }
+  if (coolantLeft > 0) {
+    parts.push('COOL×' + coolantVentMult.toFixed(1) + ' '
+      + Math.ceil(coolantLeft) + 's');
+  }
+  return parts.length ? parts.join('  ') : null;
+}
+
+function renderSalvageBadge() {
+  if (!salvageBadgeEl) return;
+  const text = salvageBuffText();
+  salvageBadgeEl.classList.toggle('on', !!text);
+  if (text) salvageBuffEl.textContent = text;
+}
+
+// 効果の残り時間を減らす。tickBody から毎コマ呼ぶ
+function updateSalvageBuffs(dt) {
+  if (powerBoostLeft > 0) {
+    powerBoostLeft -= dt;
+    if (powerBoostLeft <= 0) {
+      powerBoostLeft = 0;
+      addCombatLog('電力セル 消耗 ― 出力 通常', 'warn');
+    }
+  }
+  if (coolantLeft > 0) {
+    coolantLeft -= dt;
+    if (coolantLeft <= 0) {
+      coolantLeft = 0;
+      addCombatLog('冷却材 枯渇', 'warn');
+    }
+  }
+}
+
+// 全部解除する(再出撃時)
+function resetSalvageBuffs() {
+  powerBoostLeft = 0;
+  powerBoostMult = 1;
+  coolantLeft = 0;
+  coolantVentMult = 1;
+}
+
 // シールドの毎秒回復量(仕様書9.3:電力配分で回復速度が変化)
 function currentShieldRegen() {
   if (isBroken('shield')) return 0;            // シールド系が壊れていると再生しない
   if (shutdownLeft > 0) return 0;              // 停止中は回復しない(＝無防備)
   if (empLeft > 0) return 0;                   // EMPを浴びている間は再生が止まる
   if (shieldHp >= SHIELD.MAX) return 0;        // 満タンなら回復不要
-  return power.shield * SHIELD.REGEN_PER_POWER;
+  return power.shield * SHIELD.REGEN_PER_POWER * powerOutputMult();
 }
 
 // 現在の毎秒の熱収支を計算して返す(発熱 − 放熱)
+//
+// ※ 発熱と放熱の式は、予測計器(heatRateIfRadiator / HEAT BUDGET表示)でも
+//   使う。バラバラに書くと「計器の予測」と「実際に起きること」がずれるので、
+//   下の2つの小さな関数に集約して、3か所ともここを通すようにしてある。
 function currentHeatRate() {
   if (shutdownLeft > 0) return -HEAT.VENT_SHUTDOWN;
+  return heatGainRate() - heatVentRate(radiatorOpen);
+}
 
-  // 発熱は2か所から出る。武器系(主)とエンジン(従、武器の約1/4)。
+// 発熱(毎秒)。武器系(主)とエンジン(従、武器の約1/4)の2か所から出る。
+//
+// 発電量が上がっている間は発熱も増える ― 出力を上げたぶん熱くなるのは当然で、
+// 「電力セルは強いが、そのぶん熱の管理が忙しくなる」という代償になる。
+function heatGainRate() {
+  const mult = powerOutputMult();
   // エンジン系の計器が壊れていると出力を制御できず最低出力に張り付くので、
   // そのときはエンジンぶんの発熱も出ない(飛べていないのだから当然)。
-  const gain = power.weapon * HEAT.PER_WEAPON
-             + (isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE);
+  return power.weapon * HEAT.PER_WEAPON * mult
+       + (isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE * mult);
+}
 
-  // 自然放熱。ドリフト中(推力カット)は2倍に増える。
+// 放熱(毎秒)。radiator に true を渡すとラジエーター展開中の値になる。
+//
+// 自然放熱はドリフト中(推力カット)に2倍。
+// 回収した冷却材は、この自然放熱のほうを増やす ―
+// ラジエーターを開かずに冷えるので、被探知が上がらないのが要点。
+// 仕様書9.3の「冷やしたいが今冷やすと危ない」ジレンマからの、稀な逃げ道。
+function heatVentRate(radiator) {
+  const natural = HEAT.VENT_BASE
+                * (driftInput ? HEAT.DRIFT_VENT_MULT : 1)
+                * coolantMult();
   // ラジエーターぶんは倍率の対象外(こちらは機械的な強制放熱なので)
-  const naturalVent = HEAT.VENT_BASE * (driftInput ? HEAT.DRIFT_VENT_MULT : 1);
-  const vent = naturalVent + (radiatorOpen ? HEAT.VENT_RADIATOR : 0);
-
-  return gain - vent;
+  return natural + (radiator ? HEAT.VENT_RADIATOR : 0);
 }
 
 // ===================================================================
@@ -1187,8 +1296,11 @@ function updateVoiceAlerts(dt) {
 // 実際に効いているセンサーの強さ(%)。
 // 配分そのものではなく、故障とEMPの影響を通したあとの値を使う。
 // 索敵半径・ロック時間・レーダーはすべてこの1か所を見る。
+// 回収した電力セルで発電量が上がっている間は、その倍率もここで通す。
+// 配分そのものは変わらないが、同じ配分がより多くの出力になる ―
+// 結果として索敵半径もロック速度も伸びる。
 function effectiveSensor() {
-  let pct = power.sensor;
+  let pct = power.sensor * powerOutputMult();
   if (isBroken('sensor')) pct *= 0.5;          // センサー計器の故障
   if (empLeft > 0) pct *= EMP_SELF.SENSOR_MULT; // EMPで一時的に低下
   return pct;
@@ -1270,6 +1382,9 @@ const enemyMarkers = [];   // 3D画面に重ねる敵マーカー
 let bossBlip   = null;
 let bossMarker = null;
 
+// 落ちている回収物の輝点。同時に出せる数だけ先に作っておく
+const salvageBlips = [];
+
 function setupRadar() {
   const count = (typeof enemyCount === 'function') ? enemyCount() : 0;
 
@@ -1291,6 +1406,15 @@ function setupRadar() {
   bossMarker.innerHTML = '<span></span><span></span><span></span><span></span>' +
                          '<span class="dist"></span><span class="tag"></span>';
   markerLayer.appendChild(bossMarker);
+
+  // 回収物用の輝点。場に出せる数だけ先に作っておく
+  const salvageMax = (typeof SALVAGE !== 'undefined') ? SALVAGE.MAX_ON_FIELD : 0;
+  for (let i = 0; i < salvageMax; i++) {
+    const sb = document.createElement('div');
+    sb.className = 'radar-blip salvage';
+    radarEl.appendChild(sb);
+    salvageBlips.push(sb);
+  }
 
   for (let i = 0; i < count; i++) {
     const blip = document.createElement('div');
@@ -1500,13 +1624,16 @@ function renderConsole3D(dt) {
       ammo: (left === Infinity) ? '∞' : String(left),
       heatText: w.burst ? ('+' + w.heat + '×' + w.burst) : ('+' + w.heat),
       low: (left !== Infinity && left <= Math.max(2, Math.ceil(w.ammo * 0.25)))
-           || power.weapon < w.minPower,
+           || effectiveWeaponPower() < w.minPower,
       isBeam: w.key === 'BEAM',
     },
     bomb: { label: a.label, ammo: bombAmmo[bombIndex],
-            low: bombAmmo[bombIndex] <= 0 || power.weapon < a.minPower },
+            low: bombAmmo[bombIndex] <= 0 || effectiveWeaponPower() < a.minPower },
     flare: flareCount,
     flareLow: flareCount <= Math.ceil(FLARE.COUNT / 6) || heat >= FLARE.HEAT_LIMIT,
+
+    // 効いている回収品の効果(無ければ null で、計器の欄ごと出ない)
+    salvageBuff: salvageBuffText(),
 
     contacts: getContacts(sensorPct),
     inbound: missileContacts(sensorPct),
@@ -1528,11 +1655,12 @@ function renderConsole3D(dt) {
     // --- 熱の内訳 ---
     // 熱ゲージは溜まった量しか見せない。上がるか下がるかは
     // 発熱(武器+エンジン)と放熱の差で決まるので、その3つを分けて渡す。
-    heatFromWeapon: power.weapon * HEAT.PER_WEAPON,
-    heatFromEngine: isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE,
-    heatVent: (shutdownLeft > 0) ? HEAT.VENT_SHUTDOWN
-      : (HEAT.VENT_BASE * (driftInput ? HEAT.DRIFT_VENT_MULT : 1)
-         + (radiatorOpen ? HEAT.VENT_RADIATOR : 0)),
+    // 倍率(発電量アップ・冷却材)も通した実際の値を渡すこと ―
+    // ここだけ素の値にすると、計器の内訳と熱ゲージの動きが食い違う。
+    heatFromWeapon: power.weapon * HEAT.PER_WEAPON * powerOutputMult(),
+    heatFromEngine: isBroken('engine')
+      ? 0 : power.engine * HEAT.PER_ENGINE * powerOutputMult(),
+    heatVent: (shutdownLeft > 0) ? HEAT.VENT_SHUTDOWN : heatVentRate(radiatorOpen),
 
     // --- 狙われているか / 見つかっているか ---
     threat: threatStatus(),
@@ -1659,6 +1787,7 @@ function renderRadar() {
   }
 
   renderBossBlip(range);
+  renderSalvageBlips(sensorPct, range);
 
   // --- 接近しているミサイル ---
   // 敵機と同じ形の輝点だが、色と点滅で「これは弾ではなく脅威」と分かるようにする
@@ -1714,6 +1843,25 @@ function renderBossBlip(range) {
   bossMarker.querySelector('.dist').textContent = Math.round(c.dist);
   bossMarker.querySelector('.tag').textContent =
     BOSS.NAME + '  VENT ' + c.ventsLeft + '/' + BOSS.VENT.LIST.length;
+}
+
+// ===================================================================
+// 落ちている回収物の輝点
+//
+// 戦艦と違って索敵半径には縛る ―
+// 拾い物まで無条件に見えると、センサーへ電力を配ることの意味が薄れる。
+// 「センサーを厚くすると拾い物が見つけやすい」という利得を残したい。
+// ===================================================================
+function renderSalvageBlips(sensorPct, range) {
+  const list = (typeof salvageContacts === 'function')
+    ? salvageContacts(sensorPct) : [];
+
+  for (let i = 0; i < salvageBlips.length; i++) {
+    const el = salvageBlips[i];
+    const c = list[i];
+    if (!c) { el.style.display = 'none'; continue; }
+    placeBlip(el, c, range);
+  }
 }
 
 // レーダーに使う索敵半径の熱補正。ミサイルは噴射で燃えているぶん遠くから映る
@@ -1809,13 +1957,13 @@ function renderWeapon() {
   bombNameEl.textContent = a.label;
   bombAmmoEl.textContent = bombAmmo[bombIndex];
   bombRowEl.classList.toggle('low',
-    bombAmmo[bombIndex] <= 0 || power.weapon < a.minPower);
+    bombAmmo[bombIndex] <= 0 || effectiveWeaponPower() < a.minPower);
 
   // 残りが少ない、または電力不足で撃てないときは赤くする。
   // 「残り10発」で固定にすると、最大6発のミサイルが常に赤くなってしまうので、
   // 搭載数に対する割合(1/4以下)で判断する。
   const low = (left !== Infinity && left <= Math.max(2, Math.ceil(w.ammo * 0.25)));
-  const noPower = (power.weapon < w.minPower);
+  const noPower = (effectiveWeaponPower() < w.minPower);
   weaponPanelEl.classList.toggle('low', low || noPower);
   weaponPanelEl.classList.toggle('beam', w.key === 'BEAM');
 
@@ -1824,6 +1972,61 @@ function renderWeapon() {
   // 残りが搭載数の1/6を切ったら赤くする(搭載数を変えても目安が変わらないように)
   flareRowEl.classList.toggle('low',
     flareCount <= Math.ceil(FLARE.COUNT / 6) || heat >= FLARE.HEAT_LIMIT);
+}
+
+// ===================================================================
+// 残骸から機材を回収した ― salvage.js から呼ばれる
+//
+// 3D側は「拾った」ことだけを知らせ、効果・音・ログは main.js が決める。
+// boss.js が onBossVentHit を呼ぶのと同じ役割分担。
+//
+// 設定の裏づけは docs/salvage_system_v1.md に置いてある。
+// 4種とも実在技術に根拠がある(仕様書6.2「魔法的な謎兵器は禁止」の方針)。
+// ===================================================================
+function onSalvagePickup(kind) {
+  if (missionState !== 'active') return;
+
+  const spec = salvageKind(kind);
+  playSalvage();   // 上がっていく3音(audio.js)
+
+  if (kind === 'power') {
+    // 発電量が上がる。配分UIの合計は100%のまま(仕様書9.3)。
+    // スーパーキャパシタ/フライホイール蓄電 ― 残骸に残っていた蓄電体
+    powerBoostMult = spec.MULT;
+    powerBoostLeft = spec.SEC;   // 重ねがけは延長ではなく上書き
+    addCombatLog('◆ 電力セル回収 ― 出力 +'
+      + Math.round((spec.MULT - 1) * 100) + '%', 'kill');
+    speakVoice('SALVAGE');
+
+  } else if (kind === 'coolant') {
+    // 昇華型冷却材。ラジエーターを開かずに冷える = 被探知が上がらない。
+    // 仕様書9.3の「冷やしたいが今冷やすと危ない」ジレンマからの逃げ道
+    heat = Math.max(heat - spec.HEAT_DROP, 0);
+    coolantVentMult = spec.VENT_MULT;
+    coolantLeft = spec.SEC;
+    addCombatLog('◆ 冷却材回収 ― 熱 −' + spec.HEAT_DROP, 'kill');
+    speakVoice('SALVAGE');
+
+  } else if (kind === 'prop') {
+    // 破断タンクの残留推進剤。満タンにはしない ―
+    // 「終盤の残量が読み合いになる」(仕様書9.3)を残すため
+    const before = propellant;
+    propellant = Math.min(propellant + spec.AMOUNT, PROP.MAX);
+    addCombatLog('◆ 推進剤回収 ― +'
+      + Math.round(propellant - before), 'kill');
+    speakVoice('SALVAGE');
+
+  } else {
+    // シールド発生器のコンデンサバンク。HULLは治らない(仕様書9.3:戦闘中回復不可)
+    const before = shieldHp;
+    shieldHp = Math.min(shieldHp + spec.AMOUNT, SHIELD.MAX);
+    addCombatLog('◆ シールド回収 ― +'
+      + Math.round(shieldHp - before), 'kill');
+    speakVoice('SALVAGE');
+  }
+
+  render();       // 拾った瞬間にゲージへ反映する
+  renderStatus();
 }
 
 // ===================================================================
@@ -2201,6 +2404,7 @@ function restartMission() {
   timerElMission.textContent = formatTime(missionTime);   // 表示も即座に戻す
   setCombatFrozen(false);
   resetBoss();   // 前回の戦艦を片付ける(boss.js)。出し直しは自機を戻したあと
+  resetSalvageBuffs();   // 前回拾った機材の効果を解除する(持ち越さない)
 
   // --- 7パラメーターを初期状態へ ---
   power.weapon = 25; power.shield = 25; power.engine = 25; power.sensor = 25;
@@ -2269,7 +2473,7 @@ function fire() {
     return;
   }
   // ビームは武器へ電力が回っていないと撃てない(=電力を大食いする表現)
-  if (power.weapon < w.minPower) {
+  if (effectiveWeaponPower() < w.minPower) {
     addCombatLog('出力不足', 'hull');
     playDenied();
     return;
@@ -2371,7 +2575,7 @@ function fireBomb() {
   if (bombCooldown > 0) return;
 
   // EMPは電力を食う装備。武器へ配っていないと撃てない
-  if (power.weapon < a.minPower) {
+  if (effectiveWeaponPower() < a.minPower) {
     addCombatLog('出力不足', 'hull');
     playDenied();
     return;
@@ -2533,13 +2737,18 @@ function tickBody(now) {
 
   updateAutoFire(dt);               // 機関砲の連射
   updateBurst(dt);                  // ビーム砲の3点バーストの残り条
+  // 回収した機材の効果の残り時間。熱と電力の計算より先に減らすこと ―
+  // 切れたコマにまだ効いていることになると、計器の予測と1コマぶんずれる
+  updateSalvageBuffs(dt);
   updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
   updateView(dt);                   // W/A/S/D による機首操作
   updateShake(dt);                  // 被弾の揺れ(カメラを置く前に決めておく)
   // エンジン系が壊れていると推力を制御できず、最低出力に張り付く
-  updateFlight(dt, isBroken('engine') ? 0 : power.engine);
+  // 発電量が上がっている間は、同じ配分でも実効出力が増える = 速く飛べる。
+  // scene.js の speedFromEnginePower は100を超える値を受け取れるようにしてある。
+  updateFlight(dt, isBroken('engine') ? 0 : power.engine * powerOutputMult());
   // 自機の熱とラジエーターの状態を、敵の目とミサイルのシーカーへ伝える
   setPlayerHeat(heat, radiatorOpen);
   updateAimFeedback(dt);            // 照準の捕捉判定と、捕捉音

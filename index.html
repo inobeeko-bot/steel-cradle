@@ -862,6 +862,12 @@
     }
     .emp-badge.on { display: block; }
 
+    /* 回収した機材の効果。効いている間だけ出る(EMPバッジと同じ作り)。
+       点滅はさせない ― こちらは警告ではなく「今なにが乗っているか」の表示。 */
+    .salvage-badge { display: none; color: #9ff6ff; }
+    .salvage-badge.on { display: block; }
+    .salvage-badge b { color: #d8fbff; }
+
     /* 残弾が少ない、または電力不足で撃てないとき */
     .weapon-panel.low { border-color: #a83a26; }
     .weapon-panel.low .wp-ammo { color: #ff5a3c; }
@@ -1013,6 +1019,15 @@
       animation: blipAlert 0.4s steps(2) infinite;
     }
     .radar-blip.capital.hot::after { border-color: #ff5a3c; }
+
+    /* 落ちている回収物。敵ではないので、赤系から離して落ち着いた水色にする。
+       小さめ・点滅なし ― 目を引きすぎると本来の脅威表示の邪魔になる。 */
+    .radar-blip.salvage {
+      color: #6fe0c8;
+      font-size: 9px;
+      text-shadow: 0 0 6px rgba(111, 224, 200, 0.8);
+      z-index: 2;
+    }
 
     /* 接近してくるミサイル。白く光らせ、輪を付けて速く点滅させる。
        敵機の輝点と同じ ▲▼ を使うので、高さの読み方は同じまま。 */
@@ -1993,6 +2008,8 @@
         <!-- EMPを浴びている間だけ出す警告。ふだんは非表示 -->
         <div id="emp-badge" class="emp-badge">EMP <b>0.0</b>s</div>
         <div>A-TRK <b id="auto-track">ON</b></div>
+        <!-- 回収した機材の効果。効いているときだけ光る(EMPバッジと同じ作り) -->
+        <div id="salvage-badge" class="salvage-badge">SALVAGE <b id="salvage-buff">――</b></div>
         <!-- 操作説明の出し方だけは常に見えるようにしておく -->
         <div style="color:#35474f">TAB <span data-i18n="hud.help">操作説明</span></div>
       </div>
@@ -2130,6 +2147,8 @@
 
   <!-- 巨大戦艦。scene.js の描画関数を使うので、そのあとに読む -->
   <script src="src/boss.js"></script>
+  <!-- 残骸から拾える機材(scene.js の関数を使うので、その後ろ) -->
+  <script src="src/salvage.js"></script>
 
   <!-- 計器と7パラメーターのロジック -->
   <script src="src/main.js"></script>

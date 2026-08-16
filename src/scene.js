@@ -2416,6 +2416,7 @@ function setEnemiesHidden(on) {
     e.group.visible = on ? false : e.alive;
   }
   if (typeof setBossHidden === 'function') setBossHidden(on);
+  if (typeof setSalvageHidden === 'function') setSalvageHidden(on);
 }
 
 // ===================================================================
@@ -2478,6 +2479,9 @@ function resetFlight() {
   debris.length = 0;
   ordnance.length = 0;
   blasts.length = 0;
+  // 落ちている回収物(salvage.js)。材質を1個ずつ作っているので、
+  // 向こうの後片付け関数に任せる。ここを忘れると出撃をまたいで場に残る
+  if (typeof resetSalvage === 'function') resetSalvage();
 
   // 敵を全機復活させて前方に置き直す。
   //
@@ -2509,9 +2513,16 @@ function resetFlight() {
   });
 }
 
-// エンジンの電力配分(0〜100%)から速度を決める
+// エンジンの電力配分から速度を決める。
+//
+// ※ 上限が100ではなく POWER_INPUT_MAX なのは、回収した電力セルで
+//   「発電量」が上がると、配分30%が実効36%ぶんの出力になるため。
+//   ここを100で切ってしまうと、発電量を上げても速度だけ変わらない
+//   という無言の天井になる(索敵の sensorRange も同じ理由)。
+//   配分UIの合計は100%のまま ― 仕様書9.3の文言はそちらを指している。
 function speedFromEnginePower(enginePercent) {
-  const ratio = Math.max(0, Math.min(100, enginePercent)) / 100;
+  const cap = (typeof SALVAGE !== 'undefined') ? SALVAGE.POWER_INPUT_MAX : 100;
+  const ratio = Math.max(0, Math.min(cap, enginePercent)) / 100;
   return PLAYER.MIN_SPEED + ratio * (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED);
 }
 
@@ -4958,8 +4969,11 @@ function enemyCount() {
 // センサー精度(仕様書9.3の7つ目)
 // 索敵半径 = センサーの電力配分で決まる。配分0%でも最低限は見える。
 // ===================================================================
+// ※ 上限が100でない理由は speedFromEnginePower のコメントを参照
+//   (回収した電力セルで発電量が上がるぶん、配分が100を超えて渡ってくる)
 function sensorRange(sensorPercent) {
-  const ratio = Math.max(0, Math.min(100, sensorPercent)) / 100;
+  const cap = (typeof SALVAGE !== 'undefined') ? SALVAGE.POWER_INPUT_MAX : 100;
+  const ratio = Math.max(0, Math.min(cap, sensorPercent)) / 100;
   return SENSOR.MIN_RANGE + ratio * (SENSOR.MAX_RANGE - SENSOR.MIN_RANGE);
 }
 
@@ -5124,6 +5138,15 @@ function killEnemy(e, credit) {
   spawnBlast(e.group.position, 13, 0xffc070);
   spawnDebris(e.group.position, 10, 0.30, DEBRIS.KILL_SPEED * 1.2, 0xffd9a0, true);   // 光る火花
   spawnDebris(e.group.position, DEBRIS.KILL_COUNT, DEBRIS.KILL_SIZE, DEBRIS.KILL_SPEED);
+
+  // 残骸から、まだ生きている機材が浮き出てくることがある(salvage.js)。
+  // ここが全撃墜経路の合流点なので、ドロップの抽選はここ1か所で足りる。
+  // 戦果に数えない撃墜(敵どうしの相討ちなど)では落とさない ―
+  // 自分で仕留めていないものから拾えるのはおかしい。
+  if (credit !== false && typeof rollSalvageDrop === 'function') {
+    rollSalvageDrop(e.group.position);
+  }
+
   if (credit !== false) onKill();
 }
 
@@ -5364,6 +5387,11 @@ function updateScene(dt, elapsed) {
   // ボス(boss.js)。中で「戦闘停止中は動かない」を見ているので、ここでは毎回呼ぶ。
   // 撃破演出だけは戦闘停止の影響を受けずに最後まで流したいので、この位置に置く。
   if (typeof updateBoss === 'function') updateBoss(dt);
+
+  // 落ちている回収物(salvage.js)。
+  // 戦闘停止中も明滅と寿命だけは進める ― 止めると、
+  // ミッション終了の瞬間に画面が固まって見える。
+  if (typeof updateSalvage === 'function') updateSalvage(dt);
 
   // 敵の速度は、戦闘が止まっていても測っておく。
   // 偏差照準がこれを使うので、未計測だと印が出なくなる。
