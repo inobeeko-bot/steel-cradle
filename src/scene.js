@@ -1210,6 +1210,7 @@ function buildScene() {
   // 星より外、描画限界より内に置く。星と同じく自機について来るので、
   // どこまで飛んでも空に浮かんだままになる
   if (typeof createColony === 'function') createColony();
+  if (typeof createColony2 === 'function') createColony2();
 
   // --- 流れる宇宙塵 ---
   dust = createDustField();
@@ -2283,7 +2284,8 @@ function updateFlight(dt, enginePercent) {
 // コロニーは「星と同じ層」なので、視点の更新と同じ場所で動かす。
 // 中で自機について来させ、ゆっくり回している(colony.js)
 function updateColonyIfPresent(dt) {
-  if (typeof updateColony === 'function') updateColony(dt);
+  if (typeof updateColony  === 'function') updateColony(dt);
+  if (typeof updateColony2 === 'function') updateColony2(dt);
 }
 
 // ドリフトの入切。main.js が Shift の押し具合を見て毎コマ呼ぶ

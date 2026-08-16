@@ -75,7 +75,44 @@ const COLONY = {
 };
 
 
-let colony = null;   // { group, ring, spin } 作る前は null
+// ===================================================================
+// 2つめ ― 円筒型(オニール・シリンダー)
+//
+// 1つめの円盤(トーラス)とは別系統の設計。
+// 円盤は「輪の内壁に住む」が、こちらは「長い筒の内側全面に住む」。
+// 帯状の陸と窓が筒の長さ方向に交互に走り、外には採光鏡が開く。
+//
+// 設定資料3.2は「数十のコロニーで構成」。形が1種類しかないほうが不自然なので、
+// 遠景に2つ、違う設計のものを浮かべておく。
+// こちらは遠く・小さめに置いて、円盤の引き立て役にする。
+// ===================================================================
+const COLONY2 = {
+  DIST: 3400,
+  DIR: { x: 0.74, y: -0.13, z: -0.66 },   // 円盤の反対側(右前やや下)
+
+  LENGTH:  1500,   // 筒の長さ
+  RADIUS:   300,   // 筒の半径
+  SEG:       12,   // 断面の分割数。低ポリで面が数えられるように
+  STRIPS:     6,   // 陸と窓の帯の数(交互なので、窓は半分の3本)
+  MIRRORS:    3,   // 採光鏡の枚数
+  CAP_R:    120,   // 両端のドッキング部の半径
+
+  // 軸の傾き。真横に寝かせると板に見えるので、少し振っておく
+  TILT_X: 0.30,
+  TILT_Y: 0.55,
+
+  SPIN: 0.045,     // 回る速さ。円盤より小さいぶん速く回る(遠心力を稼ぐため)
+
+  HULL:   0x46525e,
+  HULL_D: 0x2c3640,
+  EDGE:   0x8296a8,
+  WINDOW: 0xbfe6d8,   // 窓は寒色。円盤の暖色と対にして、別のコロニーだと分かるように
+  MIRROR: 0xc8dcec,
+};
+
+
+let colony  = null;   // 1つめ(円盤)。作る前は null
+let colony2 = null;   // 2つめ(円筒)
 
 
 // ===================================================================
@@ -247,7 +284,145 @@ function updateColony(dt) {
 
 
 // メニューの背景でも出したままにするので、隠す関数は用意していない。
-// 隠したくなったら colony.group.visible を false にすればよい。
+// 隠したくなったら visible を false にすればよい。
 function setColonyHidden(hidden) {
-  if (colony) colony.group.visible = !hidden;
+  if (colony)  colony.group.visible  = !hidden;
+  if (colony2) colony2.group.visible = !hidden;
+}
+
+
+// ===================================================================
+// 2つめ(円筒型)を作る
+//
+// 円盤が「輪」なら、こちらは「筒」。
+// 筒の内側全面が地面で、長さ方向に陸と窓の帯が交互に走る。
+// 外に開いた鏡がその窓へ陽を落とす ― という、オニール・シリンダーの構え。
+// ===================================================================
+function createColony2() {
+  const C = COLONY2;
+  const g = new THREE.Group();
+
+  // --- 筒の本体 -------------------------------------------------------
+  // 断面を12角形にしてある。丸くしすぎると、このゲームの見た目から浮く
+  const bodyMat = new THREE.MeshLambertMaterial({
+    color: C.HULL, flatShading: true,
+  });
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(C.RADIUS, C.RADIUS, C.LENGTH, C.SEG, 1),
+    bodyMat);
+  body.rotation.z = Math.PI / 2;   // 筒を横に寝かせる(長さ方向を x に)
+  g.add(body);
+
+  // --- 陸と窓の帯 -----------------------------------------------------
+  // 筒の長さ方向に、交互に走らせる。
+  // 実物は「窓の帯から陽が入り、陸の帯に落ちる」という作りで、
+  // 外から見ると光る帯と暗い帯の縞になる。
+  // この縞が、円盤との見分けをいちばん強くつけている。
+  const landMat = new THREE.MeshLambertMaterial({
+    color: C.HULL_D, flatShading: true,
+  });
+  const winMat = new THREE.MeshBasicMaterial({
+    color: C.WINDOW, transparent: true, opacity: 0.62,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  for (let i = 0; i < C.STRIPS; i++) {
+    const a = (i / C.STRIPS) * Math.PI * 2;
+    const isWindow = (i % 2 === 0);
+    const w = C.RADIUS * 0.52;   // 帯の幅
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(C.LENGTH * 0.94, w, 6),
+      isWindow ? winMat : landMat);
+    // 筒の表面へ貼り付ける
+    strip.position.set(0, Math.cos(a) * C.RADIUS, Math.sin(a) * C.RADIUS);
+    strip.rotation.x = -a;
+    g.add(strip);
+  }
+
+  // --- 補強のリング ---------------------------------------------------
+  // 等間隔に巻く。円盤の「帯」と同じ役目 ― 大きさを測る物差しになる
+  const ribMat = new THREE.MeshLambertMaterial({
+    color: C.HULL_D, flatShading: true,
+  });
+  for (let i = 0; i < 5; i++) {
+    const t = -0.4 + (i / 4) * 0.8;   // 長さ方向に −0.4〜+0.4
+    const rib = new THREE.Mesh(
+      new THREE.TorusGeometry(C.RADIUS * 1.04, C.RADIUS * 0.045, 4, C.SEG), ribMat);
+    rib.position.x = t * C.LENGTH;
+    rib.rotation.y = Math.PI / 2;   // 輪の面を筒の断面に合わせる
+    g.add(rib);
+  }
+
+  // --- 両端のドッキング部 ---------------------------------------------
+  // 筒の端は塞がっていて、そこに船が着く。円盤には無い形なので、
+  // シルエットの差がここでも出る
+  const capMat = new THREE.MeshLambertMaterial({
+    color: C.EDGE, flatShading: true,
+  });
+  for (const side of [-1, 1]) {
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(C.CAP_R * 0.6, C.CAP_R, C.LENGTH * 0.10, 8),
+      capMat);
+    cap.rotation.z = Math.PI / 2;
+    cap.position.x = side * (C.LENGTH / 2 + C.LENGTH * 0.05);
+    g.add(cap);
+    cap.add(new THREE.LineSegments(
+      new THREE.EdgesGeometry(cap.geometry),
+      new THREE.LineBasicMaterial({ color: 0xd0e2f0 })));
+  }
+
+  // --- 採光鏡 ---------------------------------------------------------
+  // 筒の外に、窓の帯と同じ数だけ蝶番で開く長い鏡。
+  // これが陽を筒の中へ落とす。円盤の「鏡面帆」と役目は同じだが、
+  // 円盤は軸から降らせ、こちらは横から差し込む ― 形が違う理由もそこにある。
+  const mirrorMat = new THREE.MeshLambertMaterial({
+    color: C.MIRROR, flatShading: true, side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < C.MIRRORS; i++) {
+    const a = (i / C.MIRRORS) * Math.PI * 2;
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(C.LENGTH * 0.88, C.RADIUS * 1.5), mirrorMat);
+    // 筒の外へ、開いた本のページのように立てる
+    const out = C.RADIUS * 1.75;
+    m.position.set(0, Math.cos(a) * out, Math.sin(a) * out);
+    m.rotation.x = -a + 0.6;   // 少し倒して陽を受けている風にする
+    g.add(m);
+  }
+
+  // --- 航法灯 ---------------------------------------------------------
+  if (!flareGlowTex) flareGlowTex = makeFlareGlowTexture();
+  for (const side of [-1, 1]) {
+    const b = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: flareGlowTex, color: 0x9fe1cb, transparent: true, opacity: 0.75,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    b.scale.setScalar(70);
+    b.position.x = side * (C.LENGTH / 2 + C.LENGTH * 0.11);
+    g.add(b);
+  }
+
+  // 円盤と同じく、回転と傾きを別の入れ物に分ける
+  const tilt = new THREE.Group();
+  tilt.rotation.x = C.TILT_X;
+  tilt.rotation.y = C.TILT_Y;
+  tilt.add(g);
+  scene.add(tilt);
+
+  colony2 = { group: tilt, spin: g };
+  updateColony2(0);
+  return colony2;
+}
+
+
+// 2つめの更新。1つめと同じく自機について来て、軸のまわりに回る
+function updateColony2(dt) {
+  if (!colony2 || !playerShip) return;
+
+  colony2.group.position.set(
+    playerShip.position.x + COLONY2.DIR.x * COLONY2.DIST,
+    playerShip.position.y + COLONY2.DIR.y * COLONY2.DIST,
+    playerShip.position.z + COLONY2.DIR.z * COLONY2.DIST
+  );
+
+  // 筒は長さ方向(x)を軸にして回る。円盤の z 軸まわりとは軸が違う
+  colony2.spin.rotation.x += COLONY2.SPIN * dt;
 }
