@@ -25,6 +25,13 @@ const ADV_ASSETS = {
       mid:  'assets/adv/maps/hill/bg_hill_mid.png',
       near: 'assets/adv/maps/hill/bg_hill_near.png',
     },
+    // 第2章 収穫祭の夜。同じ丘だが時間帯が違うので、色替えではなく別マップ。
+    // パレット原器も別(docs/art/bg_hill_night_master.png、48色)。
+    hill_night: {
+      far:  'assets/adv/maps/hill_night/bg_hill_night_far.png',
+      mid:  'assets/adv/maps/hill_night/bg_hill_night_mid.png',
+      near: 'assets/adv/maps/hill_night/bg_hill_night_near.png',
+    },
   },
 
   // --- 人物 ---------------------------------------------------------

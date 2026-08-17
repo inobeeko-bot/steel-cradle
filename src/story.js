@@ -299,6 +299,7 @@ const STORY_SCENES = {
         { whoKey: 'adv.name.kaito', text: { ja: '……先にじいちゃんの手伝いだな。呼ばれてる気がする', en: "…Better help Grandpa first. I get the feeling I'm being called." } },
       ],
       nextTitleKey: 'adv.scene2',
+      nextScene: 'ch1_s2_festival',   // 題を出したあと、続けてこのシーンへ
     },
 
     // --- 開幕の地の文(自動再生)---
@@ -306,6 +307,141 @@ const STORY_SCENES = {
       { text: { ja: 'アルカディアには、本物の林檎の木があった。', en: "Arcadia had a real apple tree." } },
       { text: { ja: '直径六キロの回転体の内壁に土を敷き、鏡で採った陽光を軸から降らせる。', en: "Soil laid on the inner wall of a six-kilometre drum, sunlight caught by mirrors and poured down the axis." } },
       { text: { ja: '――地図には、載っていない村。', en: "—A village that was on no map." } },
+    ],
+  },
+
+
+  // ===================================================================
+  // 一章 シーン2 ― 収穫祭の夜
+  //
+  // 小説パート「二 七分間」の冒頭にあたる。
+  //   「警報は収穫祭の夜に鳴った」
+  // 平和な場面として始まり、祖父との3回目の会話の途中で警報が鳴る。
+  // プレイヤーが村を「失うに値するもの」として見終えてから鳴らすのが要点。
+  // ===================================================================
+  ch1_s2_festival: {
+    titleKey: 'adv.title.festival',
+    placeKey: 'adv.place.arcadia',
+    map: 'hill_night',
+
+    width: ADV_CONFIG.BASE_W,   // 1画面ぶん。横スクロールしない
+    start: 60,                  // 左から来る(格納庫の灯りを落とした帰り)
+
+    // --- 接地ライン ---
+    // 背景の上に線を重ね、カイトの立ち絵を並べて目で合わせた実測値。
+    // (pixel_kobo の ground_overlay で確認。自動抽出はできない ―
+    //  near層の輪郭上端は草や土手を含むので、歩行線とは一致しない)
+    groundY: [
+      [   0, 352 ],
+      [  80, 349 ],
+      [ 160, 345 ],
+      [ 240, 341 ],   // 木の根元。ここがいちばん高い
+      [ 320, 343 ],
+      [ 400, 345 ],
+      [ 480, 348 ],
+      [ 560, 351 ],
+      [ 640, 353 ],
+    ],
+
+    // --- 調べられる物 ---
+    props: [
+      {
+        id: 'examine_stall', x: 110, markX: 75, markH: 72, labelKey: 'adv.label.stall',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '今年もヨナ婆さんの林檎酒か。去年は三杯で記憶が飛んだ', en: "Old Yona's cider again. Three cups last year and the evening simply stopped." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '……二杯までにしとこう', en: "…Two cups. Two." } },
+        ],
+      },
+      {
+        id: 'examine_pumpkin', x: 200, markX: 215, markH: 26, labelKey: 'adv.label.pumpkin',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '一個で旧式艇の推進剤タンクより重いな。……比べる意味はないけど', en: "Heavier than a fuel tank off one of our boats. …Not that anyone's comparing." } },
+        ],
+      },
+      {
+        id: 'examine_tree_night', x: 285, markX: 262, markH: 112, labelKey: 'adv.label.tree',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '昼間は固かったのにな。灯りをぶら下げると、実ってるように見える', en: "They were hard this afternoon. Hang enough lanterns and they look ripe." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: 'じいちゃんの木だ。今夜だけは、村のもんってことになってる', en: "Grandpa's tree. For one night a year it belongs to the whole village." } },
+        ],
+      },
+      {
+        id: 'examine_dock', x: 490, markX: 502, markH: 46, labelKey: 'adv.label.dock',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '格納庫の灯りは落としてきた。これで当番も上がり', en: "Hangar lights are out. That's my watch finished." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'あの奥に祠がある。三重の隔壁の向こう。鍵はじいちゃんの首から下がってるやつ、ひとつきり', en: "The shrine's back there. Three bulkheads deep. One key, and it hangs around Grandpa's neck." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '何が封じてあるのか、村の誰も知らない。訊いても、じいちゃんは剪定の話を始める', en: "Nobody in the village knows what's sealed in there. Ask Grandpa and he starts talking about pruning." } },
+        ],
+      },
+    ],
+
+    // --- 祖父。今夜は仕事をしていないので立ち姿のまま(脚立も作業アニメも無い)---
+    npc: {
+      id: 'grandpa', x: 330,
+      idle: ADV_ASSETS.chars.grandpa.idle,
+      faceX: 285,              // 自分の木のほうを見ている
+      doneFlag: 'gp2_3_done',
+      labelKey: 'adv.name.grandpa',
+
+      talks: [
+        // 1回目
+        { flag: 'gp2_1_done', lines: [
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'おう、来たか。灯りは落としたな', en: "There you are. Lights out?" } },
+          { whoKey: 'adv.name.kaito', text: { ja: '落とした。……格納庫、埃っぽかったよ', en: "Out. …That hangar's filthy, by the way." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '掃除は明日でいい。今日は飲め', en: "Sweep it tomorrow. Tonight you drink." } },
+        ]},
+
+        // 2回目 ― 御守りの話。小説「一 林檎の木」の台詞をここに置く
+        { flag: 'gp2_2_done', lines: [
+          { whoKey: 'adv.name.kaito', text: { ja: 'なあ。その首から下げてるやつ、結局なんなんだ', en: "That thing round your neck. What is it, actually?" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '御守りだ', en: "A charm." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'それは知ってる。何の御守りだよ', en: "I know that. A charm for what?" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '……名前ってのはな、実の入ってない殻みたいなもんだ', en: "…A name is a husk with no fruit in it." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'なんだそれ', en: "What's that supposed to mean?" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'だが、殻がなけりゃ実は守れん。それだけ覚えとけ', en: "But without the husk you can't protect the fruit. Just remember that much." } },
+        ]},
+
+        // 3回目 ― ここで警報が鳴る
+        { flag: 'gp2_3_done', lines: [
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'カイト。お前、十九になったな', en: "Kaito. You turned nineteen." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '急にどうした', en: "Where did that come from?" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: 'いや。……ちょうど、俺が親父からこれを渡された齢だ', en: "Nothing. …It's the age my father handed me this, that's all." } },
+          { text: { ja: '――警報。', en: "—The alarm." } },
+          { text: { ja: '提灯の灯りが、いっせいに揺れた。軸の方向で、何かが減速噴射を焚いている。隠す気のない光だった。', en: "Every lantern swung at once. Somewhere along the axis, something was burning a deceleration blast. It was not trying to hide." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……訓練の日程、今日じゃない', en: "…There's no drill scheduled tonight." } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '……', en: "…" } },
+          { whoKey: 'adv.name.grandpa',   text: { ja: '走れ。格納庫だ', en: "Run. Get to the hangar." } },
+        ]},
+      ],
+
+      // 3回目のあとに話しかけたとき
+      repeat: [
+        { whoKey: 'adv.name.grandpa', text: { ja: '行け。俺は祠を開ける', en: "Go. I'll open the shrine." } },
+      ],
+    },
+
+    // --- 出口(右端)= 旧ドックの格納庫へ ---
+    exit: {
+      x: 628,
+      unlock: 'gp2_3_done',
+      blocked: [
+        { whoKey: 'adv.name.kaito', text: { ja: '……じいちゃんに一杯付き合ってからだな', en: "…One drink with Grandpa first." } },
+      ],
+      nextTitleKey: 'adv.scene3',
+      // シーン3(戦闘)は未実装。題を出して終わる。
+    },
+
+    // --- 開幕の地の文 ---
+    opening: [
+      { text: { ja: '収穫祭の夜は、軸から吊るした提灯で明るかった。', en: "The night of the harvest festival was bright with lanterns strung from the axis." } },
+      { text: { ja: '鏡面帆はとうに畳まれている。内壁の空を満たしているのは、村が自分で灯した火だけだ。', en: "The mirror sails were long since furled. The sky on the inner wall held nothing but the fires the village had lit for itself." } },
+      { text: { ja: '――地図にない村の、地図にない祭り。', en: "—A festival that was on no map, in a village that was on no map." } },
     ],
   },
 };
@@ -686,18 +822,22 @@ function closeStoryLines() {
 // 調べる / 話しかける
 // ===================================================================
 function interactStory() {
-  const t = nearestStoryTarget();
-  if (!t) return;
+  // ★ この変数を t という名前にしてはいけない。
+  //   翻訳関数 t() を覆い隠してしまい、下の t('adv.next') が
+  //   「オブジェクトを関数として呼ぶ」ことになって例外になる。
+  //   実際そうなっていて、チュートリアルの案内2つが一度も出ていなかった。
+  const target = nearestStoryTarget();
+  if (!target) return;
 
-  if (t.kind === 'prop') {
-    const seen = storyTalkCount[t.data.id] || 0;
-    storyTalkCount[t.data.id] = seen + 1;
-    const lines = (seen > 0 && t.data.repeat) ? t.data.repeat : t.data.first;
+  if (target.kind === 'prop') {
+    const seen = storyTalkCount[target.data.id] || 0;
+    storyTalkCount[target.data.id] = seen + 1;
+    const lines = (seen > 0 && target.data.repeat) ? target.data.repeat : target.data.first;
     openStoryLines(lines);
     return;
   }
 
-  const npc = t.data;
+  const npc = target.data;
   const step = storyTalkCount[npc.id] || 0;
 
   if (step < npc.talks.length) {
@@ -925,6 +1065,11 @@ function placeStoryActor(el, x, w, h, liftY) {
 // 出口を抜けた:次のシーンへ
 // ===================================================================
 function leaveStoryScene() {
+  // ★ 次のシーンの情報は、いまのうちに控えておく。
+  //   下の setTimeout が動く頃には exitStory() が storyScene を null にしている。
+  const titleKey = storyScene.exit.nextTitleKey;
+  const nextId   = storyScene.exit.nextScene || null;
+
   storyLines = 'leaving';
   storyFadeEl.style.transition = 'opacity 2s';
   storyFadeEl.style.opacity = '1';
@@ -932,14 +1077,22 @@ function leaveStoryScene() {
   storyMarkEl.classList.remove('on');
 
   setTimeout(() => {
-    storyPromptEl.textContent = t('adv.toBeContinued') + t(storyScene.exit.nextTitleKey);
+    storyPromptEl.textContent =
+      (nextId ? '' : t('adv.toBeContinued')) + t(titleKey);
     storyPromptEl.classList.add('on', 'big');
   }, 1600);
 
   setTimeout(() => {
     storyPromptEl.classList.remove('on', 'big');
     storyFadeEl.style.transition = '';
-    exitStory();
+
+    // 次のシーンがあれば、そのまま続ける。
+    // 無ければ「To be continued」を出してメニューへ戻る(いままでの動き)。
+    if (nextId && STORY_SCENES[nextId]) {
+      startStoryScene(nextId);
+    } else {
+      exitStory();
+    }
   }, 5200);
 }
 

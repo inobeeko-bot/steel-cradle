@@ -246,12 +246,19 @@ const TEXT = {
                          '<span>W / S</span> or <span>↑ ↓</span>　<span>Esc</span> to go back'],
   'adv.toBeContinued':  ['To be continued ―― ', 'To be continued —— '],
   'adv.scene2':         ['シーン2 ― 収穫祭の夜', 'Scene 2 — The night of the harvest festival'],
+  // シーン1でカイトが言う「旧式艇四機、異常なし」を、そのまま題にしてある。
+  'adv.scene3':         ['シーン3 ― 旧式艇四機', 'Scene 3 — Four old boats'],
+
+  'adv.title.festival': ['第一部 一章 ― 収穫祭の夜', 'Part I, Ch. 1 — The Night of the Harvest Festival'],
 
   'adv.name.kaito':     ['カイト', 'Kaito'],
   'adv.name.grandpa':   ['祖父', 'Grandfather'],
   'adv.label.house':    ['家の戸口', 'The door'],
   'adv.label.tree':     ['林檎の木', 'The apple tree'],
   'adv.label.shears':   ['剪定バサミ', 'The pruning shears'],
+  'adv.label.stall':    ['林檎酒の屋台', 'The cider stall'],
+  'adv.label.pumpkin':  ['南瓜', 'The pumpkins'],
+  'adv.label.dock':     ['旧ドックの入口', 'The old dock'],
 
   // --- 言語切り替え -------------------------------------------------
   'menu.language':      ['言語 / Language', 'Language / 言語'],
