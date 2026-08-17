@@ -77,6 +77,15 @@ const PROP = {
   MAX:         100,   // 満タン
   BURST_COST:    8,   // 回避バースト1回の消費量(=12回で空)
   BURST_HEAT:    6,   // 仕様書9.3「武器発射・高出力機動で蓄積」に基づく熱の跳ね上がり
+  // バレルロール(QQ / EE)1回の消費量。
+  //
+  // ただ回るだけならタダでよさそうだが、回っている間ビームを弾けるので、
+  // タダにすると「ずっと回り続けるのが最適」になってしまう。
+  // 仕様書9.3は推進剤を「急機動で消費」と定めており、
+  // 1回転は立派な急機動なので、ここから引くのが筋。
+  // 回避バースト(8)より安く、満タンから16回。
+  BARREL_COST:   6,
+  BARREL_HEAT:   4,   // 急機動ぶんの熱。バースト(6)より軽い
   LOW:          20,   // この値を下回ると数値が赤くなる
 };
 
@@ -170,13 +179,25 @@ const WEAPONS = [
     key: 'BEAM',
     label: 'BEAM',        // ビーム砲
     jp: 'ビーム砲',
-    heat: 3,              // 1条ごとに上がる熱。3点バーストなので合計は約9
+    heat: 3,              // 1条ごとに上がる熱。6点バーストなので合計は18
     ammo: Infinity,       // 弾数無限。撃ち放題
     minPower: 15,         // 武器への電力配分がこれ未満だと撃てない
     auto: false,          // 押しっぱなしでは連射しない
     interval: 0.45,       // 次のバーストまでの間隔
-    burst: 3,             // ★ 1回の引き金で3条を続けて撃つ(3点バースト)
-    burstGap: 0.085,      // バースト内の1条ごとの間隔(秒)
+    // ★ 1回の引き金で6条を続けて撃つ(6点バースト)。
+    //
+    // 【3点から6点へ増やしたときに動いた数字】
+    //   1回の引き金で入るダメージ   3 → 6(汎用機のHP6 = 全弾当たれば一撃)
+    //   1回の引き金で上がる熱      9 → 18(熱100までの引き金の回数 11回 → 5.6回)
+    //   バーストが鳴り終わるまで  0.17秒 → 0.35秒
+    //
+    // burstGap を 0.085 から詰めてあるのは、バースト長を間隔の内側に収めるため。
+    // 0.085 のままだと 0.437秒 で、次の引き金までの 0.45秒 に対して余裕が0.013秒しかない ―
+    // コマ落ちすると撃ち終わる前に次が撃てる状態になり、
+    // 新しい引き金が前のバーストを途中で打ち切ってしまう(条数が減る)。
+    // 0.07 なら 0.35秒 で、0.10秒 の無音が残る = バーストの区切りも耳で分かる。
+    burst: 6,
+    burstGap: 0.07,       // バースト内の1条ごとの間隔(秒)
     boltColor: 0x9fe1cb,
   },
   {
@@ -222,7 +243,7 @@ let fireCooldown = 0;                 // 次に撃てるようになるまでの
 let flareCount = FLARE.COUNT;         // フレアの残数(scene.js の FLARE と同じ数を使う)
 let saidAmmoOut = false;              // 弾切れ音声を言ったか(1回だけ)
 
-// --- 3点バーストの途中経過 ---
+// --- バーストの途中経過(ビーム砲の連続射)---
 // 引き金を1回引くと3条が続けて出る。1条目はその場で撃ち、
 // 残りは「あと何条・次まで何秒」を覚えておいて毎コマ撃ち足していく。
 let burstLeft  = 0;   // 撃ち残している条の数
@@ -247,7 +268,7 @@ const BOMBS = [
   {
     key: 'PYRO', label: 'PYRO', jp: 'パイロ弾',
     kind: 'pyro',
-    ammo: 24,         // 1発が範囲攻撃なので、機関砲よりずっと少ない
+    ammo: 36,         // 1発が範囲攻撃なので、機関砲よりずっと少ない
     heat: 1.5,        // 自分の熱はほとんど出ない
     minPower: 0,
     auto: true,       // ★ Bを押しっぱなしで撒き続けられる
@@ -256,7 +277,9 @@ const BOMBS = [
   {
     key: 'BOMB', label: 'BOMB', jp: 'ボム',
     kind: 'bomb',
-    ammo: 4,          // 少ない。ここぞで使う
+    // 「弾幕・置き攻め」(武器仕様書§3)を名乗るには4発では足りなかった ―
+    // 10分の戦闘で4回しか置けないなら、置き方を試すこと自体ができない
+    ammo: 8,
     heat: 2,          // 投げるだけなので熱はほとんど出ない
     minPower: 0,      // 電力もいらない
     auto: false,
@@ -265,7 +288,7 @@ const BOMBS = [
   {
     key: 'EMP', label: 'EMP', jp: 'EMP弾',
     kind: 'emp',
-    ammo: 3,
+    ammo: 5,          // 3発では「ここぞ」を選ぶ前に無くなっていた
     heat: 6,          // 強い電磁パルスを作るので、自分もそれなりに発熱する
     minPower: 20,     // ★ 電力を食う装備。武器へ配ってないと撃てない
     auto: false,
@@ -410,17 +433,51 @@ let damageFlash = 0;   // 被弾した瞬間
 const BREAKAGE = {
   weapon:     { label: '武器',     lost: '発射不能' },
   shield:     { label: 'シールド', lost: '再生停止' },
-  engine:     { label: 'エンジン', lost: '推力固定' },
+  engine:     { label: 'エンジン', lost: '推力半減' },
   sensor:     { label: 'センサー', lost: '索敵半減' },
   heat:       { label: '熱',       lost: '冷却不能' },
   propellant: { label: '推進剤',   lost: 'バースト不能' },
   shieldhp:   { label: 'シールド強度', lost: '表示不正確' },
   mirror:     { label: '後方カメラ', lost: '映像喪失' },
+  scope:      { label: '照準スコープ', lost: '映像喪失' },
 };
 
 // 壊れた系統の名前を入れておく集合。has() で「壊れているか」を調べる
 const brokenSystems = new Set();
 const isBroken = (key) => brokenSystems.has(key);
+
+// ===================================================================
+// エンジン系が壊れているときに、配分がどれだけ通るか
+//
+// 【なぜ0にしないのか】
+// 以前は壊れた瞬間にエンジンの配分を 0 として扱っていた。
+// speedFromEnginePower(0) は最低速度の 6 なので、
+// 敵(狙撃機14 / 汎用機20〜30 / 突撃機34〜46)の誰よりも遅くなり、
+// 逃げることも間合いを詰めることもできない置き物になっていた。
+// 武器系を「3系統のうち1つだけ沈黙」にしたのと同じ理由で、
+// 計器の破損が試合を終わらせてしまうのは避ける。
+//
+// 半減にすると、こうなる:
+//
+//   配分   無傷の速度   破損時の速度
+//   ----  ----------  ------------
+//    25%      17.0         11.5
+//    50%      28.0         17.0
+//   100%      50.0         28.0
+//
+// 壊れても、エンジンへ振り直せば 28 まで戻せる ―
+// 狙撃機(14)と汎用機の攻撃中(20)は振り切れる速さ。
+// ただしそのぶん武器・シールド・センサーを削ることになるので、
+// 「どこを壊されたか」が配分の判断に効く、という設計はむしろ強くなる。
+//
+// センサーの破損が「索敵半減」で生きているのと同じ形に揃えてある。
+const ENGINE_BROKEN_MULT = 0.5;
+
+// エンジン系の破損を通したあとの、実際に効いている配分
+function effectiveEngine() {
+  const pct = power.engine * powerOutputMult();
+  return isBroken('engine') ? pct * ENGINE_BROKEN_MULT : pct;
+}
 
 // ===================================================================
 // 沈黙した主武器(ビーム/機関砲/ミサイルのうち、撃てなくなったもの)
@@ -506,6 +563,11 @@ for (const system of SYSTEMS) {
 const totalEl    = document.getElementById('total');
 const presetEl   = document.getElementById('preset');
 const consoleEl  = document.getElementById('console');
+const scopeEl    = document.getElementById('scope');       // 照準スコープの枠
+const scopeMagEl = document.getElementById('scope-mag');   // 照準スコープの倍率表示
+const mirrorEl   = document.getElementById('rear-mirror'); // 後方確認ミラーの枠
+const scopePipEl = document.getElementById('scope-pip');   // スコープの中の偏差照準
+const scopeReadEl = document.getElementById('scope-read');  // スコープの観測・解析
 const heatPanel  = document.getElementById('heat-panel');
 const heatBar    = document.getElementById('heat-bar');
 const heatNum    = document.getElementById('heat-num');
@@ -848,10 +910,11 @@ function currentHeatRate() {
 // 「電力セルは強いが、そのぶん熱の管理が忙しくなる」という代償になる。
 function heatGainRate() {
   const mult = powerOutputMult();
-  // エンジン系の計器が壊れていると出力を制御できず最低出力に張り付くので、
-  // そのときはエンジンぶんの発熱も出ない(飛べていないのだから当然)。
+  // エンジンの発熱は「実際に出ている出力」に比例させる。
+  // 壊れて半減しているときは発熱も半分 ―
+  // ここを0のままにすると「エンジンを壊されたほうが涼しい」ことになってしまう。
   return power.weapon * HEAT.PER_WEAPON * mult
-       + (isBroken('engine') ? 0 : power.engine * HEAT.PER_ENGINE * mult);
+       + effectiveEngine() * HEAT.PER_ENGINE;
 }
 
 // 放熱(毎秒)。radiator に true を渡すとラジエーター展開中の値になる。
@@ -930,6 +993,58 @@ function applyPreset(presetKey) {
 // 仕様書9.3:「急機動(回避バースト)で消費。電力と別枠──
 //             電気があっても燃料切れなら動けない」
 // ===================================================================
+// ===================================================================
+// バレルロール(QQ / EE の2連打)
+//
+// 一気に1回転し、回っている間だけ敵のビーム(曳光)を機体表面で弾く。
+// 弾けるのは曳光だけで、ミサイルと戦艦の大型ビームは通る ―
+// あちらはフレアと射線回避という別の答えが用意してあるので、
+// 回転ひとつで全部無効になってしまわないようにしてある。
+//
+// 戻り値:実際に回ったか(false なら呼び出し側がふつうの90度として扱う)
+// ===================================================================
+let lastRollKey = '';    // 直前に押したロールのキー('q' / 'e')
+let lastRollAt  = -99;   // その時刻(秒)
+
+function tryBarrelRoll(dir) {
+  // 推進剤系が壊れていると急機動そのものができない(回避バーストと同じ扱い)
+  if (isBroken('propellant')) return false;
+  if (propellant < PROP.BARREL_COST) {
+    addCombatLog('推進剤不足 ― ロール不能', 'warn');
+    playDenied();
+    return false;
+  }
+  if (!requestBarrelRoll(dir)) return false;   // すでに回っている
+
+  propellant -= PROP.BARREL_COST;
+  heat = Math.min(heat + PROP.BARREL_HEAT, HEAT.MAX);
+  startShake(0.22);
+  playBurst();
+  addCombatLog('BARREL ROLL', 'warn');
+  return true;
+}
+
+// scene.js から呼ばれる:スコープで撃ち込んだ弾が、敵の系統を潰した。
+// 仕様書9.3-5「どこを壊されたか」が数字より重い ― の裏返しなので、
+// 落としたときとは違う音とログにして「不具にした」ことを伝える。
+function onEnemyPartBroken(part, type) {
+  if (missionState !== 'active') return;
+  partBreakCount += 1;
+  playDeflect();
+  addCombatLog((type || '敵') + ' ' + (part === 'weapon' ? '武装破壊' : '推進破壊'), 'warn');
+}
+let partBreakCount = 0;   // 1試合で潰した系統の数
+
+// scene.js から呼ばれる:回転中にビームを弾いた。
+// ログは出さない ― 1回転で何発も弾くので、出すと戦闘ログが埋まる。
+// 音と火花だけで十分伝わる。
+function onBeamDeflected() {
+  if (missionState !== 'active') return;
+  deflectCount += 1;
+  playDeflect();
+}
+let deflectCount = 0;   // 1試合で弾いた数(リザルト用。いまは数えるだけ)
+
 function burst() {
   // 推進剤系が壊れていると噴射できない
   if (isBroken('propellant')) {
@@ -1028,6 +1143,62 @@ window.addEventListener('keydown', (event) => {
     setAimAssist(!isAimAssistOn());
     playPresetConfirm();
     addCombatLog('AUTO TRACK ' + (isAimAssistOn() ? 'ON' : 'OFF'), 'warn');
+    return;
+  }
+
+  // Q / E キー … 90度ずつの急旋回(ロール)
+  //
+  // 押しっぱなしの自動リピートは無視する(event.repeat)。
+  // 1回の「押した」で必ず90度、というのがこの操作の約束なので、
+  // 押したままにしただけで回り続けると、その約束が崩れる。
+  // もっと回したければもう1回押す ― 2回ぶん(180度)まで予約できる。
+  if ((event.key.toLowerCase() === 'q' || event.key.toLowerCase() === 'e') && !event.repeat) {
+    if (missionState === 'active' && shutdownLeft <= 0) {
+      const key = event.key.toLowerCase();
+      const dir = (key === 'q') ? 1 : -1;
+      const now = performance.now() / 1000;
+
+      // 同じ向きへ素早く2回 → バレルロール(一気に1回転してビームを弾く)
+      if (key === lastRollKey && now - lastRollAt < FEEL.BARREL_TAP_SEC) {
+        if (tryBarrelRoll(dir)) { lastRollKey = ''; return; }
+        // 断られた(推進剤切れなど)ときは、ふつうの90度として扱う
+      }
+      lastRollKey = key;
+      lastRollAt  = now;
+      requestRollStep(dir);
+    }
+    return;
+  }
+
+  // O キー … 照準スコープの開閉
+  //
+  // 【なぜ O か】
+  // 仕様書9.6のキーマップは決定済みで、T(目標切替)・G(神器コア)・
+  // M(戦術プロット)・H(旗艦ドッキング)・C(マスターコーション)は
+  // 将来ぶんとして予約されている。今そこを使うと後で必ずぶつかる。
+  // 空いていて、かつ右手の定位置(発射のP・電力配分の矢印)から
+  // 指を動かさずに届くのが O だった。
+  //
+  // Ctrl は使えない ― 押しながら W を叩くとブラウザがタブを閉じてしまう。
+  if (event.key.toLowerCase() === 'o') {
+    if (missionState !== 'active') return;
+    // 押すたびに 2倍 → 4倍 → 6倍 → 閉じる
+    const r = cycleScope();
+    if (!r) return;
+    if (!r.on) {
+      playViewClick();
+      addCombatLog('SCOPE OFF', 'warn');
+      return;
+    }
+    playPresetConfirm();
+    if (r.capped) {
+      // 選んだ倍率が索敵電力の上限を超えた。黙って落とすと
+      //「押したのに変わらない」と見えるので、足りないことを言う
+      addCombatLog('SCOPE x' + r.mag.toFixed(1) + ' ― 索敵不足(x' +
+                   r.want.toFixed(0) + 'には索敵を上げる)', 'warn');
+    } else {
+      addCombatLog('SCOPE x' + r.mag.toFixed(1), 'warn');
+    }
     return;
   }
 
@@ -1144,6 +1315,8 @@ function applyViewMode(isCockpit) {
   playViewClick();
   viewModeEl.textContent = nowCockpit ? 'COCKPIT' : '3RD';
   consoleEl.classList.toggle('cockpit', nowCockpit);
+  // 後方ミラーの枠も、祖先ではなく自分自身に印を付けて出し入れする
+  if (mirrorEl) mirrorEl.classList.toggle('on', nowCockpit);
   return nowCockpit;
 }
 
@@ -1627,6 +1800,94 @@ function renderLeadPip() {
 // ここでは「今の状態」を集めて console3d.js へ渡すだけ。
 // 描き方はあちら、貼り付け先は scene.js。
 // ===================================================================
+// ===================================================================
+// 照準スコープの枠まわり(中身の映像は scene.js が3Dで描く)
+//
+// ここの仕事は3つだけ:
+//   1. 索敵の実効値を scene.js へ渡す(倍率はこれで決まる)
+//   2. 開いているときだけ枠を出す
+//   3. 倍率の数字を出す
+//
+// 倍率が索敵電力で動くので、この数字がそのまま
+// 「センサーに配ると遠くが狙える」という手応えになる。
+// センサー計器が壊れれば effectiveSensor が半分になり、倍率も勝手に落ちる。
+// ===================================================================
+function renderScopeHud() {
+  // 故障とEMPを通したあとの索敵の強さ。索敵半径・ロック時間と同じ値を使う
+  setScopeSensor(effectiveSensor());
+
+  const st = scopeStatus();
+  // 表示の切り替えは枠そのものに付ける。
+  // この要素は body の直下にあって計器盤(#console)の中ではないので、
+  // 「計器盤に印を付けて子孫を出す」書き方では一致しない
+  if (scopeEl) scopeEl.classList.toggle('on', st.on);
+  if (st.on && scopeMagEl) {
+    // 索敵不足で頭打ちのときは、選んだ倍率も一緒に出す。
+    // 「x6を選んだのに x3.5 しか出ていない」を、数字だけで分かるようにする
+    scopeMagEl.textContent = st.capped
+      ? 'x' + st.mag.toFixed(1) + ' / x' + st.want.toFixed(0)
+      : 'x' + st.mag.toFixed(1);
+    scopeMagEl.style.color = st.capped ? '#ffb44d' : '#7fe0c4';
+  }
+}
+
+// ===================================================================
+// スコープの中の偏差照準
+//
+// 本画面の照準器だけでは、拡大した窓の中で「どこへ撃つか」が分からない。
+// 弾は敵の未来位置へ飛ばすものなので、拡大したならその未来位置も
+// 一緒に拡大して見せないと、覗いても狙う道具にならない。
+//
+// updateScene のあと(= スコープのカメラが今コマぶん整ったあと)に呼ぶこと。
+// ===================================================================
+function renderScopePip() {
+  if (!scopePipEl) return;
+  // センサーが壊れていれば精密な予測は出せない。本画面の偏差照準と同じ扱い
+  const p = isBroken('sensor') ? null : scopeLeadNdc();
+  if (!p) { scopePipEl.classList.remove('on'); return; }
+  scopePipEl.classList.add('on');
+  // 撃つべき点が窓の外なら、縁に寄せて形を変える(黄色い菱形 = そっちだ、の合図)
+  scopePipEl.classList.toggle('off', !!p.off);
+  scopePipEl.style.left = (p.u * 100) + '%';
+  scopePipEl.style.top  = (p.v * 100) + '%';
+}
+
+// ===================================================================
+// スコープの観測・解析の読み出し
+//
+// 仕様書9.6 は敵の残弾を「センサー配分40%以上のときだけ読める」と定めている。
+// スコープはその上位手段で、覗いて解析が済んだ相手だけは配分に関わらず全部読める。
+// 遠くの敵は赤い点にしか見えず機種すら分からないので、
+// 「狙撃機か突撃機か」が分かるだけでも間合いの取り方が変わる。
+// ===================================================================
+function renderScopeRead() {
+  if (!scopeReadEl) return;
+  const a = (typeof scopeAnalysis === 'function' && !isBroken('sensor'))
+    ? scopeAnalysis() : null;
+  if (!a) { scopeReadEl.classList.remove('on'); return; }
+  scopeReadEl.classList.add('on');
+
+  const rows = [];
+  rows.push('<b>' + a.type + '</b>  ' + a.dist.toFixed(0));
+
+  if (!a.done) {
+    // 解析中。進み具合を細い線で見せる
+    rows.push('解析中<u style="width:' + Math.round(a.progress * 100) + '%"></u>');
+  } else {
+    const heatPct = Math.round(a.heat / a.heatMax * 100);
+    rows.push('熱 ' + (heatPct >= 70 ? '<i>' + heatPct + '%</i>' : heatPct + '%') +
+              '  HULL ' + a.hp + '/' + a.hpMax);
+    if (a.ventDown > 0) rows.push('<i>放熱不能 ' + a.ventDown.toFixed(1) + 's</i>');
+    rows.push('MSL ' + a.missiles + '  FLR ' + a.flares);
+    if (a.lockingMe) rows.push('<i>自機をロック中</i>');
+  }
+  // 壊した系統は解析の有無に関わらず見せる(自分でやったことなので)
+  if (a.weaponDown > 0) rows.push('<s>武装 破壊 ' + a.weaponDown.toFixed(1) + 's</s>');
+  if (a.engineDown > 0) rows.push('<s>推進 破壊 ' + a.engineDown.toFixed(1) + 's</s>');
+
+  scopeReadEl.innerHTML = rows.join('<br>');
+}
+
 function renderConsole3D(dt) {
   const sensorPct = effectiveSensor();
   const w = currentWeapon();
@@ -1687,8 +1948,7 @@ function renderConsole3D(dt) {
     // 倍率(発電量アップ・冷却材)も通した実際の値を渡すこと ―
     // ここだけ素の値にすると、計器の内訳と熱ゲージの動きが食い違う。
     heatFromWeapon: power.weapon * HEAT.PER_WEAPON * powerOutputMult(),
-    heatFromEngine: isBroken('engine')
-      ? 0 : power.engine * HEAT.PER_ENGINE * powerOutputMult(),
+    heatFromEngine: effectiveEngine() * HEAT.PER_ENGINE,
     heatVent: (shutdownLeft > 0) ? HEAT.VENT_SHUTDOWN : heatVentRate(radiatorOpen),
 
     // --- 狙われているか / 見つかっているか ---
@@ -1977,7 +2237,7 @@ function renderWeapon() {
   weaponNameEl.textContent = w.label;
   weaponJpEl.textContent = w.jp;
   weaponAmmoEl.textContent = (left === Infinity) ? '\u221e' : left;   // ∞
-  // 3点バーストの武器は「1条ぶんの熱 ×3」と出す(1回の引き金で3条出るため)
+  // バースト武器は「1条ぶんの熱 ×条数」と出す(1回の引き金で複数条出るため)
   weaponHeatEl.textContent = w.burst ? ('+' + w.heat + '×' + w.burst)
                                      : ('+' + w.heat);
 
@@ -2385,8 +2645,9 @@ function breakRandomInstrument() {
   const key = picked.dataset.system;
   brokenSystems.add(key);   // ここから機能が失われる
 
-  // 後方カメラは3D側が描いているので、描画そのものを止めてもらう
+  // 後方カメラと照準スコープは3D側が描いているので、描画そのものを止めてもらう
   if (key === 'mirror') setMirrorBroken(true);
+  if (key === 'scope')  setScopeBroken(true);
 
   // 武器系は「ひとかたまり」ではなく、主武器3系統のうち1つが沈黙する。
   // 詳しい理由は brokenWeapons の説明を参照
@@ -2435,6 +2696,7 @@ function repairOneInstrument() {
   el.classList.remove('broken');
   brokenSystems.delete(key);
   if (key === 'mirror') setMirrorBroken(false);
+  if (key === 'scope')  setScopeBroken(false);
 
   const info = BREAKAGE[key];
   return info ? info.label : key;
@@ -2613,6 +2875,10 @@ function restartMission() {
   ammo = WEAPONS.map((w) => w.ammo);   // 弾を積み直す
   fireCooldown = 0;
   burstLeft = 0;
+  deflectCount = 0;
+  partBreakCount = 0;
+  lastRollKey = '';      // 前の出撃の押しを引きずって、いきなり回らないように
+  lastRollAt = -99;
   saidAmmoOut = false;
   bombIndex = 0;
   bombAmmo = BOMBS.map((w) => w.ammo);   // BOMBS も積み直す
@@ -2659,6 +2925,16 @@ function restartMission() {
 function fire() {
   const w = currentWeapon();
 
+  // 前のバーストがまだ鳴り終わっていないなら、新しい引き金は受けない。
+  //
+  // バーストの長さはコマの粒度で伸びる ― 1条ごとの間隔0.07秒は、
+  // 60fps なら5コマ(0.083秒)、30fps なら3コマ(0.10秒)に丸められるので、
+  // 6条ぶんで 0.42秒 〜 0.50秒 と揺れる。
+  // 次の引き金までの間隔(0.45秒)を超えるコマ落ち時に、
+  // このガードが無いと新しい引き金が前のバーストを打ち切り、条数が減っていた。
+  // 時間の数字を突き合わせて調整するより、状態で弾くほうが確実。
+  if (burstLeft > 0) return;
+
   // --- 撃てるかどうかの確認 ---
   // 仕様書9.3「武器系被弾で発射不可」。ただし潰れるのは3系統のうち1つだけで、
   // 持ち替えれば戦い続けられる(理由は brokenWeapons の説明を参照)
@@ -2702,8 +2978,8 @@ function fire() {
   fireOnce(w);        // 1条目
   fireCooldown = w.interval;
 
-  // 3点バーストの武器は、残り2条を予約しておく。
-  // ここで一度に3条撃たず、時間を空けて撃つから「ドドドッ」と聞こえる。
+  // バースト武器は、残りの条を予約しておく。
+  // ここで一度に全部撃たず、時間を空けて撃つから「ドドドッ」と聞こえる。
   if (w.burst && w.burst > 1) {
     burstLeft  = w.burst - 1;
     burstTimer = w.burstGap;
@@ -2713,7 +2989,7 @@ function fire() {
 // ===================================================================
 // 1条だけ撃つ ― 弾数を減らし、熱を上げ、3Dへ弾を出す
 //
-// fire() から呼ばれるほか、3点バーストの2条目・3条目もここを通る。
+// fire() から呼ばれるほか、バーストの2条目以降もここを通る。
 // 「撃てるかどうかの確認」は fire() が済ませている前提。
 // ===================================================================
 function fireOnce(w) {
@@ -2934,7 +3210,7 @@ function tickBody(now) {
   }
 
   updateAutoFire(dt);               // 機関砲の連射
-  updateBurst(dt);                  // ビーム砲の3点バーストの残り条
+  updateBurst(dt);                  // ビーム砲のバーストの残り条
   // 回収した機材の効果の残り時間。熱と電力の計算より先に減らすこと ―
   // 切れたコマにまだ効いていることになると、計器の予測と1コマぶんずれる
   updateSalvageBuffs(dt);
@@ -2946,11 +3222,12 @@ function tickBody(now) {
   // エンジン系が壊れていると推力を制御できず、最低出力に張り付く
   // 発電量が上がっている間は、同じ配分でも実効出力が増える = 速く飛べる。
   // scene.js の speedFromEnginePower は100を超える値を受け取れるようにしてある。
-  updateFlight(dt, isBroken('engine') ? 0 : power.engine * powerOutputMult());
+  updateFlight(dt, effectiveEngine());
   // 自機の熱とラジエーターの状態を、敵の目とミサイルのシーカーへ伝える
   setPlayerHeat(heat, radiatorOpen);
   updateAimFeedback(dt);            // 照準の捕捉判定と、捕捉音
   updateVoiceAlerts(dt);            // コックピット音声
+  renderScopeHud();                 // 照準スコープ(倍率は索敵電力で決まる)
   updateScene(dt, elapsed);         // 敵機・弾・破片の更新と描画(scene.js)
   renderHeat();        // 計器の描画
   renderStatus();
@@ -2959,6 +3236,8 @@ function tickBody(now) {
   renderCrosshair();   // 照準(弾道の向きに合わせる)
   renderLockRing();    // ロックオンの赤い円と「LOCKED ON」
   renderLeadPip();     // 偏差照準(ここへ撃てば当たる、の小さな印)
+  renderScopePip();    // スコープの中にも同じ印を置く(拡大したぶん狙いやすくなる)
+  renderScopeRead();   // スコープで捉えた相手の中身(観測・解析)
   renderLockWarn(dt);  // 被ロック警報(視界の縁が脈打つ)
   renderProximity(dt); // 近接警告(ぶつかりそうなものが近いと、ふちが黄→赤に光る)
   renderDataPanel();   // 三人称のデータパネル
@@ -3067,12 +3346,11 @@ function updateView(dt) {
   if (keysHeld.has('a')) yawDir += 1;
   if (keysHeld.has('d')) yawDir -= 1;
 
-  // Q=左へ傾ける / E=右へ傾ける(仕様書9.6:Q/E ロール)
-  let rollDir = 0;
-  if (keysHeld.has('q')) rollDir += 1;
-  if (keysHeld.has('e')) rollDir -= 1;
-
-  turnView(dt, pitchDir, yawDir, rollDir);
+  // Q/E のロールはここでは扱わない。
+  // 「押している間ずっと回る」のをやめて「1回押すと90度回って止まる」に変えたので、
+  // 押されっぱなしかどうかではなく、押した瞬間だけが意味を持つ ―
+  // だから keydown の側(requestRollStep)で受けている。
+  turnView(dt, pitchDir, yawDir);
 }
 
 // 1コマぶんの状態更新。dt = 経過秒数

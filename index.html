@@ -619,6 +619,11 @@
        中身の映像は scene.js が3Dで描くので、ここは枠だけを重ねる。
        位置と大きさは scene.js の MIRROR 定数と揃えること。
        ================================================================= */
+    /* ※ 表示の切り替えは、この要素自身に付く .on で行う(.rear-mirror.on)。
+       以前は「.hud.cockpit の子孫なら出す」と書いていたが、
+       この要素は body の直下にあって #console(.hud)の中ではないので、
+       そのセレクタは一度も一致せず、枠もラベルも NO SIGNAL も
+       ずっと出ていなかった。祖先に頼らない書き方にしてある。 */
     .rear-mirror {
       position: absolute;
       display: none;                 /* コックピットのときだけ出す */
@@ -634,7 +639,7 @@
       pointer-events: none;
       z-index: 3;
     }
-    .hud.cockpit .rear-mirror { display: block; }
+    .rear-mirror.on { display: block; }
 
     /* 「REAR」の小さなラベル。枠の左上に沈めて置く */
     .rear-mirror span {
@@ -671,6 +676,227 @@
       top: 50%;
       transform: translate(-50%, -50%);
       font-size: 13px;
+      font-weight: normal;
+      letter-spacing: 0.3em;
+      color: #ff5a3c;
+      animation: warnBlink 0.7s steps(2) infinite;
+      z-index: 1;
+    }
+
+    /* =================================================================
+       照準スコープ(三人称・コックピット両方)
+       中身の映像は scene.js が3Dで描くので、ここは枠・十字・倍率だけ。
+       位置と大きさは scene.js の SCOPE 定数と必ず揃えること。
+
+       置き場所について:
+         右上に寄せてあるのは、三人称のときに右の縦計器(中央高さ・約240px)と
+         撃墜数カウンター(右上・約27px)のどちらにも重ならない帯が
+         ここしか無いため。上端7%〜下端24%がその帯。
+       ================================================================= */
+    /* ※ 表示の切り替えは、この要素自身に付く .on で行う(.scope.on)。
+       祖先セレクタ(.hud.scoped .scope)にしていたときは、
+       この要素が body の直下 ― つまり #console(.hud)の外 ― にあるため
+       一度も一致せず、枠もレティクルも出ていなかった。 */
+    .scope {
+      position: absolute;
+      display: none;                 /* スコープを開いているときだけ出す */
+      left: 50%;                     /* 横は中央(scene.js の renderScope と同じ) */
+      transform: translateX(-50%);
+      top: 21%;                      /* = SCOPE.TOP */
+      width: 24%;                    /* = SCOPE.WIDTH */
+      height: 29%;                   /* = SCOPE.HEIGHT */
+      /* 黄色い枠。宇宙も敵機も暗い寒色ばかりなので、
+         暖色の枠にすると「ここが別の窓だ」が一目で分かる。
+         外に光を散らし、内側は暗く落として、枠の線が背景に溶けないようにする */
+      border: 2px solid #ffc83d;
+      border-radius: 3px;
+      box-shadow: 0 0 12px rgba(255, 200, 61, 0.45),
+                  0 0 20px rgba(0, 0, 0, 0.9),
+                  inset 0 0 24px rgba(0, 0, 0, 0.72);
+      pointer-events: none;
+      z-index: 3;
+    }
+    .scope.on { display: block; }
+
+    /* 枠の四隅に短い当て木。四角の角がはっきりして、計器らしく見える */
+    .scope::before, .scope::after {
+      content: "";
+      position: absolute;
+      width: 14px; height: 14px;
+      border: 2px solid #ffe08a;
+      pointer-events: none;
+    }
+    .scope::before {
+      left: -2px; top: -2px;
+      border-right: none; border-bottom: none;
+    }
+    .scope::after {
+      right: -2px; bottom: -2px;
+      border-left: none; border-top: none;
+    }
+
+    .scope-label {
+      position: absolute;
+      left: 6px; top: 3px;
+      font-size: 8px;
+      letter-spacing: 0.24em;
+      color: #d8a838;
+      text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+    }
+    /* 倍率。索敵電力で変わるので、ここがそのままセンサー配分の手応えになる */
+    .scope-mag {
+      position: absolute;
+      right: 6px; bottom: 3px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: #ffc83d;
+      text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+    }
+
+    /* --- レティクル(照準線)---
+       中心の交点が「弾の飛ぶ方向(機首)」。目盛りは狙いのずれを読むための物差し。
+
+       【線が消えないための2つの仕掛け】
+       1. vector-effect: non-scaling-stroke
+          この窓は横長なので、SVG を縦横で違う倍率に引き伸ばしている。
+          ふつうに線を引くと、その引き伸ばしで線の太さまで縦横バラバラになり、
+          細いほうが1画素を切って消えてしまう(実際そうなっていた ―
+          縦線1.3画素に対し横線0.8画素)。
+          この指定を入れると、引き伸ばしても線の太さだけは指定どおりに保たれる。
+       2. drop-shadow で黒い縁取り
+          宇宙は暗いが、爆発・噴射光・コロニーの上では明るい背景になる。
+          細い線を黒で縁取っておくと、どちらの上でも輪郭が残る。 */
+    .scope-reticle {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.95))
+              drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
+    }
+    .scope-reticle line,
+    .scope-reticle circle,
+    .scope-reticle polyline {
+      vector-effect: non-scaling-stroke;   /* 引き伸ばしても線の太さは変わらない */
+      fill: none;
+      stroke-linecap: round;
+    }
+    .scope.broken .scope-reticle { display: none; }
+
+    /* 中心の丸。ここが弾の行き先。細い線より丸のほうが目が拾いやすい */
+    .scope-dot {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 11px; height: 11px;
+      margin: -5.5px 0 0 -5.5px;
+      border: 1.6px solid #ffffff;
+      border-radius: 50%;
+      pointer-events: none;
+      filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.95));
+    }
+    .scope.broken .scope-dot { display: none; }
+
+    /* --- 観測・解析の読み出し ---
+       窓の左下に、捉えている相手の中身を出す。
+       仕様書9.6 が残弾を「センサー40%以上で読める」としているのに対し、
+       スコープで解析した相手だけは配分に関わらず全部読める、という上位手段。 */
+    .scope-read {
+      position: absolute;
+      left: 7px; bottom: 6px;
+      display: none;
+      font-size: 9px;
+      line-height: 1.45;
+      letter-spacing: 0.06em;
+      color: #cfe8d8;
+      text-shadow: 0 0 3px rgba(0, 0, 0, 0.95);
+      pointer-events: none;
+      z-index: 2;
+    }
+    .scope-read.on { display: block; }
+    .scope-read b { color: #ffc83d; font-weight: normal; }   /* 機種名 */
+    .scope-read i { color: #ff8a5c; font-style: normal; }    /* 危険な値 */
+    .scope-read s { color: #7fe0c4; text-decoration: none; } /* 壊した系統 */
+    /* 解析中のゲージ(細い線が伸びる) */
+    .scope-read u {
+      display: block;
+      height: 2px;
+      margin-top: 2px;
+      background: #ffc83d;
+      box-shadow: 0 0 4px rgba(255, 200, 61, 0.8);
+    }
+    .scope.broken .scope-read { display: none; }
+
+    /* --- スコープの中の偏差照準 ---
+       弾は敵の「未来の位置」へ撃つものなので、拡大したなら
+       その未来位置も一緒に拡大して見せないと狙う道具にならない。
+       本画面の偏差照準(.lead-pip)と同じ意味の印を、窓の中にも置く。 */
+    .scope-pip {
+      position: absolute;
+      display: none;
+      width: 18px; height: 18px;
+      margin: -9px 0 0 -9px;      /* 中心を座標に合わせる */
+      pointer-events: none;
+      z-index: 2;
+    }
+    .scope-pip.on { display: block; }
+    /* 二重の丸。内側は塗り、外側は輪 ― 背景がどんな色でも見える */
+    .scope-pip::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 1.5px solid #9dff5e;
+      border-radius: 50%;
+      box-shadow: 0 0 6px rgba(157, 255, 94, 0.8);
+    }
+    .scope-pip::after {
+      content: "";
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 4px; height: 4px;
+      margin: -2px 0 0 -2px;
+      background: #d8ffb0;
+      border-radius: 50%;
+    }
+
+    /* --- 撃つべき点が窓の外にあるとき ---
+       倍率を上げるほど視野は狭くなるが、先読みの量は相手の速さで決まるので、
+       「敵は見えているのに撃つべき点は窓の外」が普通に起きる。
+       そこで印を消さず、縁に寄せて点滅する菱形に変える ―
+       機首をそちらへ振れば、やがて撃つべき点が窓に入ってくる。
+       枠もレティクルも黄色にしたので、こちらは橙赤にして混ざらないようにする。 */
+    .scope-pip.off::before {
+      border-radius: 2px;
+      transform: rotate(45deg);
+      border-color: #ff7a3d;
+      box-shadow: 0 0 9px rgba(255, 122, 61, 0.95);
+      animation: warnBlink 0.6s steps(2) infinite;
+    }
+    .scope-pip.off::after { background: #ffd0b0; }
+
+    /* --- スコープが壊れたとき --- (ミラーと同じ扱い) */
+    .scope.broken {
+      background: #05080b;
+      border-color: #4a3230;
+    }
+    .scope.broken .scope-label,
+    .scope.broken .scope-mag { color: #6b4440; }
+    .scope.broken .scope-pip { display: none; }
+    .scope.broken::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255, 120, 90, 0.10) 0px, rgba(255, 120, 90, 0.10) 1px,
+        transparent 1px, transparent 3px);
+      animation: noiseScroll 0.25s steps(3) infinite;
+    }
+    .scope.broken .no-signal {
+      display: block;
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 11px;
       font-weight: normal;
       letter-spacing: 0.3em;
       color: #ff5a3c;
@@ -1906,6 +2132,67 @@
          ここは枠とラベルだけを担当する。コックピット視点のときだけ出す -->
     <div class="rear-mirror" id="rear-mirror" data-system="mirror">
       <span>REAR</span>
+      <b class="no-signal">NO SIGNAL</b>
+    </div>
+
+    <!-- 照準スコープの枠。中身(機首方向の拡大映像)は scene.js が3Dで描く。
+         ここは枠・十字・倍率表示だけを担当する。O キーで開閉。
+         ミラーと違い、三人称でもコックピットでも出す -->
+    <div class="scope" id="scope" data-system="scope">
+      <span class="scope-label">SCOPE</span>
+      <span class="scope-mag" id="scope-mag">x2.0</span>
+
+      <!-- レティクル。preserveAspectRatio="none" で窓の縦横比にそのまま伸ばす。
+           中心の交点が弾の飛ぶ方向、目盛りはずれを読むための物差し。
+           数字は 0〜100 の割合なので、窓の大きさを変えても書き直さなくてよい -->
+      <svg class="scope-reticle" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <!-- stroke-width は「画素」で効く(non-scaling-stroke のため)。
+             viewBox の 0〜100 は位置だけを表す -->
+        <g stroke="#ffe9b0" stroke-width="1.6">
+          <!-- 十字。中心は開けておく ― 覗いている的そのものを線で隠さないため。
+               光像式照準器のレティクルと同じ考え方 -->
+          <line x1="4"  y1="50" x2="38" y2="50" />
+          <line x1="62" y1="50" x2="96" y2="50" />
+          <line x1="50" y1="4"  x2="50" y2="38" />
+          <line x1="50" y1="62" x2="50" y2="96" />
+        </g>
+
+        <!-- 目盛り。ずれの量と的の大きさを測る物差し。
+             中央から離れるほど短くして、真ん中が混み合わないようにする -->
+        <g stroke="#ffe9b0" stroke-width="1.2" opacity="0.85">
+          <line x1="20" y1="45"   x2="20" y2="55" />
+          <line x1="30" y1="46.5" x2="30" y2="53.5" />
+          <line x1="40" y1="47.5" x2="40" y2="52.5" />
+          <line x1="60" y1="47.5" x2="60" y2="52.5" />
+          <line x1="70" y1="46.5" x2="70" y2="53.5" />
+          <line x1="80" y1="45"   x2="80" y2="55" />
+          <line x1="45"   y1="20" x2="55"   y2="20" />
+          <line x1="46.5" y1="30" x2="53.5" y2="30" />
+          <line x1="47.5" y1="40" x2="52.5" y2="40" />
+          <line x1="47.5" y1="60" x2="52.5" y2="60" />
+          <line x1="46.5" y1="70" x2="53.5" y2="70" />
+          <line x1="45"   y1="80" x2="55"   y2="80" />
+        </g>
+
+        <!-- 四隅の括弧。覗いている範囲の縁を示す -->
+        <g stroke="#ffc83d" stroke-width="1.6" opacity="0.8">
+          <polyline points="3,14 3,3 14,3" />
+          <polyline points="86,3 97,3 97,14" />
+          <polyline points="3,86 3,97 14,97" />
+          <polyline points="97,86 97,97 86,97" />
+        </g>
+      </svg>
+
+      <!-- 中心の丸(弾の行き先)。
+           SVG の中に描くと、窓が横長なぶん引き伸ばされて楕円に潰れる ―
+           形が意味を持つものは SVG の外に出して、素の HTML で丸く描く -->
+      <i class="scope-dot"></i>
+
+      <!-- 偏差照準(ここへ撃てば当たる)。位置は main.js が毎コマ動かす -->
+      <i class="scope-pip" id="scope-pip"></i>
+
+      <!-- 観測・解析。窓に捉え続けると相手の中身が出る -->
+      <div class="scope-read" id="scope-read"></div>
       <b class="no-signal">NO SIGNAL</b>
     </div>
 

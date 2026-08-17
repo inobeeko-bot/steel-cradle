@@ -371,6 +371,15 @@ function playShieldHit() {
   playNoise(0.18, 0.18, 2400, 520, 'bandpass');
 }
 
+// バレルロール中にビームを弾いた。
+// 被弾(シールド音)と取り違えられては困るので、性格を逆にしてある ―
+// あちらは下へ落ちる音、こちらは上へ跳ね上がる短い金属音。
+// 連続で弾くとチャリチャリと鳴って「効いている」ことが耳で分かる。
+function playDeflect() {
+  playSweep(900, 1900, 0.070, 0.13, 'square');
+  playNoise(0.055, 0.10, 3600, 1800, 'bandpass');
+}
+
 // シールドが割れた
 function playShieldDown() {
   playSweep(300, 62, 0.60, 0.32, 'sawtooth');
