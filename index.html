@@ -2072,6 +2072,36 @@
       z-index: 8;
     }
 
+    /* 警報が鳴っている間、画面のふちを黄色く明滅させる。
+       ふち「だけ」を光らせるのは、絵と文字の邪魔をしないため ―
+       inset の box-shadow なら中央は素通しになる。
+       戦闘の近接警告(.proximity)と同じ作り方で揃えてある。 */
+    .story-alarm {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .45s ease;
+      z-index: 7;               /* 暗転(8)より下、会話枠より下 */
+    }
+    .story-alarm::after {
+      content: '';
+      position: absolute; inset: 0;
+      box-shadow: inset 0 0 90px 18px #ffc51e;
+      animation: storyAlarmPulse 1.1s ease-in-out infinite;
+    }
+    .story.alarm .story-alarm { opacity: 1; }
+
+    @keyframes storyAlarmPulse {
+      0%, 100% { opacity: .22; }
+      50%      { opacity: .72; }
+    }
+
+    /* 「動きを減らす」設定の人には点滅させない。
+       明滅は光過敏の負担になりうるので、出しっぱなしの弱い光に置き換える */
+    @media (prefers-reduced-motion: reduce) {
+      .story-alarm::after { animation: none; opacity: .38; }
+    }
+
     /* 画面右下の版数。開発中なので出しておく */
     .menu-build {
       position: absolute;
@@ -2444,6 +2474,7 @@
       <div class="story-text" id="story-text"></div>
       <div class="story-next">▼ Enter</div>
     </div>
+    <div class="story-alarm" id="story-alarm"></div>
     <div class="story-fade" id="story-fade"></div>
   </div>
 
@@ -2486,6 +2517,7 @@
   <!-- 残骸から拾える機材(scene.js の関数を使うので、その後ろ) -->
   <script src="src/salvage.js"></script>
   <script src="src/wingmen.js"></script>
+  <script src="src/escape.js"></script>
   <!-- 背景の巨大コロニー(同上) -->
   <script src="src/colony.js"></script>
 

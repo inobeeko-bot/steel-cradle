@@ -557,6 +557,7 @@ const STORY_SCENES = {
   // そのあと四番機に乗る。3D戦闘はフェーズ3なので、いまはそこで題を出して終わる。
   // ===================================================================
   ch1_s3_hangar: {
+    alarm: true,      // 入った時点でもう警報が鳴っている
     titleKey: 'adv.title.hangar',
     surface: 'metal',   // 格納庫の鉄板。硬い足音になる
     placeKey: 'adv.place.dock',
@@ -688,6 +689,7 @@ const STORY_SCENES = {
   // 不具合に見える。だから点検表とベンの無線で先に知らせる。
   // =================================================================
   ch1_s4_launch: {
+    alarm: true,      // 入った時点でもう警報が鳴っている
     titleKey: 'adv.title.launch',
     surface: 'metal',
     placeKey: 'adv.place.launchbay',
@@ -837,6 +839,14 @@ let storyTalkingNpc = null;   // いま話しかけている相手(会話が閉�
 
 // 出口が開いた合図の音を、会話が終わるまで待たせるための札
 let storyUnlockSePending = false;
+// 警報が鳴っている状況か。画面のふちを黄色く明滅させる
+let storyAlarmOn = false;
+
+function setStoryAlarm(on) {
+  storyAlarmOn = !!on;
+  storyEl.classList.toggle('alarm', storyAlarmOn);
+}
+
 let storyExitSpoken  = false;   // 出口の台詞をもう読んだか
 let storyExitPending = false;   // その台詞を読み終えたら出る
 
@@ -967,6 +977,7 @@ function charWidth(scale)  { return Math.round(charHeight(scale) * ADV_CONFIG.CH
 function startStoryScene(id) {
   storyExitSpoken = false;
   storyExitPending = false;
+  setStoryAlarm(!!STORY_SCENES[id] && !!STORY_SCENES[id].alarm);
   const scene = STORY_SCENES[id];
   if (!scene) { console.warn('シーンが見つからない: ' + id); return; }
 
@@ -1000,6 +1011,7 @@ function startStoryScene(id) {
 
 function exitStory() {
   cancelStoryTransition();
+  setStoryAlarm(false);
   storyEl.classList.remove('on');
   storyScene = null;
   storyLines = null;
@@ -1173,7 +1185,11 @@ function renderStoryLine() {
   // ★ 台詞に se: が書いてあれば、その行が出た瞬間に鳴らす。
   //   この仕掛けは前から書いてあったのに、読む側が無かったので
   //   一度も鳴っていなかった(祖父の剪定鋏 se:'snip')。
-  if (line.se) playStorySe(line.se);
+  if (line.se) {
+    playStorySe(line.se);
+    // 警報が鳴ったら、その場面はもう「警報が鳴っている状況」になる
+    if (line.se === 'alarm') setStoryAlarm(true);
+  }
 }
 
 function advanceStory() {

@@ -2877,7 +2877,14 @@ function endMission(result, reason) {
 
   // 見出しと理由。同じ枠を色違いで使い回す
   resultPanel.classList.remove('win', 'timeup');
-  if (result === 'complete') {
+  if (result === 'escaped') {
+    // ★ 勝ちだが「MISSION COMPLETE」ではない。
+    //   貨物船は出た。村は落ちた。両方を同時に言う表示にしてある。
+    resultPanel.classList.add('win');
+    resultTitleEl.textContent = t('esc.win.title');
+    resultReasonEl.textContent = t('esc.win.reason');
+    playMissionComplete();
+  } else if (result === 'complete') {
     resultPanel.classList.add('win');
     resultTitleEl.textContent = 'MISSION COMPLETE';
     resultReasonEl.textContent = BOSS.NAME + ' 撃沈 ― 任務達成';
@@ -3282,7 +3289,10 @@ function tickBody(now) {
     speakVoice('ONE_MINUTE');
     lastTimeWarned = true;
   }
-  if (missionTime <= 0) {
+  // 脱出戦のときは、時間切れ = 貨物船が港を出た = 勝ち。
+  // 決着は escape.js が出すので、こちらの時間切れ処理は通さない。
+  if (typeof escapeRunning === 'function' && escapeRunning()) { /* escape.js に任せる */ }
+  else if (missionTime <= 0) {
     missionTime = 0;
     endMission('timeup');
   }
@@ -3294,6 +3304,8 @@ function tickBody(now) {
   updateSalvageBuffs(dt);
   // 僚機(味方の旧式艇)。読み込まれていなければ何もしない
   if (typeof updateWingmen === 'function') updateWingmen(dt);
+  // アルカディア脱出戦。貨物船と僚機の消耗はここで進む
+  if (typeof updateEscape === 'function') updateEscape(dt);
   updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過
