@@ -674,6 +674,23 @@ function playStoryAlarm() {
   playSweep(300, 60, 1.60, 0.120, 'square', N * 0.60);
 }
 
+// 鳴り続けているあいだの1周ぶん。
+// ★ 最初の一撃(playStoryAlarm)と同じ音量で鳴らし続けてはいけない。
+//   あれは「今それが起きた」ための音で、数分間ずっとだと耳が痛むだけになる。
+//   ここは半分以下の音量にして、唸りと低音だけ残す ―
+//   鳴っていることは分かるが、会話の邪魔はしない高さに落としてある。
+const ALARM_LOOP_SEC = 1.20;   // 1周の長さ。story.js がこの間隔で呼ぶ
+function playStoryAlarmLoop() {
+  playTone(622, 0.30, 0.105, 'square',   0);
+  playTone(624, 0.30, 0.060, 'sawtooth', 0);    // 2Hzずらした唸り
+  playTone(311, 0.30, 0.080, 'square',   0);
+  playTone(155, 0.32, 0.065, 'square',   0);
+
+  playTone(466, 0.28, 0.095, 'square',   0.60);
+  playTone(233, 0.28, 0.075, 'square',   0.60);
+  playTone(117, 0.30, 0.060, 'square',   0.60);
+}
+
 // 壁の無線が入る。搬送波の雑音 → 事務的な通告 → 切れる
 function playStoryRadio() {
   const g = STORY_GAIN;

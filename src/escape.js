@@ -50,6 +50,10 @@ const ESCAPE = {
   LOSS_AT: [0.28, 0.55, 0.82],
 
   SURVIVORS: 311,         // 貨物船に詰めた人数(小説の数字)
+
+  // 敵は哨戒機のみ。小説「企業艦隊の哨戒網」。
+  // 超弩級戦艦(boss.js)はこの戦闘には出さない ― main.js 側で止めてある。
+  ENEMY_TYPE: 'SOLDIER',
 };
 
 let freighter    = null;
@@ -109,12 +113,22 @@ function startEscape() {
   escapeActive = true;
 
   if (typeof missionTime !== 'undefined') missionTime = ESCAPE.LAUNCH_SEC;
+
+  // 敵は哨戒機だけにする。小説の「企業艦隊の哨戒網」に合わせる ―
+  // 初戦にハウンド(追い回す)やスナイパー(遠距離)は出てこない。
+  if (typeof setArchetypeLock === 'function') setArchetypeLock(ESCAPE.ENEMY_TYPE);
+  // いま飛んでいる敵も哨戒機へ揃え直す
+  if (typeof enemies !== 'undefined' && typeof assignArchetype === 'function') {
+    for (const e of enemies) assignArchetype(e, ESCAPE.ENEMY_TYPE);
+  }
 }
 
 function clearEscape() {
   if (freighter && freighter.parent) freighter.parent.remove(freighter);
   freighter = null;
   escapeActive = false;
+  // 敵のタイプの固定を解く。訓練飛行では3タイプが混ざるのが既定
+  if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
 }
 
 const escapeRunning = () => escapeActive && freighter !== null;

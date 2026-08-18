@@ -2494,6 +2494,11 @@ function onKill() {
   // 「あとから登場」の設定のときだけ、規定数で戦艦を呼ぶ。
   // 出撃時から出す設定(SPAWN_AT_START)なら、ここは何もしない。
   // どちらにせよ任務が終わるのは、戦艦を沈めたとき(onBossDestroyed)。
+  // ★ 脱出戦では戦艦を出さない。
+  //   小説では砲火が桟橋ごと呑んでいる ― 艦隊は「倒す相手」ではなく、
+  //   村を焼いていく環境。初戦で超弩級戦艦と一騎討ちさせるのは筋が違うし、
+  //   実弾を積んでいない旧式艇では、そもそも勝ち目の設計になっていない。
+  if (typeof escapeRunning === 'function' && escapeRunning()) return;
   if (!BOSS.SPAWN_AT_START && killCount >= BOSS.SPAWN_KILLS && !bossStatus()) spawnBoss();
 }
 

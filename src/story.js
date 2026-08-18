@@ -842,9 +842,41 @@ let storyUnlockSePending = false;
 // 警報が鳴っている状況か。画面のふちを黄色く明滅させる
 let storyAlarmOn = false;
 
-function setStoryAlarm(on) {
-  storyAlarmOn = !!on;
+let storyAlarmTimer = null;
+
+// 黄色く光っているあいだは、警報が鳴り続ける。
+// 光と音は同じ状態を指しているので、片方だけ止まると嘘になる。
+function setStoryAlarm(on, opts) {
+  const want = !!on;
+  if (want === storyAlarmOn) return;      // 二重に鳴らさない
+  storyAlarmOn = want;
   storyEl.classList.toggle('alarm', storyAlarmOn);
+
+  if (storyAlarmTimer) {
+    clearInterval(storyAlarmTimer);
+    clearTimeout(storyAlarmTimer);   // setTimeout で待っている途中かもしれない
+    storyAlarmTimer = null;
+  }
+  if (!storyAlarmOn) return;
+
+  if (typeof playStoryAlarmLoop !== 'function') return;
+  const period = (typeof ALARM_LOOP_SEC === 'number' ? ALARM_LOOP_SEC : 1.2) * 1000;
+
+  // 繰り返しを始める。以後は光が消えるまで鳴り続ける
+  const begin = function () {
+    if (!storyAlarmOn) return;
+    playStoryAlarmLoop();
+    storyAlarmTimer = setInterval(function () {
+      if (!storyAlarmOn) return;
+      playStoryAlarmLoop();
+    }, period);
+  };
+
+  // ★ struck = 直前に大げさな一撃(playStoryAlarm)がもう鳴っている。
+  //   重ねると音が濁って、せっかくの一撃が潰れる。
+  //   一撃が鳴り終わるころ(約5.2秒)から繰り返しに入る。
+  if (opts && opts.struck) storyAlarmTimer = setTimeout(begin, 5200);
+  else begin();
 }
 
 let storyExitSpoken  = false;   // 出口の台詞をもう読んだか
@@ -1188,7 +1220,7 @@ function renderStoryLine() {
   if (line.se) {
     playStorySe(line.se);
     // 警報が鳴ったら、その場面はもう「警報が鳴っている状況」になる
-    if (line.se === 'alarm') setStoryAlarm(true);
+    if (line.se === 'alarm') setStoryAlarm(true, { struck: true });
   }
 }
 

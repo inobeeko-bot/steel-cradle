@@ -1275,7 +1275,17 @@ function squadLineup() {
 
 // 出現比率の抽選。WEIGHT の合計を出し、その中のどこに当たったかで決める。
 // 比率を変えたいときは、上の WEIGHT だけを触ればよい。
+// ★ タイプを1つに固定する仕掛け(脱出戦で使う)。
+//   小説の敵は「企業艦隊の哨戒網」― 精鋭の一騎討ち相手ではなく、
+//   数で押してくる哨戒機。だから初戦は SOLDIER だけにする。
+//   null に戻せば、また3タイプが混ざる。
+let archetypeLock = null;
+function setArchetypeLock(key) {
+  archetypeLock = (key && AI_ARCHETYPES[key]) ? key : null;
+}
+
 function pickArchetype() {
+  if (archetypeLock) return archetypeLock;
   const keys = Object.keys(AI_ARCHETYPES);
   let total = 0;
   for (const k of keys) total += AI_ARCHETYPES[k].WEIGHT;
