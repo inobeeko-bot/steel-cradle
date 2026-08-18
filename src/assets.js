@@ -45,6 +45,13 @@ const ADV_ASSETS = {
       mid:  'assets/adv/maps/hangar/bg_hangar_mid.png',
       near: 'assets/adv/maps/hangar/bg_hangar_near.png',
     },
+
+    // 発艦筒。ここも単画面なので mid / near は空(上と同じ理由)
+    launch: {
+      far:  'assets/adv/maps/launch/bg_launch_far.png',
+      mid:  'assets/adv/maps/launch/bg_launch_mid.png',
+      near: 'assets/adv/maps/launch/bg_launch_near.png',
+    },
   },
 
   // --- 人物 ---------------------------------------------------------

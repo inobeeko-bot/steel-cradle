@@ -664,7 +664,7 @@ const STORY_SCENES = {
         { whoKey: 'adv.name.kaito', text: { ja: '……ベンと話してからだ', en: "…Talk to Ben first." } },
       ],
       nextTitleKey: 'adv.scene4',
-      // シーン4(発艦・3D戦闘)はフェーズ3。いまは題を出して終わる。
+      nextScene: 'ch1_s4_launch',
     },
 
     // --- 開幕の地の文 ---
@@ -672,6 +672,114 @@ const STORY_SCENES = {
       { text: { ja: '提灯の列は、走っているあいだに消えた。', en: "The lanterns went out while he was still running." } },
       { text: { ja: '格納庫は非常灯だけになっていた。油の匂い。カイトの世界の三分の一は、ずっとこの匂いでできている。', en: "The hangar was down to emergency lights. The smell of oil. A third of Kaito's world had always been made of that smell." } },
       { text: { ja: '――旧式艇四機。当番表に書かれた、彼の持ち場。', en: "—Four old boats. His post, as written on the duty roster." } },
+    ],
+  },
+
+  // =================================================================
+  // シーン4「発艦」― 旧ドックの発艦筒
+  //
+  // シーン3には人がいた。ここには誰もいない。先に上がったか、まだ乗っていないか。
+  // 人物は画面に出さず、声だけが無線から来る。
+  //
+  // このシーンには2つの仕事がある:
+  //   1. 物語を出撃まで運ぶ
+  //   2. 旧式艇の制限(実弾なし・右の推力偏向が渋い)を、乗る前に台詞で渡す
+  // 2つ目は遊びやすさの話。戦闘中に「弾が出ない」と気付くと、仕様ではなく
+  // 不具合に見える。だから点検表とベンの無線で先に知らせる。
+  // =================================================================
+  ch1_s4_launch: {
+    titleKey: 'adv.title.launch',
+    surface: 'metal',
+    placeKey: 'adv.place.launchbay',
+    map: 'launch',
+
+    width: ADV_CONFIG.BASE_W,   // 1画面ぶん
+    start: 40,
+
+    // 発艦筒の床。奥へ向かってわずかに上がるが、歩く範囲では水平でよい
+    groundY: [
+      [   0, 332 ],
+      [ 640, 332 ],
+    ],
+
+    props: [
+      {
+        id: 'examine_suit', x: 110, markX: 110, markH: 70, labelKey: 'adv.label.suit',
+        first: [
+          { text: { ja: '三番目の掛けが空だった。四つ並んだうちの、三つ目。', en: "The third hook was empty. Third of four." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'ベンのが無い', en: "Ben's is gone." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……先に上がってる、って言ってたな', en: "…He did say he'd be up first." } },
+        ],
+        repeat: [
+          { text: { ja: '与圧服の襟が首に当たる。訓練で年に二回、着るだけのものだ。', en: "The collar of the suit presses against his neck. Twice a year, for drills. That is all it is for." } },
+        ],
+      },
+      {
+        id: 'examine_shrine', x: 185, markX: 185, markH: 88, labelKey: 'adv.label.shrine',
+        first: [
+          { text: { ja: '隔壁は閉じていた。さっきは開いていた。', en: "The bulkhead was shut. It had been open before." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……じいちゃん', en: "…Grandpa." } },
+          { text: { ja: '鍵はひとつきりで、それは祖父の首から下がっている。', en: "There is one key, and it hangs around his grandfather's neck." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '閉まってる。中に、いるのか', en: "It's shut. Is he in there?" } },
+        ],
+      },
+      {
+        id: 'examine_nose', x: 320, markX: 320, markH: 118, labelKey: 'adv.label.nose',
+        first: [
+          { whoKey: 'adv.name.lisbeth', text: { ja: 'カイト? 声、聞こえてる?', en: "Kaito? Can you hear me?" }, se: 'radio' },
+          { whoKey: 'adv.name.kaito',   text: { ja: '聞こえてる', en: "I hear you." } },
+          { whoKey: 'adv.name.lisbeth', text: { ja: '提灯、全部消しちゃった。風で落ちるといけないから', en: "I put all the lanterns out. In case the wind brought them down." } },
+          { whoKey: 'adv.name.kaito',   text: { ja: '……そうか', en: "…Right." } },
+          { whoKey: 'adv.name.lisbeth', text: { ja: '来年また吊るすからね。軸の端からでも見えるくらい', en: "I'll hang them again next year. Enough to see from the end of the axis." } },
+          { text: { ja: '返事をしそこねた。', en: "He missed his chance to answer." } },
+        ],
+        repeat: [
+          { text: { ja: '二番機の推進機が、低く回りはじめている。', en: "Number two's drive had begun to turn over, low and slow." } },
+        ],
+      },
+      {
+        id: 'examine_log', x: 450, markX: 450, markH: 64, labelKey: 'adv.label.log',
+        first: [
+          { text: { ja: '今朝の自分の字で「異常なし」と書いてある。', en: "In his own handwriting from this morning: NO FAULTS." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……今日いちばん役に立たない書類だ', en: "…The least useful piece of paper in the colony today." } },
+          { text: { ja: '弾薬の欄は、二十年ぶん全部が空欄だった。書く機会が一度も無かったからだ。', en: "The ammunition column was blank for twenty years. There had never once been anything to write." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '実弾は、積んだことがない', en: "We have never carried live rounds." } },
+          { whoKey: 'adv.name.kaito', text: { ja: 'ビームだけだ。あれは弾じゃない。炉から直接出る', en: "Just the beam. That isn't ammunition. It comes straight off the reactor." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '積んでいないものは、積んでいない', en: "What isn't loaded isn't loaded." } },
+        ],
+      },
+    ],
+
+    // --- 出口 = 四番機に乗る。戻れない ---
+    exit: {
+      x: 600,
+      labelKey: 'adv.label.ladder',
+      lines: [
+        { whoKey: 'adv.name.ben',   text: { ja: 'カイト。乗ったか', en: "Kaito. You aboard?" }, se: 'radio' },
+        { whoKey: 'adv.name.kaito', text: { ja: '今から', en: "Getting in now." } },
+        { whoKey: 'adv.name.ben',   text: { ja: '右の推力偏向。渋いからな', en: "Right thrust vector. It sticks." } },
+        { whoKey: 'adv.name.kaito', text: { ja: '三回目だぞ、それ', en: "That's the third time." } },
+        { whoKey: 'adv.name.ben',   text: { ja: '四回言う。覚えてないと死ぬやつだからだ', en: "I'll say it a fourth. It's the kind you die not remembering." } },
+        { text: { ja: '座席は冷えていた。掌の下でスイッチの位置を数える。目をつぶっても分かる。', en: "The seat was cold. Under his palms he counted the switches. He could find them with his eyes shut." } },
+        { text: { ja: '――当番表に書かれた、彼の持ち場。', en: "—His post, as written on the duty roster." } },
+        { whoKey: 'adv.name.grandpa', text: { ja: 'カイト', en: "Kaito." }, se: 'radio' },
+        { whoKey: 'adv.name.kaito',   text: { ja: 'じいちゃん、どこに', en: "Grandpa. Where are you?" } },
+        { whoKey: 'adv.name.grandpa', text: { ja: '上がれ。下は見るな', en: "Go up. Don't look down." } },
+        { text: { ja: '無線が切れた。', en: "The radio went dead." } },
+        { text: { ja: '発艦筒の灯が、赤から青へ変わった。', en: "The lights in the launch tube turned from red to blue." } },
+      ],
+      // ★ ここでADVが終わり、3D戦闘が始まる。乗る機体は旧式艇四番機(ships.js)
+      sortie: 'boat4',
+    },
+
+    opening: [
+      { text: { ja: '発艦筒の非常灯は赤い。整備の色ではない。', en: "The emergency lamps in the launch tube are red. That is not the colour of maintenance." } },
+      { text: { ja: '一番機のハッチが開いたままだった。中は空。', en: "Number one's hatch stood open. Empty inside." } },
+      { text: { ja: '誰が乗っていったのかは、当番表を見なくても分かる。この村は狭い。', en: "He did not need the roster to know who had taken it. The village is small." } },
     ],
   },
 };
@@ -729,6 +837,8 @@ let storyTalkingNpc = null;   // いま話しかけている相手(会話が閉�
 
 // 出口が開いた合図の音を、会話が終わるまで待たせるための札
 let storyUnlockSePending = false;
+let storyExitSpoken  = false;   // 出口の台詞をもう読んだか
+let storyExitPending = false;   // その台詞を読み終えたら出る
 
 // ===================================================================
 // 拡大率を決めて、舞台の大きさを合わせる
@@ -855,6 +965,8 @@ function charWidth(scale)  { return Math.round(charHeight(scale) * ADV_CONFIG.CH
 // シーンを開く
 // ===================================================================
 function startStoryScene(id) {
+  storyExitSpoken = false;
+  storyExitPending = false;
   const scene = STORY_SCENES[id];
   if (!scene) { console.warn('シーンが見つからない: ' + id); return; }
 
@@ -919,7 +1031,9 @@ function buildStoryScene(scene) {
   // 奥に立たせたい人を先に書く。
   storyNpcs = [];
   storyTalkingNpc = null;
-  for (const n of scene.npcs) {
+  // ★ 人物のいないシーンもある(シーン4の発艦筒は、誰もいないことが眼目)。
+  //   npcs を書かなくても動くようにしておく。
+  for (const n of (scene.npcs || [])) {
     // その人が持ち込む小物(祖父の脚立)。本人より先に足して背面へ回す
     let ladderEl = null;
     if (n.ladder) {
@@ -1078,6 +1192,8 @@ function closeStoryLines() {
   storyLines = null;
   storyBoxEl.classList.remove('on');
   if (storyUnlockSePending) { storyUnlockSePending = false; playStoryUnlock(); }
+  // 出口で交わす言葉が終わった = もう戻らない
+  if (storyExitPending) { storyExitPending = false; leaveStoryScene(); return; }
   // ふだんの向き(祖父なら木のほう)へ戻す
   if (storyTalkingNpc) {
     const n = storyTalkingNpc.def;
@@ -1193,8 +1309,20 @@ function updateStory(dt) {
 
     const exit = storyScene.exit;
     if (storyX >= exit.x) {
-      if (storyFlags.has(exit.unlock)) { leaveStoryScene(); }
-      else { storyX = exit.x - 2; openStoryLines(exit.blocked); }
+      // 鍵の指定が無い出口は、はじめから開いている(シーン4の発艦)
+      const locked = exit.unlock && !storyFlags.has(exit.unlock);
+      if (locked) {
+        storyX = exit.x - 2;
+        openStoryLines(exit.blocked);
+      } else if (exit.lines && !storyExitSpoken) {
+        // 出る前に交わす言葉がある。読み終えたら、そのまま出る(戻れない)
+        storyExitSpoken = true;
+        storyExitPending = true;
+        storyX = exit.x - 2;
+        openStoryLines(exit.lines);
+      } else {
+        leaveStoryScene();
+      }
     }
   }
 
@@ -1369,6 +1497,7 @@ function leaveStoryScene() {
   //   下の setTimeout が動く頃には exitStory() が storyScene を null にしている。
   const titleKey = storyScene.exit.nextTitleKey;
   const nextId   = storyScene.exit.nextScene || null;
+  const sortie   = storyScene.exit.sortie || null;   // ここから3D戦闘へ渡る
   const C = ADV_CONFIG;
   const hold = nextId ? C.TITLE_HOLD : C.TITLE_HOLD_END;
 
@@ -1395,7 +1524,15 @@ function leaveStoryScene() {
 
     // 次のシーンがあれば、そのまま続ける。
     // 無ければ「To be continued」を出してメニューへ戻る。
-    if (nextId && STORY_SCENES[nextId]) startStoryScene(nextId);
+    if (sortie) {
+      // ★ 題は出さない。赤から青へ変わった灯の続きが、そのまま戦闘になる。
+      //   メニューへは戻らないので exitStory() は使わない。
+      storyEl.classList.remove('on');
+      storyScene = null;
+      storyLines = null;
+      launchSortie(sortie, 'training');
+    }
+    else if (nextId && STORY_SCENES[nextId]) startStoryScene(nextId);
     else exitStory();
   };
 
@@ -1403,6 +1540,7 @@ function leaveStoryScene() {
   // 暗転しきる前に飛ばされると画面が飛んで見えるので、そこまでは受け付けない
   token.readyAt = performance.now() + C.FADE_OUT * 1000;
   token.showTimer = setTimeout(() => {
+    if (sortie) { go(); return; }   // 出撃は題を挟まずそのまま戦闘へ
     storyPromptEl.textContent = (nextId ? '' : t('adv.toBeContinued')) + t(titleKey);
     storyPromptEl.classList.add('on', 'big');
     playStoryTitle();

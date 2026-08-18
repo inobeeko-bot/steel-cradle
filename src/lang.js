@@ -253,6 +253,13 @@ const TEXT = {
   'adv.title.hangar':   ['第一部 一章 ― 旧式艇四機', 'Part I, Ch. 1 — Four Old Boats'],
   // シーン3の次。3D戦闘はフェーズ3なので、いまは題を出して終わる。
   'adv.scene4':         ['シーン4 ― 発艦', 'Scene 4 — Launch'],
+  'adv.title.launch':   ['第一部 一章 ― 発艦', 'Part I, Ch. 1 — Launch'],
+  'adv.place.launchbay':['旧ドック 発艦筒', 'Old Dock — Launch Bay'],
+  'adv.label.suit':     ['与圧服の掛け', 'suit rack'],
+  'adv.label.shrine':   ['祠の方角', 'toward the shrine'],
+  'adv.label.nose':     ['四番機の機首', "No.4's nose"],
+  'adv.label.log':      ['点検表', 'inspection log'],
+  'adv.label.ladder':   ['タラップ', 'boarding ladder'],
   'adv.place.dock':     ['アルカディア / 旧ドック', 'Arcadia / The old dock'],
 
   'adv.name.kaito':     ['カイト', 'Kaito'],
