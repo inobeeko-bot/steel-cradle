@@ -3292,6 +3292,8 @@ function tickBody(now) {
   // 回収した機材の効果の残り時間。熱と電力の計算より先に減らすこと ―
   // 切れたコマにまだ効いていることになると、計器の予測と1コマぶんずれる
   updateSalvageBuffs(dt);
+  // 僚機(味方の旧式艇)。読み込まれていなければ何もしない
+  if (typeof updateWingmen === 'function') updateWingmen(dt);
   updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過

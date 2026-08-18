@@ -52,7 +52,7 @@ const MENU_PAGES = {
         run: () => showGallery(),
       },
       {
-        label: 'STORY', jpKey: 'menu.story', tagKey: 'menu.soon', ready: false,
+        label: 'STORY', jpKey: 'menu.story', tagKey: 'menu.training.tag', ready: true,
         detailKey: 'menu.story.desc', go: 'story',
       },
       {
@@ -66,12 +66,40 @@ const MENU_PAGES = {
   story: {
     items: [
       { label: 'PART I',   jpKey: 'story.part1', tagKey: 'story.chapter1', ready: true,
-        detailKey: 'story.part1.desc', run: () => startStoryScene('ch1_s1_hill') },
+        detailKey: 'story.part1.desc', go: 'story_p1' },
       { label: 'PART II',  jpKey: 'story.part2', tagKey: 'menu.soon', ready: false,
         detailKey: 'story.part2.desc' },
       { label: 'PART III', jpKey: 'story.part3', tagKey: 'menu.soon', ready: false,
         detailKey: 'story.part3.desc' },
       { label: '← BACK', jpKey: 'menu.back', ready: true, back: true },
+    ],
+  },
+
+  // --- 第一部の章立て ---
+  story_p1: {
+    items: [
+      { label: 'CHAPTER 1', jpKey: 'story.ch1', tagKey: 'story.chapter1', ready: true,
+        detailKey: 'story.ch1.desc', go: 'story_ch1' },
+      { label: '← BACK', jpKey: 'menu.back', ready: true, back: 'story' },
+    ],
+  },
+
+  // --- 一章のシーン選択 ---
+  // ★ 通しで遊ぶ人のためではなく、作っている人のための入口。
+  //   毎回シーン1からやり直すのは、確かめたい場所が後ろにあるほど苦しい。
+  story_ch1: {
+    items: [
+      { label: 'SCENE 1', jpKey: 'story.s1', tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'story.s1.desc', run: () => startStoryScene('ch1_s1_hill') },
+      { label: 'SCENE 2', jpKey: 'story.s2', tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'story.s2.desc', run: () => startStoryScene('ch1_s2_festival') },
+      { label: 'SCENE 3', jpKey: 'story.s3', tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'story.s3.desc', run: () => startStoryScene('ch1_s3_hangar') },
+      { label: 'SCENE 4', jpKey: 'story.s4', tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'story.s4.desc', run: () => startStoryScene('ch1_s4_launch') },
+      { label: 'SORTIE',  jpKey: 'story.sortie', tagKey: 'menu.training.tag', ready: true,
+        detailKey: 'story.sortie.desc', run: () => launchStorySortie() },
+      { label: '← BACK', jpKey: 'menu.back', ready: true, back: 'story_p1' },
     ],
   },
 
@@ -175,18 +203,25 @@ function openMenuPage(name) {
 function confirmMenu() {
   const item = MENU_PAGES[menuPage].items[menuIndex];
 
-  if (item.back)          { playViewClick(); openMenuPage('root'); return; }
+  // back に行き先を書けば1つ前の階層へ戻る。書かなければ一番上へ
+  if (item.back)          { playViewClick(); openMenuPage(item.back === true ? 'root' : item.back); return; }
   if (item.go)            { playPresetConfirm(); openMenuPage(item.go); return; }
   if (!item.ready)        { playDenied(); return; }   // 準備中の項目は進めない
   if (item.run)           { playPresetConfirm(); item.run(); }
 }
 
 // --- 戻る(Esc)-------------------------------------------------------
+// どの画面から Esc を押したら、どこへ戻るか
+const MENU_PARENT = {
+  story_ch1: 'story_p1',
+  story_p1:  'story',
+};
+
 function backMenu() {
   if (menuPage === 'root') { playDenied(); return; }   // これ以上は戻れない
   if (menuPage === 'pause') { resumeMission(); return; }
   playViewClick();
-  openMenuPage('root');
+  openMenuPage(MENU_PARENT[menuPage] || 'root');
 }
 
 // ===================================================================
@@ -239,6 +274,14 @@ function launchSortie(shipKey, bgm) {
   setShip(shipKey);          // ★ restartMission より前(理由は上)
   applyShipColors();         // 機体の塗色を反映する(scene.js)
   restartMission();          // 7パラメーター・弾数・戦果をすべて初期化して開始
+
+  // 僚機。物語の出撃では一人で飛んでいない(シーン3「四機で村を守る」)
+  if (typeof clearWingmen === 'function') clearWingmen();
+  if (shipKey === 'boat4' && typeof spawnWingmen === 'function') {
+    spawnWingmen();
+    briefSortie();
+  }
+
   if (bgm) playBgm(bgm);     // 読み込みは非同期なので待たない
 }
 
@@ -265,9 +308,28 @@ function resumeMission() {
 }
 
 // --- 任務中断:メインメニューへ ---
+// --- 出撃したときに、いまどういう状況なのかを出す ---
+// いきなり戦闘が始まると、何をしに来たのか分からない。
+// 計器の戦闘ログに数行、間を置いて流す(音声は既存の読み上げに任せる)。
+function briefSortie() {
+  if (typeof addCombatLog !== 'function') return;
+  const lines = [
+    [0,    t('brief.title'), 'warn'],
+    [900,  t('brief.enemy'), 'warn'],
+    [1800, t('brief.friend'), null],
+    [2700, t('brief.you'), 'warn'],
+  ];
+  for (const [ms, text, kind] of lines) {
+    setTimeout(() => {
+      if (screenState === 'mission') addCombatLog(text, kind);
+    }, ms);
+  }
+}
+
 function abortMission() {
   missionState = 'aborted';   // 'active' 以外にしておく(戦闘の各処理が止まる)
   stopBgm();
+  if (typeof clearWingmen === 'function') clearWingmen();
   showMenu('root');
 }
 

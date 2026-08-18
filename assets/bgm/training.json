@@ -1,9 +1,9 @@
 {
  "loop": true,
- "bpm": 176.0,
- "bars": 24.0,
- "seam_error": 0.01548,
- "duration": 32.7251,
- "title": "Proving Ground",
- "source": "training_C_176bpm_Em.mp3"
+ "bpm": 168.0,
+ "bars": 32.0,
+ "seam_error": 0.08396,
+ "duration": 45.7142,
+ "title": "Looming Dust",
+ "source": "00_前回よかった_dread_168.mp3"
 }
