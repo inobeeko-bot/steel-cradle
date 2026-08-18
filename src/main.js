@@ -2808,6 +2808,7 @@ function endMission(result, reason) {
 
   missionState = result;
   setCombatFrozen(true);          // 敵AIと敵弾を止める
+  stopBgm();                      // BGM を引く。結果の音と重ならないように
   consoleEl.classList.add('failed');   // リザルト画面を表示するクラス
 
   // 見出しと理由。同じ枠を色違いで使い回す

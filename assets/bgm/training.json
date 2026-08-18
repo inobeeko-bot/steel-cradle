@@ -1,0 +1,9 @@
+{
+ "loop": true,
+ "bpm": 176.0,
+ "bars": 24.0,
+ "seam_error": 0.01548,
+ "duration": 32.7251,
+ "title": "Proving Ground",
+ "source": "training_C_176bpm_Em.mp3"
+}

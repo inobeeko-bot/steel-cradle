@@ -730,3 +730,128 @@ function setEngineLevel(ratio, cut) {
   if (cut) vol *= AUDIO.ENGINE_DRIFT;
   engineNodes.gain.gain.setTargetAtTime(vol, now, smooth);
 }
+
+// ===================================================================
+// BGM
+//
+// ここだけは音声ファイルを読む。効果音は上のとおり全部その場で合成しているが、
+// 数十秒の楽曲は合成では作れないので、あらかじめ作った MP3 を鳴らす。
+// 素材は development_aids/oto_kobo(音工房)で生成し、assets/bgm/ に置く。
+//
+// 曲は「1周ぶんちょうど」に切り出してある(24小節など小節の整数倍)。
+// だから loop = true にするだけで、継ぎ目なく延々と回る。
+// フェードは掛けていない ― ループ曲に掛けると繰り返すたび音量が凹むため。
+// ===================================================================
+
+const BGM = {
+  GAIN:      0.30,   // BGM の音量。効果音(AUDIO.MASTER)とは別に持つ
+  FADE_IN:   1.20,   // 鳴り始めの立ち上がり(秒)
+  FADE_OUT:  0.80,   // 止めるときの引き際(秒)
+
+  // 曲の一覧。名前 → ファイル
+  TRACKS: {
+    training: 'assets/bgm/training.mp3',   // 訓練飛行「Proving Ground」176BPM
+  },
+};
+
+let bgmGain    = null;   // BGM 専用の音量つまみ
+let bgmSource  = null;   // いま鳴っている音源
+let bgmName    = null;   // いま鳴っている曲の名前
+let bgmBuffers = {};     // 一度読んだ曲は使い回す(読み直さない)
+let bgmLoading = {};     // 読み込み中の約束。二重に取りに行かないため
+
+// BGM 用の音量つまみを用意する(初回だけ作る)
+function ensureBgmGain() {
+  if (!audioCtx) return null;
+  if (!bgmGain) {
+    bgmGain = audioCtx.createGain();
+    bgmGain.gain.value = 0;          // 無音から始めて、鳴らすときに上げる
+    bgmGain.connect(masterGain);     // 全体の音量つまみの下にぶら下げる
+  }
+  return bgmGain;
+}
+
+// 曲を読み込む。すでに読んであれば何もしない。
+function loadBgm(name) {
+  const url = BGM.TRACKS[name];
+  if (!url) return Promise.reject(new Error('知らない曲: ' + name));
+  if (bgmBuffers[name]) return Promise.resolve(bgmBuffers[name]);
+  if (bgmLoading[name]) return bgmLoading[name];
+
+  bgmLoading[name] = fetch(url)
+    .then(function (res) {
+      if (!res.ok) throw new Error(url + ' が読めません (' + res.status + ')');
+      return res.arrayBuffer();
+    })
+    // decodeAudioData = MP3 を波形に戻す。時間がかかるので1回だけやって覚えておく
+    .then(function (buf) { return audioCtx.decodeAudioData(buf); })
+    .then(function (decoded) {
+      bgmBuffers[name] = decoded;
+      delete bgmLoading[name];
+      return decoded;
+    })
+    .catch(function (e) {
+      delete bgmLoading[name];
+      console.warn('BGM を読めませんでした:', name, e);
+      throw e;
+    });
+  return bgmLoading[name];
+}
+
+// 曲を鳴らす。同じ曲がすでに鳴っていれば何もしない。
+function playBgm(name) {
+  if (!audioCtx) return;
+  if (bgmName === name && bgmSource) return;   // 二重に鳴らさない
+
+  stopBgm(0.25);          // 別の曲が鳴っていれば手短に引っ込める
+
+  loadBgm(name).then(function (buffer) {
+    if (!audioCtx) return;
+    const gain = ensureBgmGain();
+    if (!gain) return;
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;      // ★ 1周ぶんちょうどなので、これだけで継ぎ目なく回る
+    src.connect(gain);
+
+    const now = audioCtx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(BGM.GAIN, now + BGM.FADE_IN);
+    src.start(now);
+
+    bgmSource = src;
+    bgmName = name;
+  }).catch(function () { /* 読めなくてもゲームは続く */ });
+}
+
+// 曲を止める。fade を渡すとその秒数で引く。
+function stopBgm(fade) {
+  if (!audioCtx || !bgmSource) { bgmName = null; return; }
+
+  const src = bgmSource;
+  const gain = bgmGain;
+  const sec = (fade === undefined) ? BGM.FADE_OUT : fade;
+  const now = audioCtx.currentTime;
+
+  bgmSource = null;
+  bgmName = null;
+
+  if (gain) {
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + sec);
+  }
+  // 音量が0になってから止める。いきなり止めるとプツッと鳴る
+  try { src.stop(now + sec + 0.05); } catch (e) { /* もう止まっている */ }
+}
+
+// 一時停止中など、消さずに音量だけ落としたいとき(0〜1の倍率)
+function duckBgm(ratio) {
+  if (!bgmGain || !audioCtx) return;
+  const now = audioCtx.currentTime;
+  const target = BGM.GAIN * Math.max(0, Math.min(ratio, 1));
+  bgmGain.gain.cancelScheduledValues(now);
+  bgmGain.gain.setTargetAtTime(target, now, 0.15);
+}

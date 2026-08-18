@@ -222,6 +222,7 @@ function launchTraining() {
   applyViewMode(OPTIONS.startView === 'cockpit');   // 好みの視点で出撃する
   screenState = 'mission';
   restartMission();          // 7パラメーター・弾数・戦果をすべて初期化して開始
+  playBgm('training');       // BGM「Proving Ground」。読み込みは非同期なので待たない
 }
 
 // --- 戦闘中に Esc:一時停止 ---
@@ -232,6 +233,7 @@ function pauseMission() {
   keysHeld.clear();          // 停止した瞬間に押していたキーを離した扱いにする
   menuEl.classList.add('on');
   openMenuPage('pause');
+  duckBgm(0.35);             // BGM は消さずに音量だけ落とす
   playViewClick();
 }
 
@@ -241,12 +243,14 @@ function resumeMission() {
   screenState = 'mission';
   setCombatFrozen(false);
   menuEl.classList.remove('on');
+  duckBgm(1);                // BGM の音量を戻す
   playViewClick();
 }
 
 // --- 任務中断:メインメニューへ ---
 function abortMission() {
   missionState = 'aborted';   // 'active' 以外にしておく(戦闘の各処理が止まる)
+  stopBgm();
   showMenu('root');
 }
 
