@@ -303,6 +303,32 @@ let bombCooldown = 0;
 // 今の兵装を取り出す短縮形
 // 機体ごとの性能差を被せて返す(ships.js)。
 // 元の WEAPONS / BOMBS は書き換えない ― 書き換えると次の出撃に持ち越される。
+// ===================================================================
+// ★ ships.js が読み込まれていなくても、ゲームが止まらないようにする
+//
+// 新しい .js を足したとき、ブラウザが古い index.html をキャッシュしていると
+// そのファイルだけ読み込まれない。すると毎コマ例外が出て、描画も敵AIも
+// 当たり判定も全部止まる ― 画面が真っ暗になり、敵がすり抜けて動かなくなる。
+// しかも tick() が例外を握り潰すので、原因が表に出ない。
+//
+// 足りない部品は「無いなり」に動く既定値で埋める。
+// 機体の個性は失われるが、遊べなくなるよりずっとよい。
+// ===================================================================
+if (typeof shipTuned !== 'function') {
+  console.warn('ships.js が読み込まれていません。制式機の性能で代用します('
+             + 'Ctrl+Shift+R で再読込すると直ります)');
+  window.SHIPS = window.SHIPS || {};
+  window.ship = window.ship || (() => ({ name: '制式機', bodyColor: null, wingColor: null }));
+  window.setShip = window.setShip || (() => {});
+  window.shipTuned = (entry) => entry;
+  window.shipHasWeapon = () => true;
+  window.shipHasBomb = () => true;
+  window.shipYaw = (d) => d;
+  window.shipYawSmooth = (base) => base;
+  window.shipRollCap = (base) => base;
+  window.shipRollAccel = (base) => base;
+}
+
 const currentWeapon = () => shipTuned(WEAPONS[weaponIndex]);
 const currentBomb   = () => shipTuned(BOMBS[bombIndex]);
 

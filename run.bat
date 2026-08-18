@@ -40,6 +40,15 @@ echo   Stop : close this window, or press Ctrl+C
 echo.
 
 start "" "http://127.0.0.1:%PORT%/index.html"
-%PY% -m http.server %PORT% --bind 127.0.0.1
+
+rem dev_server.py serves with no-cache headers. Without it the browser can
+rem keep a stale index.html, miss a newly added script, and the game dies
+rem silently (black screen, frozen enemies). Fall back to http.server if
+rem the file is missing.
+if exist "dev_server.py" (
+  %PY% dev_server.py %PORT%
+) else (
+  %PY% -m http.server %PORT% --bind 127.0.0.1
+)
 
 endlocal
