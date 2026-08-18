@@ -89,6 +89,7 @@ const TEXT = {
   'power.locked':       ['配分 固定 ― 四系統 均等', 'Distribution locked'],
   'esc.hit':            ['貨物船 被弾 ― 損傷 半数', 'Freighter hit — half structure gone'],
   'esc.lost':           ['貨物船 轟沈 ― 三百十一名', 'Freighter lost — 311 aboard'],
+  'esc.marker':         ['貨物船', 'FREIGHTER'],
   'esc.count':          ['射出まで %s 秒', '%s seconds to launch'],
   'esc.launch':         ['貨物船 射出 ― 追え', 'Freighter away — follow it'],
   'esc.down':           ['被撃墜', 'down'],

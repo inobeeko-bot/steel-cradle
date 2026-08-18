@@ -1641,6 +1641,8 @@ const enemyMarkers = [];   // 3D画面に重ねる敵マーカー
 // 表示が別の輝点に飛び移ってちらつく。1隻しか出ないのだから、
 // 専用の枠を1つ用意しておくのがいちばん素直で確実。
 let bossBlip   = null;
+let freightBlip = null;    // 貨物船のレーダー輝点(無条件で映る)
+let freightMark = null;    // 画面内のマーカー
 let bossMarker = null;
 
 // 落ちている回収物の輝点。同時に出せる数だけ先に作っておく
@@ -1661,6 +1663,16 @@ function setupRadar() {
   bossBlip = document.createElement('div');
   bossBlip.className = 'radar-blip capital';
   radarEl.appendChild(bossBlip);
+
+  // 貨物船。守る対象なので、センサー配分にも熱にも関係なく必ず映す
+  freightBlip = document.createElement('div');
+  freightBlip.className = 'radar-blip friendly-ship';
+  radarEl.appendChild(freightBlip);
+
+  freightMark = document.createElement('div');
+  freightMark.className = 'freight-marker';
+  freightMark.innerHTML = '<span class="tag"></span>';
+  markerLayer.appendChild(freightMark);
 
   bossMarker = document.createElement('div');
   bossMarker.className = 'enemy-marker capital';
@@ -2145,6 +2157,7 @@ function renderRadar() {
   }
 
   renderBossBlip(range);
+  renderFreightBlip(range);
   renderSalvageBlips(sensorPct, range);
 
   // --- 接近しているミサイル ---
@@ -2171,6 +2184,33 @@ function renderRadar() {
 // 圏外にいるあいだは輝点がスコープの縁に貼り付く(placeBlip が丸める)。
 // 「あの方角の、ずっと遠く」がそれで伝わる。
 // ===================================================================
+// 貨物船の輝点とマーカー。
+// ★ 敵と違って「見つける」対象ではないので、探知の条件を一切通さない。
+//   守れと言われたものが見えないのは、難易度ではなく不親切。
+function renderFreightBlip(range) {
+  if (!freightBlip) return;
+  const c = (typeof freighterContact === 'function') ? freighterContact() : null;
+  if (!c) {
+    freightBlip.style.display = 'none';
+    freightMark.style.display = 'none';
+    return;
+  }
+
+  placeBlip(freightBlip, c, range);
+
+  if (!c.inFront) { freightMark.style.display = 'none'; return; }
+  freightMark.style.display = 'block';
+  freightMark.style.left = ((c.ndcX * 0.5 + 0.5) * 100) + '%';
+  freightMark.style.top  = ((-c.ndcY * 0.5 + 0.5) * 100) + '%';
+
+  const size = Math.max(46, Math.min(14000 / Math.max(c.dist, 1), 260));
+  freightMark.style.width  = size + 'px';
+  freightMark.style.height = (size * 0.42) + 'px';
+  freightMark.classList.toggle('launching', !!c.launching);
+  freightMark.querySelector('.tag').textContent =
+    t('esc.marker') + '  ' + Math.round(c.dist) + '  ' + Math.round(c.hpRatio * 100) + '%';
+}
+
 function renderBossBlip(range) {
   if (!bossBlip) return;
 
@@ -3324,6 +3364,7 @@ function tickBody(now) {
   if (typeof updateWingmen === 'function') updateWingmen(dt);
   // アルカディア脱出戦。貨物船と僚機の消耗はここで進む
   if (typeof updateEscape === 'function') updateEscape(dt);
+  if (typeof updateRadio === 'function') updateRadio(dt);
   updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
   update(dt);                       // 7パラメーターの時間経過

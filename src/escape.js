@@ -180,6 +180,9 @@ function updateEscape(dt) {
     freighterHp -= ESCAPE.THREAT_DPS * near * dt;
     if (before >= ESCAPE.FREIGHTER_HP * 0.5 && freighterHp < ESCAPE.FREIGHTER_HP * 0.5) {
       if (typeof addCombatLog === 'function') addCombatLog(t('esc.hit'), 'warn');
+      if (typeof radioSay === 'function') {
+        radioSay('wing.n3', '貨物船に当たってる ― 誰か剥がせ', true);
+      }
     }
   }
   if (freighterHp <= 0) {
@@ -206,6 +209,12 @@ function updateDefendPhase(dt) {
       if (typeof addCombatLog === 'function') {
         addCombatLog(t('esc.count').replace('%s', String(mark)), 'warn');
       }
+      if (typeof radioSay === 'function') {
+        const say = { 60: ['wing.n3', 'あと一分。持たせろ'],
+                      30: ['wing.n2', '三十秒! 三十秒!'],
+                      10: ['wing.n3', '離れろ ― 噴射に巻き込まれるぞ'] }[mark];
+        if (say) radioSay(say[0], say[1], true);
+      }
     }
   }
 
@@ -222,13 +231,23 @@ function beginLaunch() {
   //   貨物船は鈍くて曲がれない ― 一度向いた先へ、加速して抜けるだけ。
   //   自機の正面ではなく貨物船の船首方向にしてあるので、
   //   プレイヤーは「置いていかれる」ところから追いかけ始める。
-  launchDir = new THREE.Vector3(0, 0, 1);
+  // ★ 射出の向きは「射出の瞬間に自機が向いている方向」。
+  //   世界の固定方向にすると、プレイヤーが後ろを向いていた場合
+  //   貨物船が画面外へ消え、何が起きたのか分からないまま終わる。
+  //   正面から出ていくなら、追いかける対象が最初から見えている。
+  launchDir = new THREE.Vector3(0, 0, -1);
   if (playerShip) {
-    // 港の外(自機から見て前方やや上)へ抜ける
-    launchDir = new THREE.Vector3(0.18, 0.10, 1).normalize();
+    launchDir.applyQuaternion(playerShip.quaternion).normalize();
+    // 貨物船を自機の正面・少し先へ置き直してから射出する。
+    // 港でどこにいたかに関係なく、必ず視界の中から出ていく
+    freighter.position.copy(playerShip.position)
+      .addScaledVector(launchDir, 260)
+      .add(new THREE.Vector3(0, -18, 0));
+    freighter.lookAt(freighter.position.clone().addScaledVector(launchDir, 100));
   }
 
   if (typeof addCombatLog === 'function') addCombatLog(t('esc.launch'), 'warn');
+  if (typeof radioSay === 'function') radioSay('wing.n3', '行った ― 追え、カイト', true);
   if (typeof playSortie === 'function') playSortie();
 
   // 追いつけるように、機体が全力を出す(配分の操作は教えていないので自動)
@@ -293,7 +312,45 @@ function loseWingman(w) {
   if (typeof addCombatLog === 'function') {
     addCombatLog(t(w.def.numKey) + ' ' + t('esc.down'), 'bad');
   }
+  // 落ちた本人ではなく、残っている誰かが呼ぶ。
+  // 落ちた機から声が来ては困るし、呼んで返事が無いことに意味がある。
+  if (typeof radioSay === 'function' && typeof wingmen !== 'undefined') {
+    const rest = wingmen.filter(function (o) { return !o.dead && o !== w; });
+    if (rest.length) {
+      radioSay(rest[0].def.numKey, '……' + t(w.def.numKey) + '、応答しろ', true);
+    }
+  }
   if (w.group.parent) w.group.parent.remove(w.group);
+}
+
+// --- レーダー・画面マーカー用の情報 ---------------------------------
+// boss.js の bossContact() と同じ形で返す。
+// ★ 貨物船は「無条件で映る」。センサー配分にも熱にも左右されない ―
+//   守る対象が見えないのは、遊びとして成立しない。
+const _fTo  = new THREE.Vector3();
+const _fInv = new THREE.Quaternion();
+const _fNdc = new THREE.Vector3();
+const _fView = new THREE.Vector3();
+
+function freighterContact() {
+  if (!escapeRunning() || !playerShip || typeof camera === 'undefined') return null;
+
+  _fInv.copy(playerShip.quaternion).invert();
+  _fTo.subVectors(freighter.position, playerShip.position);
+  const dist = _fTo.length();
+  const local = _fTo.clone().applyQuaternion(_fInv);
+
+  const ndc = _fNdc.copy(freighter.position).project(camera);
+  const inFront = camera.worldToLocal(_fView.copy(freighter.position)).z < 0;
+
+  return {
+    localX: local.x, localY: local.y, localZ: local.z,
+    dist: dist,
+    ndcX: ndc.x, ndcY: ndc.y,
+    inFront: inFront,
+    hpRatio: Math.max(0, freighterHp) / ESCAPE.FREIGHTER_HP,
+    launching: escapePhase === 'launch',
+  };
 }
 
 // --- 計器に出す値 ---------------------------------------------------

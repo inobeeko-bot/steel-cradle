@@ -278,10 +278,21 @@ function launchSortie(shipKey, bgm) {
   // 僚機。物語の出撃では一人で飛んでいない(シーン3「四機で村を守る」)
   if (typeof clearWingmen === 'function') clearWingmen();
   if (typeof clearEscape === 'function') clearEscape();
+  if (typeof initRadio === 'function') initRadio();
+
+  // ★ 熱の計器を出すかどうか。
+  //   熱管理はまだ物語で教えていない(ヨナスの講義は第三章)。
+  //   読み方を知らない計器が並んでいると、他の計器まで読まれなくなる。
+  const teachesHeat = !(typeof ship === 'function' && ship().powerLocked);
+  document.body.classList.toggle('no-heat', !teachesHeat);
+
   if (shipKey === 'boat4') {
     if (typeof spawnWingmen === 'function') spawnWingmen();
     if (typeof startEscape === 'function') startEscape();   // 貨物船を出す
     briefSortie();
+    if (typeof radioSay === 'function') {
+      setTimeout(() => radioSay('wing.n3', '編隊 組め。貨物船から離れるな', true), 5200);
+    }
   }
 
   if (bgm) playBgm(bgm);     // 読み込みは非同期なので待たない
@@ -338,6 +349,7 @@ function abortMission() {
   stopBgm();
   if (typeof clearWingmen === 'function') clearWingmen();
   if (typeof clearEscape === 'function') clearEscape();
+  if (typeof clearRadio === 'function') clearRadio();
   showMenu('root');
 }
 
