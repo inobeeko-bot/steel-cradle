@@ -46,8 +46,10 @@ const COLONY = {
   // --- 寸法 -----------------------------------------------------------
   // 距離2800でリング半径1150(太さ込み1315)= 見かけの直径がおよそ50度。
   // 視野70度なので、画面の横幅の7割を占める。これで「めっちゃ大きい」になる。
-  RING_R:    1150,   // リングの半径
-  RING_TUBE:  165,   // リングの太さ
+  // ★ アルカディア。「地図にない村」なので、大都市コロニーより一回り小さい。
+  //   1150 → 820。遠景に浮かぶ「小さな環」に見せる。
+  RING_R:     820,   // リングの半径
+  RING_TUBE:  135,   // リングの太さ
   HUB_R:      130,   // 軸の太さ
   HUB_LEN:    980,   // 軸の長さ
   SPOKES:       6,   // 軸とリングをつなぐ本数
@@ -71,6 +73,14 @@ const COLONY = {
   EDGE:    0x8fa6bb,   // 輪郭線
   HUB:     0x596674,   // 軸
   WINDOW:  0xffd9a0,   // 内壁の明かり(暖色。人が住んでいる色)
+
+  // ★ リングの内側に見えるもの。ここが「自然のあるコロニー」の正体。
+  //   外殻の灰色しか見えないと、ただの構造物になる。
+  //   果樹園の緑、実った畑の黄、そして水 ― この3色が回っていれば、
+  //   遠景でも「人が耕して住んでいる場所」に見える。
+  FIELD:   0x4f7a3a,   // 果樹園・畑の緑
+  GRAIN:   0xbfa23e,   // 実りの黄。収穫祭の色でもある
+  WATER:   0x2f6f86,   // 湖と水路
   MIRROR:  0xbcd4e8,   // 鏡面帆
 };
 
@@ -136,10 +146,33 @@ function createColony() {
   // 人が住んでいるのはリングの内側の壁。そこに土が敷かれ、町がある。
   // 内側を向いた細い輪を1本、加算合成で光らせる ―
   // 外から見て「中に灯りがある」と分かるのは、この1本だけで足りる。
+  // ★ 内側の地面を区画に分ける。
+  //   TorusGeometry の6番目の引数 arc は「どこまで回すか」(ラジアン)。
+  //   これで円弧の一片だけを作り、rotation.z で位置を回して並べれば、
+  //   リングの内側をぐるりと塗り分けられる。
+  //   区画の並びは決め打ち ― 毎回ばらけると「同じ村」に見えなくなる。
+  const PLOTS = [
+    'FIELD', 'FIELD', 'WATER', 'GRAIN', 'FIELD', 'GRAIN',
+    'WATER', 'FIELD', 'GRAIN', 'FIELD', 'WATER', 'FIELD',
+  ];
+  const step = (Math.PI * 2) / PLOTS.length;
+  const groundR = COLONY.RING_R - COLONY.RING_TUBE * 0.52;
+  for (let i = 0; i < PLOTS.length; i++) {
+    const geo = new THREE.TorusGeometry(
+      groundR, COLONY.RING_TUBE * 0.34, 5, 5, step * 0.94);   // 0.94 = 区画の境に隙間
+    const plot = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+      color: COLONY[PLOTS[i]], flatShading: true,
+    }));
+    plot.rotation.z = i * step;
+    g.add(plot);
+  }
+
+  // その上に暖色の明かりを薄く重ねる。畑の色を殺さない程度に。
+  // 「灯りがある」ことと「耕されている」ことを両方見せたい
   const glowGeo = new THREE.TorusGeometry(
-    COLONY.RING_R - COLONY.RING_TUBE * 0.55, COLONY.RING_TUBE * 0.30, 6, 44);
+    groundR, COLONY.RING_TUBE * 0.24, 6, 44);
   const glowMat = new THREE.MeshBasicMaterial({
-    color: COLONY.WINDOW, transparent: true, opacity: 0.55,
+    color: COLONY.WINDOW, transparent: true, opacity: 0.22,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
   g.add(new THREE.Mesh(glowGeo, glowMat));

@@ -1095,7 +1095,11 @@ const SQUAD = {
   // 3小隊(9機)にしてみたが、開幕からいっせいに来られると手が付けられなかった。
   // 1小隊なら「3機ひと組の編隊とやり合う」という、この機能の見どころは残る。
   // 増やすときは、戦艦が出るまでの撃墜数(BOSS.SPAWN_KILLS)も一緒に見直すこと。
-  GROUPS:  1,
+  //
+  // ★ 2小隊(6機)へ増やした。脱出戦は「哨戒網に囲まれる」話なので、
+  //   3機では貨物船を脅かす圧が出ない。9機で手に負えなかったのは
+  //   自機1機で相手をしていたからで、いまは僚機が3機いる。
+  GROUPS:  2,
   SIZE:    3,     // 1小隊の機数(3 = 三角形)
 
   SPREAD: 12,     // 僚機が長機から左右に開く距離
@@ -1836,7 +1840,12 @@ function buildScene() {
   // 星より外、描画限界より内に置く。星と同じく自機について来るので、
   // どこまで飛んでも空に浮かんだままになる
   if (typeof createColony === 'function') createColony();
-  if (typeof createColony2 === 'function') createColony2();
+  // ★ 2基目(円筒型)は出さない。
+  //   物語に出てこない建造物が視界を占領していると、
+  //   「あれは何だ」という問いが宙に浮いたまま戦闘が進む。
+  //   背景のコロニーはアルカディア1基だけにする ― 貨物船が出てくる港でもある。
+  //   コードは colony.js に残してある(第二部以降で使う場所ができたら呼べばよい)。
+  // if (typeof createColony2 === 'function') createColony2();
 
   // --- 流れる宇宙塵 ---
   dust = createDustField();
@@ -2813,7 +2822,12 @@ function updateFlight(dt, enginePercent) {
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerShip.quaternion);
 
   // --- 2. 目標速度 ---
-  const targetSpeed = speedFromEnginePower(enginePercent);
+  // ★ 脱出戦の最後だけ、配分に関係なく機体が全力を出す(escape.js が指定)。
+  //   配分の操作はまだ教えていないので、プレイヤーの操作ではなく
+  //   「機体が勝手に絞り出す」という形にしてある。
+  const targetSpeed = (typeof speedOverride === 'number' && speedOverride > 0)
+    ? speedOverride
+    : speedFromEnginePower(enginePercent);
 
   // --- 3. 今の速度を目標へ寄せる ---
   //
@@ -3204,6 +3218,10 @@ function resetFlight() {
 //   ここを100で切ってしまうと、発電量を上げても速度だけ変わらない
 //   という無言の天井になる(索敵の sensorRange も同じ理由)。
 //   配分UIの合計は100%のまま ― 仕様書9.3の文言はそちらを指している。
+// 0 より大きいと、この速度で飛ぶ。脱出戦の全力追走で使う
+let speedOverride = 0;
+function setSpeedOverride(v) { speedOverride = Math.max(0, v || 0); }
+
 function speedFromEnginePower(enginePercent) {
   const cap = (typeof SALVAGE !== 'undefined') ? SALVAGE.POWER_INPUT_MAX : 100;
   const ratio = Math.max(0, Math.min(cap, enginePercent)) / 100;

@@ -981,6 +981,13 @@ function heatVentRate(radiator) {
 // 配分操作:指定した系統に +10%。その分を他の3系統から均等に差し引く
 // ===================================================================
 function boost(targetKey, amount = 10) {
+  // ★ まだ配分を教わっていない機体では、そもそも動かせない(ships.js)
+  if (typeof ship === 'function' && ship().powerLocked) {
+    addCombatLog(t('power.locked'), 'warn');
+    playDenied();
+    return;
+  }
+
   // 仕様書9.6「電力系被弾→十字の一方向グレーアウト(対応キーも無効化)」
   if (isBroken(targetKey)) {
     addCombatLog(BREAKAGE[targetKey].label + '系 損傷', 'hull');
@@ -1021,6 +1028,12 @@ function boost(targetKey, amount = 10) {
 // プリセット適用:あらかじめ決めた配分に一気に切り替える
 // ===================================================================
 function applyPreset(presetKey) {
+  if (typeof ship === 'function' && ship().powerLocked) {
+    addCombatLog(t('power.locked'), 'warn');
+    playDenied();
+    return;
+  }
+
   const preset = PRESETS[presetKey];
   if (!preset) return;   // 定義のないキーなら何もしない
 

@@ -27,8 +27,17 @@
 // ===================================================================
 
 const ESCAPE = {
-  LAUNCH_SEC:     240,    // 貨物船が港を出るまで(秒)
-  SPEED:            7,    // 貨物船の速さ。鈍い
+  // ★ 二段構えにしてある。
+  //   前半 = 港で待つ貨物船を守る。後半 = 射出された貨物船を追う。
+  //   「時間切れで終わり」ではなく、最後に動きのある締めを置きたかった。
+  DEFEND_SEC:     150,    // 守る時間。240秒は長すぎた(集中が保たない)
+  CHASE_SEC:       26,    // 射出されてから決着まで
+  SPEED:            7,    // 港を離れるときの速さ。鈍い
+  // 自機は配分25%固定なので巡航17。追いつけない数字にすると追跡が成立しない。
+  LAUNCH_SPEED:    44,    // 射出後の貨物船の速さ(巡航の約6倍)
+  LAUNCH_RAMP:    2.6,    // この秒数かけて加速する(いきなり消えると何が起きたか分からない)
+  CHASE_SPEED:     52,    // 追跡中の自機の速さ。貨物船よりわずかに速い ―
+                          // 離されはしないが、追いついた実感は自分で作る余地を残す
 
   // ★ 数字は「守り切れるか」から逆算した。最初は HP60・毎秒1.6 にしていたが、
   //   敵1機が近づいただけで38秒で沈む ― 240秒の任務なのに守りようがない。
@@ -41,13 +50,16 @@ const ESCAPE = {
   // 僚機は escape.js の予定表(LOSS_AT)で必ず落ちる。
   // この削られ方は「敵に囲まれたら予定より早く落ちる」ぶんなので、
   // 予定を追い越しすぎない速さにしてある(敵2機で約18秒)。
-  WING_HP:         16,
+  // ★ 粘らせる。敵が6機に増えたので、前の HP16 だと囲まれた瞬間に消えた。
+  WING_HP:         34,
   WING_THREAT:    170,    // 敵がこれより近いと僚機が削られる
-  WING_DPS:      0.45,
+  WING_DPS:      0.40,
 
   // 進行度がここを超えたら、まだ生きている僚機を1機失う。
   // 「守り切れない」を保証するための仕掛け。
-  LOSS_AT: [0.28, 0.55, 0.82],
+  // ★ 後ろへ寄せた。早々に一人になると、守っている実感の前に諦めが来る。
+  //   最後の一機は射出の直前まで残る ― 誰もいなくなってから追いかける。
+  LOSS_AT: [0.46, 0.72, 0.93],
 
   SURVIVORS: 311,         // 貨物船に詰めた人数(小説の数字)
 
@@ -61,6 +73,10 @@ let escapeActive = false;
 let escapeTime   = 0;      // 経過(秒)
 let escapeLosses = 0;      // 失った僚機の数
 let freighterHp  = 0;
+let escapePhase  = 'defend';   // 'defend'(港を守る) → 'launch'(射出・追跡)
+let launchDir    = null;       // 射出の向き。決まった一方向へまっすぐ出る
+let launchSpeed  = 0;
+let chaseTime    = 0;
 
 // --- 貨物船を組み立てる -------------------------------------------
 // 戦艦(boss.js)とは別物。武装が無く、鈍く、大きいだけの船。
@@ -111,8 +127,13 @@ function startEscape() {
   escapeTime   = 0;
   escapeLosses = 0;
   escapeActive = true;
+  escapePhase  = 'defend';
+  launchSpeed  = 0;
+  chaseTime    = 0;
+  launchDir    = null;
+  if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
 
-  if (typeof missionTime !== 'undefined') missionTime = ESCAPE.LAUNCH_SEC;
+  if (typeof missionTime !== 'undefined') missionTime = ESCAPE.DEFEND_SEC;
 
   // 敵は哨戒機だけにする。小説の「企業艦隊の哨戒網」に合わせる ―
   // 初戦にハウンド(追い回す)やスナイパー(遠距離)は出てこない。
@@ -129,6 +150,8 @@ function clearEscape() {
   escapeActive = false;
   // 敵のタイプの固定を解く。訓練飛行では3タイプが混ざるのが既定
   if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
+  if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
+  escapePhase = 'defend';
 }
 
 const escapeRunning = () => escapeActive && freighter !== null;
@@ -140,12 +163,8 @@ function updateEscape(dt) {
   if (typeof missionState !== 'undefined' && missionState !== 'active') return;
 
   escapeTime += dt;
-  const progress = Math.min(escapeTime / ESCAPE.LAUNCH_SEC, 1);
 
-  // --- 貨物船は港からゆっくり離れていく ---
-  freighter.position.z += ESCAPE.SPEED * dt;
-
-  // --- 近くの敵が貨物船を削る ---
+  // --- 近くの敵が貨物船を削る(どちらの段でも効く) ---
   // 敵AIに「貨物船を狙う」を作り込むと敵の実装へ深く手を入れることになる。
   // ここでは「近くにいる敵の数ぶん削られる」という形にしてある。
   // プレイヤーの仕事は、貨物船のそばから敵を減らすこと。
@@ -159,22 +178,75 @@ function updateEscape(dt) {
   if (near > 0) {
     const before = freighterHp;
     freighterHp -= ESCAPE.THREAT_DPS * near * dt;
-    // 半分を切った瞬間に一度だけ知らせる
     if (before >= ESCAPE.FREIGHTER_HP * 0.5 && freighterHp < ESCAPE.FREIGHTER_HP * 0.5) {
       if (typeof addCombatLog === 'function') addCombatLog(t('esc.hit'), 'warn');
     }
   }
-
-  // --- 僚機が落ちる ---
-  updateWingmanLosses(dt, progress);
-
-  // --- 決着 ---
   if (freighterHp <= 0) {
     freighterHp = 0;
     if (typeof endMission === 'function') endMission('failed', t('esc.lost'));
     return;
   }
-  if (progress >= 1) {
+
+  if (escapePhase === 'defend') updateDefendPhase(dt);
+  else updateLaunchPhase(dt);
+}
+
+// --- 前半:港で待つ貨物船を守る -------------------------------------
+function updateDefendPhase(dt) {
+  const progress = Math.min(escapeTime / ESCAPE.DEFEND_SEC, 1);
+
+  freighter.position.z += ESCAPE.SPEED * dt;      // 港をゆっくり離れる
+  updateWingmanLosses(dt, progress);
+
+  // 残り時間を知らせる。数字を見なくても段取りが分かるように
+  const left = ESCAPE.DEFEND_SEC - escapeTime;
+  for (const mark of [60, 30, 10]) {
+    if (left <= mark && left + dt > mark) {
+      if (typeof addCombatLog === 'function') {
+        addCombatLog(t('esc.count').replace('%s', String(mark)), 'warn');
+      }
+    }
+  }
+
+  if (progress >= 1) beginLaunch();
+}
+
+// --- 射出 -----------------------------------------------------------
+function beginLaunch() {
+  escapePhase = 'launch';
+  chaseTime = 0;
+  launchSpeed = 0;
+
+  // ★ 決まった一方向へまっすぐ出る。
+  //   貨物船は鈍くて曲がれない ― 一度向いた先へ、加速して抜けるだけ。
+  //   自機の正面ではなく貨物船の船首方向にしてあるので、
+  //   プレイヤーは「置いていかれる」ところから追いかけ始める。
+  launchDir = new THREE.Vector3(0, 0, 1);
+  if (playerShip) {
+    // 港の外(自機から見て前方やや上)へ抜ける
+    launchDir = new THREE.Vector3(0.18, 0.10, 1).normalize();
+  }
+
+  if (typeof addCombatLog === 'function') addCombatLog(t('esc.launch'), 'warn');
+  if (typeof playSortie === 'function') playSortie();
+
+  // 追いつけるように、機体が全力を出す(配分の操作は教えていないので自動)
+  if (typeof setSpeedOverride === 'function') setSpeedOverride(ESCAPE.CHASE_SPEED);
+  if (typeof missionTime !== 'undefined') missionTime = ESCAPE.CHASE_SEC;
+}
+
+// --- 後半:射出された貨物船を追う -----------------------------------
+function updateLaunchPhase(dt) {
+  chaseTime += dt;
+
+  // だんだん速くなる。いきなり消えると何が起きたか分からない
+  const ramp = Math.min(chaseTime / ESCAPE.LAUNCH_RAMP, 1);
+  launchSpeed = ESCAPE.LAUNCH_SPEED * ramp;
+  freighter.position.addScaledVector(launchDir, launchSpeed * dt);
+
+  if (chaseTime >= ESCAPE.CHASE_SEC) {
+    if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
     if (typeof endMission === 'function') endMission('escaped');
   }
 }
@@ -230,7 +302,7 @@ function escapeStatus() {
   return {
     hp: Math.max(0, Math.round(freighterHp)),
     hpMax: ESCAPE.FREIGHTER_HP,
-    progress: Math.min(escapeTime / ESCAPE.LAUNCH_SEC, 1),
+    progress: Math.min(escapeTime / ESCAPE.DEFEND_SEC, 1),
     wingAlive: (typeof wingmen !== 'undefined')
       ? wingmen.filter((w) => !w.dead).length : 0,
   };
