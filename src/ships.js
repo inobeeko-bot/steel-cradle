@@ -30,6 +30,9 @@ const SHIPS = {
     bombs:   null,          // null = BOMBS を全部使える
     weaponOverride: {},     // 兵装の性能を書き換えない
 
+    bodyColor: null,        // null = 既定の色(青灰色)のまま
+    wingColor: null,
+
     yawRightScale:  1.0,    // 右へ向く効き(1.0 = 素の性能)
     yawRightSmooth: 1.0,    // 右へ向くときの反応の鈍さ(大きいほど鈍い)
     rollRightScale: 1.0,    // 右へロールする速さ
@@ -59,6 +62,11 @@ const SHIPS = {
         interval: 0.85,   // 0.45秒 → 0.85秒
       },
     },
+
+    // ★ 塗り直されないまま二十年。制式機の青灰色ではなく、褪せた鼠色。
+    //   背景(格納庫に置かれた四番機)と同じ色味に揃えてある。
+    bodyColor: 0x6b6f70,
+    wingColor: 0x44484a,
 
     // ★「右の推力偏向が渋い」
     //   弱いだけでなく、遅れて効く。だから左へ回るほうが速い、という癖が出る。

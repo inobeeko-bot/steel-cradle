@@ -2017,6 +2017,26 @@ function createDustField() {
 //  ・flatShading: true … 面を1色で塗る(丸く滑らかに見せない)= ローポリらしさの正体
 //  ・EdgesGeometry  … 面と面の境目だけを線として抜き出す = 輪郭線
 // ===================================================================
+// 機体の色を塗り替える(ships.js が色を持っているときだけ)。
+// 部品は作り直さない ― 材質の色だけ差し替える。作り直すと当たり判定も作り直しになる。
+function applyShipColors() {
+  if (!playerShip || typeof ship !== 'function') return;
+  const spec = ship();
+  const body = (spec.bodyColor === null || spec.bodyColor === undefined)
+    ? PLAYER.BODY_COLOR : spec.bodyColor;
+  const wing = (spec.wingColor === null || spec.wingColor === undefined)
+    ? PLAYER.WING_COLOR : spec.wingColor;
+
+  playerShip.traverse(function (o) {
+    if (!o.isMesh || !o.material || !o.material.color) return;
+    // 元の色を1回だけ覚えておく。覚えないと、塗り替えるたびに基準を失う
+    if (o.userData.baseColor === undefined) o.userData.baseColor = o.material.color.getHex();
+    const base = o.userData.baseColor;
+    if (base === PLAYER.BODY_COLOR) o.material.color.setHex(body);
+    else if (base === PLAYER.WING_COLOR) o.material.color.setHex(wing);
+  });
+}
+
 function createFlatPart(geometry, color, edgeColor) {
   // MeshLambertMaterial = 光の当たり方で明るさが変わる、いちばん素朴な材質
   const material = new THREE.MeshLambertMaterial({ color: color, flatShading: true });

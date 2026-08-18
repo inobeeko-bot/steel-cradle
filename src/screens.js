@@ -237,6 +237,7 @@ function launchSortie(shipKey, bgm) {
   applyViewMode(OPTIONS.startView === 'cockpit');   // 好みの視点で出撃する
   screenState = 'mission';
   setShip(shipKey);          // ★ restartMission より前(理由は上)
+  applyShipColors();         // 機体の塗色を反映する(scene.js)
   restartMission();          // 7パラメーター・弾数・戦果をすべて初期化して開始
   if (bgm) playBgm(bgm);     // 読み込みは非同期なので待たない
 }
