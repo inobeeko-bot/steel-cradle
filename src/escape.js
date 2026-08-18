@@ -30,12 +30,12 @@ const ESCAPE = {
   // ★ 二段構えにしてある。
   //   前半 = 港で待つ貨物船を守る。後半 = 射出された貨物船を追う。
   //   「時間切れで終わり」ではなく、最後に動きのある締めを置きたかった。
-  DEFEND_SEC:     150,    // 守る時間。240秒は長すぎた(集中が保たない)
-  CHASE_SEC:       26,    // 射出されてから決着まで
+  DEFEND_SEC:     180,    // 守る時間。240秒は長すぎ、150秒では僚機と飛ぶ時間が足りなかった
+  CHASE_SEC:       34,    // 射出されてから決着まで(加速に9秒かけるので長めに取る)
   SPEED:            7,    // 港を離れるときの速さ。鈍い
   // 自機は配分25%固定なので巡航17。追いつけない数字にすると追跡が成立しない。
   LAUNCH_SPEED:    44,    // 射出後の貨物船の速さ(巡航の約6倍)
-  LAUNCH_RAMP:    2.6,    // この秒数かけて加速する(いきなり消えると何が起きたか分からない)
+  LAUNCH_RAMP:    9.0,    // この秒数かけて加速する(いきなり消えると何が起きたか分からない)
   CHASE_SPEED:     52,    // 追跡中の自機の速さ。貨物船よりわずかに速い ―
                           // 離されはしないが、追いついた実感は自分で作る余地を残す
 
@@ -53,9 +53,10 @@ const ESCAPE = {
   // ★ さらに粘らせる。予定表(LOSS_AT)より先に消えてしまうと、
   //   「ぎりぎりまで一緒に飛んでいた」という段取りが崩れる。
   //   敵6機に囲まれ続けても 100秒 は保つ数字にしてある。
-  WING_HP:         72,
+  //   敵が9機に増えたので、囲まれ続けても予定表より先に落ちない数字にする
+  WING_HP:        140,
   WING_THREAT:    170,    // 敵がこれより近いと僚機が削られる
-  WING_DPS:      0.12,
+  WING_DPS:      0.08,
 
   // 進行度がここを超えたら、まだ生きている僚機を1機失う。
   // 「守り切れない」を保証するための仕掛け。
@@ -63,13 +64,21 @@ const ESCAPE = {
   //   最後の一機は射出の直前まで残る ― 誰もいなくなってから追いかける。
   // ★★ さらに後ろへ。0.46 では前半で独りになり、守っている相手がいなくなった。
   //   いまは 111秒 / 135秒 / 148秒 ― 最後の一機は射出の2秒前まで飛んでいる。
-  LOSS_AT: [0.74, 0.90, 0.987],
+  // ★★★ さらに後ろへ。144秒 / 166秒 / 179秒 ―
+  //   三機そろって飛んでいる時間を、全体の8割まで伸ばした。
+  //   独りになるのは最後の1秒。そこから射出を追いかける。
+  LOSS_AT: [0.80, 0.92, 0.995],
 
   SURVIVORS: 311,         // 貨物船に詰めた人数(小説の数字)
 
   // 敵は哨戒機のみ。小説「企業艦隊の哨戒網」。
   // 超弩級戦艦(boss.js)はこの戦闘には出さない ― main.js 側で止めてある。
   ENEMY_TYPE: 'SOLDIER',
+  HUNTER_RATIO: 0.2,      // このうち何割が貨物船を狙うか
+
+  // 出港前の停泊距離。戦闘圏の内側でなければ「守る」が成立しない。
+  // アルカディア(距離1900)の方角に置くので、遠景の村を背にして浮かぶ。
+  PARK_DIST:      420,
 };
 
 let freighter    = null;
@@ -83,6 +92,7 @@ let launchSpeed  = 0;
 let chaseTime    = 0;
 let launchFlareLeft = 0;   // 点火の炎を出し続ける残り秒
 let spoolSaid    = false;  // 主機の回り始めを予告したか
+let hitCooldown  = 0;      // 被弾の音と光を出しすぎないための間隔
 
 // --- 貨物船を組み立てる -------------------------------------------
 // 戦艦(boss.js)とは別物。武装が無く、鈍く、大きいだけの船。
@@ -116,7 +126,56 @@ function buildFreighter() {
   eng.position.set(0, 0, 44);
   g.add(eng);
 
+  // --- 噴射炎 ------------------------------------------------------
+  // ★ 出港前は消えている。点火から徐々に伸ばす。
+  //   「速くなった」を数字ではなく炎の長さで見せるための部品。
+  //   3枚の円錐を重ね、内側ほど白く短くして芯を作る。
+  const plume = new THREE.Group();
+  const layers = [
+    { r: 6.5, len: 34, color: 0xff9a3c, op: 0.55 },
+    { r: 4.4, len: 24, color: 0xffd07a, op: 0.70 },
+    { r: 2.4, len: 14, color: 0xfff4d6, op: 0.95 },
+  ];
+  for (const L of layers) {
+    const geo = new THREE.ConeGeometry(L.r, L.len, 7, 1, true);
+    geo.rotateX(Math.PI / 2);          // -Z ではなく +Z(船尾)へ伸ばす
+    geo.translate(0, 0, L.len / 2);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: L.color, transparent: true, opacity: L.op,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    plume.add(m);
+  }
+  plume.position.set(0, 0, 50);
+  plume.scale.setScalar(0.001);        // 出港前は見えない
+  plume.name = 'plume';
+  g.add(plume);
+
+  // 主機が焼ける熱。点火中だけ赤熱する板
+  const glow = new THREE.Mesh(
+    new THREE.CircleGeometry(8.5, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff5a1e, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  glow.position.set(0, 0, 50.5);
+  glow.name = 'glow';
+  g.add(glow);
+
   return g;
+}
+
+// 噴射炎の伸び具合。0=消灯 1=全開
+function setPlume(level) {
+  if (!freighter) return;
+  const p = freighter.getObjectByName('plume');
+  const gl = freighter.getObjectByName('glow');
+  const v = Math.max(0, Math.min(level, 1));
+  if (p) {
+    // 揺らぎを混ぜる。一定だと作り物に見える
+    const flicker = 0.88 + Math.random() * 0.24;
+    p.scale.set(Math.max(0.001, v * flicker), Math.max(0.001, v * flicker),
+                Math.max(0.001, v * (1.6 + Math.random() * 0.5)));
+  }
+  if (gl) gl.material.opacity = v * (0.55 + Math.random() * 0.30);
 }
 
 // --- 始める ---------------------------------------------------------
@@ -138,6 +197,7 @@ function startEscape() {
   launchDir    = null;
   launchFlareLeft = 0;
   spoolSaid    = false;
+  hitCooldown  = 0;
   if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
 
   if (typeof missionTime !== 'undefined') missionTime = ESCAPE.DEFEND_SEC;
@@ -149,6 +209,7 @@ function startEscape() {
   if (typeof enemies !== 'undefined' && typeof assignArchetype === 'function') {
     for (const e of enemies) assignArchetype(e, ESCAPE.ENEMY_TYPE);
   }
+  assignFreighterHunters();
 }
 
 // ★ 出港前の貨物船は、アルカディアの縁に着けておく。
@@ -156,17 +217,23 @@ function startEscape() {
 //   「あの村から出てくる船」に見えない。
 //   射出したら追従をやめ、そこから先は本当に飛ぶ。
 function parkAtColony() {
-  if (!freighter) return;
-  const c = (typeof colonyPosition === 'function') ? colonyPosition() : null;
-  if (!c) {
-    // コロニーが無ければ自機の前に置く(訓練などで単体で試すとき)
-    if (playerShip) freighter.position.copy(playerShip.position).add(new THREE.Vector3(0, -40, -260));
-    return;
-  }
-  const r = (typeof colonyRadius === 'function') ? colonyRadius() : 1000;
-  // リングの手前・下寄り。輪に重ならず、しかし明らかに「その村の船」に見える位置
-  freighter.position.set(c.x + r * 0.42, c.y - r * 0.52, c.z + r * 0.60);
-  if (playerShip) freighter.lookAt(playerShip.position);
+  if (!freighter || !playerShip) return;
+
+  // ★ 距離の決め方を一度間違えた。
+  //   最初はコロニーの縁(自機から約1900)に置いたが、そこは戦闘圏の外 ―
+  //   守る対象が敵と同じ場所にいないし、噴射炎も点にしか見えなかった。
+  //
+  //   いまは「コロニーの方角に、戦える距離で」置く。
+  //   自機から見るとアルカディアを背にした位置に浮かぶので、
+  //   遠景の村とつながって見えるまま、手が届く場所にいる。
+  const d = (typeof COLONY !== 'undefined') ? COLONY.DIR : { x: -0.30, y: 0.11, z: -0.95 };
+  const len = Math.hypot(d.x, d.y, d.z) || 1;
+  freighter.position.set(
+    playerShip.position.x + (d.x / len) * ESCAPE.PARK_DIST,
+    playerShip.position.y + (d.y / len) * ESCAPE.PARK_DIST - 30,
+    playerShip.position.z + (d.z / len) * ESCAPE.PARK_DIST
+  );
+  freighter.lookAt(playerShip.position);
 }
 
 function clearEscape() {
@@ -177,9 +244,30 @@ function clearEscape() {
   if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
   if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
   escapePhase = 'defend';
+  // 貨物船を狙う印を外す。訓練飛行では全機が自機を狙う
+  if (typeof enemies !== 'undefined') for (const e of enemies) e.huntsFreighter = false;
 }
 
 const escapeRunning = () => escapeActive && freighter !== null;
+
+// 敵AI(scene.js)がこれを見て、貨物船へ向かうかどうかを決める
+function freighterPosition() { return freighter ? freighter.position : null; }
+
+// ★ 哨戒隊のうち何割が貨物船を狙うか。
+//   全機が主人公を追いかけるのでは「守るものがある戦い」にならないし、
+//   逆に全機が貨物船へ行くと、主人公は的にされず手応えが消える。
+//   2割 ― 常に1〜2機が船に取り付いている、という圧のかかり方になる。
+function assignFreighterHunters() {
+  if (typeof enemies === 'undefined' || !enemies.length) return;
+  const total = enemies.length;
+  const want = Math.max(1, Math.round(total * ESCAPE.HUNTER_RATIO));
+
+  for (const e of enemies) e.huntsFreighter = false;
+  // 小隊がまるごと船へ行かないよう、等間隔で散らす
+  for (let i = 0; i < want; i++) {
+    enemies[Math.min(total - 1, Math.round(i * total / want))].huntsFreighter = true;
+  }
+}
 
 // --- 毎コマ ---------------------------------------------------------
 function updateEscape(dt) {
@@ -200,9 +288,24 @@ function updateEscape(dt) {
       if (e.group.position.distanceTo(freighter.position) < ESCAPE.THREAT_RANGE) near++;
     }
   }
+  hitCooldown -= dt;
   if (near > 0) {
     const before = freighterHp;
     freighterHp -= ESCAPE.THREAT_DPS * near * dt;
+
+    // ★ 削られていることを、数字以外でも見せる。
+    //   毎コマ出すとうるさいので 0.55秒 に1回まで。
+    if (hitCooldown <= 0) {
+      hitCooldown = 0.55;
+      if (typeof playFreighterHit === 'function') playFreighterHit();
+      if (typeof spawnFlash === 'function' && typeof scene !== 'undefined' && scene) {
+        // 船体のどこかに当たったように、位置を散らす
+        const off = new THREE.Vector3(
+          (Math.random() - 0.5) * 24, (Math.random() - 0.5) * 12,
+          (Math.random() - 0.5) * 70);
+        spawnFlash(freighter.position.clone().add(off), 22, 0xffb060, 0.35);
+      }
+    }
     if (before >= ESCAPE.FREIGHTER_HP * 0.5 && freighterHp < ESCAPE.FREIGHTER_HP * 0.5) {
       if (typeof addCombatLog === 'function') addCombatLog(t('esc.hit'), 'warn');
       if (typeof radioSay === 'function') {
@@ -240,7 +343,11 @@ function updateDefendPhase(dt) {
     if (typeof spawnFlash === 'function' && typeof scene !== 'undefined' && scene) {
       spawnFlash(freighter.position.clone(), 60, 0xffd9a0, 1.4);
     }
+    if (typeof addCombatLog === 'function') addCombatLog(t('esc.spool'), 'warn');
   }
+
+  // 予告のあいだ、主機に火が入っていく(まだ動かない)
+  if (spoolSaid) setPlume(0.10 + (3.2 - Math.max(left, 0)) * 0.08);
 
   for (const mark of [60, 30, 10]) {
     if (left <= mark && left + dt > mark) {
@@ -269,20 +376,16 @@ function beginLaunch() {
   //   貨物船は鈍くて曲がれない ― 一度向いた先へ、加速して抜けるだけ。
   //   自機の正面ではなく貨物船の船首方向にしてあるので、
   //   プレイヤーは「置いていかれる」ところから追いかけ始める。
-  // ★ 射出の向きは「射出の瞬間に自機が向いている方向」。
-  //   世界の固定方向にすると、プレイヤーが後ろを向いていた場合
-  //   貨物船が画面外へ消え、何が起きたのか分からないまま終わる。
-  //   正面から出ていくなら、追いかける対象が最初から見えている。
+  // ★ 貨物船をここで動かしてはいけない。
+  //   前は「自機の正面260の位置へ置き直してから射出」していたが、
+  //   それは瞬間移動そのもので、ワープしたようにしか見えなかった。
+  //   いまいる場所(アルカディアの縁)から、そのまま加速して出ていく。
+  //
+  //   向きは「自機が向いている方向」。港から視界の奥へ抜けていくので、
+  //   プレイヤーは遠ざかる船を追いかける形になる。
   launchDir = new THREE.Vector3(0, 0, -1);
-  if (playerShip) {
-    launchDir.applyQuaternion(playerShip.quaternion).normalize();
-    // 貨物船を自機の正面・少し先へ置き直してから射出する。
-    // 港でどこにいたかに関係なく、必ず視界の中から出ていく
-    freighter.position.copy(playerShip.position)
-      .addScaledVector(launchDir, 260)
-      .add(new THREE.Vector3(0, -18, 0));
-    freighter.lookAt(freighter.position.clone().addScaledVector(launchDir, 100));
-  }
+  if (playerShip) launchDir.applyQuaternion(playerShip.quaternion).normalize();
+  freighter.lookAt(freighter.position.clone().addScaledVector(launchDir, 100));
 
   if (typeof addCombatLog === 'function') addCombatLog(t('esc.launch'), 'warn');
   if (typeof radioSay === 'function') radioSay('wing.n3', '行った ― 追え、カイト', true);
@@ -312,9 +415,15 @@ function updateLaunchPhase(dt) {
   chaseTime += dt;
 
   // だんだん速くなる。いきなり消えると何が起きたか分からない
-  const ramp = Math.min(chaseTime / ESCAPE.LAUNCH_RAMP, 1);
+  // ★ ゆっくり効かせる。ease-in(t²)にすると、最初は動いていないほどなのに
+  //   気づくと手が届かない速さになっている ― 「射出された」感じはここで出る。
+  const t01 = Math.min(chaseTime / ESCAPE.LAUNCH_RAMP, 1);
+  const ramp = t01 * t01;
   launchSpeed = ESCAPE.LAUNCH_SPEED * ramp;
   freighter.position.addScaledVector(launchDir, launchSpeed * dt);
+
+  // 噴射炎は加速に先んじて全開になる ― 先に吹いてから動き出すのが正しい順番
+  setPlume(Math.min(1, 0.35 + t01 * 1.4));
 
   // 噴射炎の尾。加速しているあいだ、後ろへ火の粉を落とし続ける ―
   // 点で光るより、線で残るほうが「速い」と分かる

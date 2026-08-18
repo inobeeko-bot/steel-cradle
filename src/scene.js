@@ -1096,10 +1096,11 @@ const SQUAD = {
   // 1小隊なら「3機ひと組の編隊とやり合う」という、この機能の見どころは残る。
   // 増やすときは、戦艦が出るまでの撃墜数(BOSS.SPAWN_KILLS)も一緒に見直すこと。
   //
-  // ★ 2小隊(6機)へ増やした。脱出戦は「哨戒網に囲まれる」話なので、
-  //   3機では貨物船を脅かす圧が出ない。9機で手に負えなかったのは
-  //   自機1機で相手をしていたからで、いまは僚機が3機いる。
-  GROUPS:  2,
+  // ★ 3小隊(9機)。脱出戦は「哨戒網に囲まれる」話なので、
+  //   少数では貨物船を脅かす圧が出ない。9機で手に負えなかったのは
+  //   自機1機で相手をしていたからで、いまは僚機が3機いて、
+  //   さらに敵の2割は自機ではなく貨物船へ向かう(escape.js が割り振る)。
+  GROUPS:  3,
   SIZE:    3,     // 1小隊の機数(3 = 三角形)
 
   SPREAD: 12,     // 僚機が長機から左右に開く距離
@@ -5389,6 +5390,16 @@ function shiftEnemyTrack(e, axis, amount) {
   if (e.prevPos) e.prevPos.set(e.prevPos.x + dx, e.prevPos.y + dy, e.prevPos.z + dz);
 }
 
+// この敵が向かう先。ふだんは自機。
+// escape.js が huntsFreighter の印を付けた個体だけ、貨物船へ向かう。
+function enemyTargetPos(e) {
+  if (e && e.huntsFreighter && typeof freighterPosition === 'function') {
+    const p = freighterPosition();
+    if (p) return p;
+  }
+  return playerShip.position;
+}
+
 function updateEnemyAI(e, dt) {
   const A = e.arch;          // このタイプの数字の表(以降ずっと使う)
   e.stateTime += dt;
@@ -5456,7 +5467,9 @@ function updateEnemyAI(e, dt) {
   }
 
   // 自機へのベクトルと距離を求める(すべての判断のもとになる)
-  const toPlayer = playerShip.position.clone().sub(e.group.position);
+  // ★ ただし「貨物船を狙う個体」は、狙い先が自機ではない(escape.js が印を付ける)。
+  //   哨戒隊の全機が主人公だけを追いかけるのでは、守るものがある戦いにならない。
+  const toPlayer = enemyTargetPos(e).clone().sub(e.group.position);
   const distance = toPlayer.length();
   const toPlayerDir = toPlayer.clone().normalize();
 
@@ -5626,7 +5639,7 @@ function updateEnemyAI(e, dt) {
     // Matrix4.lookAt は「-Z が相手を向く」向きを作る。敵機の機首も -Z なのでそのまま使える。
     // slerp = 回転をなめらかにつなぐ命令。いきなり向くとロボットのようになる。
     const lookMatrix = new THREE.Matrix4().lookAt(
-      e.group.position, playerShip.position, new THREE.Vector3(0, 1, 0)
+      e.group.position, enemyTargetPos(e), new THREE.Vector3(0, 1, 0)
     );
     const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
     e.group.quaternion.slerp(targetQuat, 1 - Math.exp(-A.TURN_RATE * dt));

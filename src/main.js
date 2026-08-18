@@ -2160,6 +2160,7 @@ function renderRadar() {
 
   renderBossBlip(range);
   renderFreightBlip(range);
+  renderFreightHp();
   renderSalvageBlips(sensorPct, range);
 
   // --- 接近しているミサイル ---
@@ -2189,6 +2190,22 @@ function renderRadar() {
 // 貨物船の輝点とマーカー。
 // ★ 敵と違って「見つける」対象ではないので、探知の条件を一切通さない。
 //   守れと言われたものが見えないのは、難易度ではなく不親切。
+// 貨物船の耐久。守る対象の状態は、探さなくても目に入る場所に出す
+function renderFreightHp() {
+  const box = document.getElementById('freight-hp');
+  if (!box) return;
+  const st = (typeof escapeStatus === 'function') ? escapeStatus() : null;
+  if (!st) { box.classList.remove('on'); return; }
+
+  const ratio = st.hp / st.hpMax;
+  box.classList.add('on');
+  box.classList.toggle('warn', ratio < 0.6 && ratio >= 0.3);
+  box.classList.toggle('bad', ratio < 0.3);
+  document.getElementById('freight-hp-bar').style.width = (ratio * 100) + '%';
+  document.getElementById('freight-hp-label').textContent =
+    t('esc.marker') + '  ' + st.hp + ' / ' + st.hpMax;
+}
+
 function renderFreightBlip(range) {
   if (!freightBlip) return;
   const c = (typeof freighterContact === 'function') ? freighterContact() : null;

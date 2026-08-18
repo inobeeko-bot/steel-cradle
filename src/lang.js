@@ -91,6 +91,7 @@ const TEXT = {
   'esc.lost':           ['貨物船 轟沈 ― 三百十一名', 'Freighter lost — 311 aboard'],
   'esc.marker':         ['貨物船', 'FREIGHTER'],
   'esc.count':          ['射出まで %s 秒', '%s seconds to launch'],
+  'esc.spool':          ['貨物船 主機 点火', 'Freighter main drive lit'],
   'esc.launch':         ['貨物船 射出 ― 追え', 'Freighter away — follow it'],
   'esc.down':           ['被撃墜', 'down'],
   'esc.win.title':      ['311 ABOARD', '311 ABOARD'],
