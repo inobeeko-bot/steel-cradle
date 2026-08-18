@@ -253,6 +253,10 @@ const TEXT = {
 
   'adv.name.kaito':     ['カイト', 'Kaito'],
   'adv.name.grandpa':   ['祖父', 'Grandfather'],
+  // 収穫祭の村人。ヨナ婆さんの名は、屋台を調べたときの台詞に先に出てくる。
+  'adv.name.yona':      ['ヨナ婆さん', 'Old Yona'],
+  'adv.name.lisbeth':   ['リスベス', 'Lisbeth'],
+  'adv.name.ben':       ['ベン', 'Ben'],
   'adv.label.house':    ['家の戸口', 'The door'],
   'adv.label.tree':     ['林檎の木', 'The apple tree'],
   'adv.label.shears':   ['剪定バサミ', 'The pruning shears'],

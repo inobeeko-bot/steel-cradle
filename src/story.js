@@ -220,8 +220,9 @@ const STORY_SCENES = {
       },
     ],
 
-    // --- 祖父(メインの会話。3段階で進み、3回目で出口が開く)---
-    npc: {
+    // --- 舞台にいる人たち。書いた順に奥から手前へ並ぶ ---
+    npcs: [{
+      // 祖父(メインの会話。3段階で進み、3回目で出口が開く)
       // --- 剪定位置(背景の絵を実測して合わせ込んだ値)---
       //
       // 合わせ込みに使った基準(bg_hill_near.png をピクセル単位で計測):
@@ -289,7 +290,7 @@ const STORY_SCENES = {
       repeat: [
         { whoKey: 'adv.name.grandpa', text: { ja: '行け行け。灯りは落とせ、酒は俺が落とす', en: "Go on, go on. You drop the lights, I'll drop the drink." } },
       ],
-    },
+    }],
 
     // --- 出口(右端)---
     exit: {
@@ -381,8 +382,60 @@ const STORY_SCENES = {
       },
     ],
 
-    // --- 祖父。今夜は仕事をしていないので立ち姿のまま(脚立も作業アニメも無い)---
-    npc: {
+    // --- 舞台にいる人たち ---
+    //
+    // 立ち位置は、調べられる物とぶつからないように離してある。
+    // 「調べる」が届く距離は REACH = 34px なので、それより近いと
+    // どちらを狙ったのか分からなくなる。
+    //   屋台110 / 南瓜200 / 木285 / ドック490 / 出口628
+    //   ヨナ155(屋台から45) リスベス243(南瓜から43・木から42)
+    //   祖父330(木から45) ベン560(ドックから70・出口から68)
+    npcs: [
+    {
+      // ヨナ婆さん。屋台で林檎酒を注いでいる。
+      // 名前は屋台を調べたときの台詞に先に出てくる ―
+      // 先に名前だけ聞かせておいて、あとで本人に会わせる。
+      id: 'yona', x: 155,
+      idle: ADV_ASSETS.chars.yona.idle,
+      faceX: 110,                 // 自分の屋台のほうを向いている
+      labelKey: 'adv.name.yona',
+      talks: [
+        { flag: 'yona_1_done', lines: [
+          { whoKey: 'adv.name.yona',  text: { ja: 'カイトかい。ほら、一杯持っておいき', en: "That you, Kaito? Here, take a cup." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……去年の記憶が無いんだけど', en: "…I don't remember last year." } },
+          { whoKey: 'adv.name.yona',  text: { ja: 'そりゃ結構。覚えてない夜は、良い夜だったってことさ', en: "Good. A night you can't remember was a good night." } },
+        ]},
+        { flag: 'yona_2_done', lines: [
+          { whoKey: 'adv.name.yona',  text: { ja: 'あんたが膝までしかなかった頃から、この樽で注いでる', en: "I've poured from this barrel since you came up to my knee." } },
+          { whoKey: 'adv.name.yona',  text: { ja: '樽は樫だよ。あたしより先に壊れやしない', en: "It's oak. It won't go before I do." } },
+        ]},
+      ],
+      repeat: [
+        { whoKey: 'adv.name.yona', text: { ja: 'おかわりは自分で注ぎな', en: "Refills you pour yourself." } },
+      ],
+    },
+    {
+      // リスベス。麦わら帽子。提灯を吊るし終えたところ。
+      id: 'lisbeth', x: 243,
+      idle: ADV_ASSETS.chars.lisbeth.idle,
+      faceX: 285,                 // 木に吊るした提灯を見上げている
+      labelKey: 'adv.name.lisbeth',
+      talks: [
+        { flag: 'lis_1_done', lines: [
+          { whoKey: 'adv.name.lisbeth', text: { ja: '提灯、あたしが吊るしたんだから。ちゃんと見て', en: "I hung those lanterns. You'd better look at them." } },
+          { whoKey: 'adv.name.kaito',   text: { ja: '見てる。……ちょっと右が多くないか', en: "I'm looking. …Bit heavy on the right, isn't it." } },
+          { whoKey: 'adv.name.lisbeth', text: { ja: '風の向き。落ちてこないほうに寄せたの', en: "That's the wind. I put them where they won't come down." } },
+        ]},
+        { flag: 'lis_2_done', lines: [
+          { whoKey: 'adv.name.lisbeth', text: { ja: '来年はもっと増やす。軸の端からでも見えるくらい', en: "More next year. Enough to see from the far end of the axis." } },
+        ]},
+      ],
+      repeat: [
+        { whoKey: 'adv.name.lisbeth', text: { ja: '踊らないなら、せめて突っ立ってないで', en: "If you're not dancing, at least don't just stand there." } },
+      ],
+    },
+    {
+      // 祖父。今夜は仕事をしていないので立ち姿のまま(脚立も作業アニメも無い)
       id: 'grandpa', x: 330,
       idle: ADV_ASSETS.chars.grandpa.idle,
       faceX: 285,              // 自分の木のほうを見ている
@@ -425,6 +478,32 @@ const STORY_SCENES = {
         { whoKey: 'adv.name.grandpa', text: { ja: '行け。俺は祠を開ける', en: "Go. I'll open the shrine." } },
       ],
     },
+    {
+      // ベン。カイトと同じ防衛隊で、今夜は非番。
+      // ★ この人の台詞が、このシーンの仕掛け。
+      //   「何も起きない」と言わせておいて、直後に警報を鳴らす。
+      //   シーン1の祖父の「暇な防衛隊は良い防衛隊だ」への返しにもなっている。
+      id: 'ben', x: 560,
+      idle: ADV_ASSETS.chars.ben.idle,
+      faceX: 490,                 // 旧ドックのほうを見ている
+      labelKey: 'adv.name.ben',
+      talks: [
+        { flag: 'ben_1_done', lines: [
+          { whoKey: 'adv.name.ben',   text: { ja: 'よう。当番上がったか', en: "Hey. Watch over?" } },
+          { whoKey: 'adv.name.kaito', text: { ja: '上がった。お前は最初から非番だろ', en: "Over. You've been off since this morning." } },
+          { whoKey: 'adv.name.ben',   text: { ja: '交渉の結果だ', en: "Negotiated." } },
+        ]},
+        { flag: 'ben_2_done', lines: [
+          { whoKey: 'adv.name.ben',   text: { ja: 'なあ。俺たち、入隊してから何回発砲した?', en: "Serious question. How many times have we fired since we enlisted?" } },
+          { whoKey: 'adv.name.kaito', text: { ja: '訓練を除けば、ゼロ', en: "Not counting drills? Zero." } },
+          { whoKey: 'adv.name.ben',   text: { ja: 'だろ。ここは何も起きない。だから俺はここが好きなんだ', en: "Right. Nothing happens here. That's why I like it." } },
+        ]},
+      ],
+      repeat: [
+        { whoKey: 'adv.name.ben', text: { ja: '飲め飲め。明日の点検は俺がやっとく', en: "Drink up. I'll take tomorrow's inspection." } },
+      ],
+    },
+    ],
 
     // --- 出口(右端)= 旧ドックの格納庫へ ---
     exit: {
@@ -466,10 +545,8 @@ let storyTyped   = 0;
 // 画面の部品の実体
 let storyLayerEls = null;   // { key, el } の配列
 let storyActorEl  = null;
-let storyNpcEl    = null;
 let storyExitEl   = null;
 let storyMarkEl   = null;
-let storyLadderEl = null;
 let storyPlateLayerEl = null;   // 名前板を置く層(キャラの変換を受けない)
 let storyPlates   = null;       // { el, at() } の配列。at() が位置を返す
 let storyHitboxEls = null;      // 開発用の判定表示
@@ -481,10 +558,23 @@ let storyAnimTime  = 0;    // コマを進めるための時計
 let storyAnimFrame = 0;    // いま何コマ目か
 let storyWalking   = false;
 
-// NPCの作業アニメの状態
-let storyWorkTime  = 0;
-let storyWorkFrame = 0;
-let storyNpcTopY   = 0;   // 名前板を出す高さ(そのコマでのNPCの頭の位置)
+// ===================================================================
+// 舞台にいるNPCたち
+//
+// ★ ひとりぶんの状態を、まとめて1つのオブジェクトに持つ。
+//   以前は祖父ひとりしかいなかったので、作業アニメの時計も
+//   頭の高さも、モジュールの変数1本で足りていた。
+//   村人が並ぶとそれでは足りない ―― 2人目の絵が1人目の時計で動いてしまう。
+//
+//   { def, el, ladderEl, workTime, workFrame, topY }
+//     def      … STORY_SCENES に書いてある定義そのもの
+//     el       … 画面上の要素
+//     ladderEl … その人が持ち込む小物(祖父の脚立)。無ければ null
+//     workTime / workFrame … 作業アニメの時計とコマ番号。人ごとに独立
+//     topY     … 名前板を出す高さ。描画のたびに更新する
+// ===================================================================
+let storyNpcs = null;         // 上の形の配列
+let storyTalkingNpc = null;   // いま話しかけている相手(会話が閉じたら null)
 
 // ===================================================================
 // 拡大率を決めて、舞台の大きさを合わせる
@@ -666,27 +756,32 @@ function buildStoryScene(scene) {
     storyLayerEls.push({ key: key, el: el });
   }
 
-  // --- 脚立 ---
-  // 祖父より先に足すことで、祖父の背面に回る(あとから足した要素が手前)
-  const n = scene.npc;
-  if (n.ladder) {
-    storyLadderEl = document.createElement('div');
-    storyLadderEl.className = 'story-prop-sprite';
-    storyLadderEl.style.backgroundImage = 'url(' + n.ladder.src + ')';
-    storyWorldEl.appendChild(storyLadderEl);
-  } else {
-    storyLadderEl = null;
-  }
+  // --- NPCたち ---
+  // 書いてある順に足す。あとから足した要素が手前に出るので、
+  // 奥に立たせたい人を先に書く。
+  storyNpcs = [];
+  storyTalkingNpc = null;
+  for (const n of scene.npcs) {
+    // その人が持ち込む小物(祖父の脚立)。本人より先に足して背面へ回す
+    let ladderEl = null;
+    if (n.ladder) {
+      ladderEl = document.createElement('div');
+      ladderEl.className = 'story-prop-sprite';
+      ladderEl.style.backgroundImage = 'url(' + n.ladder.src + ')';
+      storyWorldEl.appendChild(ladderEl);
+    }
 
-  // --- 祖父 ---
-  storyNpcEl = document.createElement('div');
-  storyNpcEl.className = 'story-actor npc' + ((n.idle || n.work) ? ' sprite' : '');
-  if (!n.idle && !n.work) storyNpcEl.style.background = n.color;
-  storyWorldEl.appendChild(storyNpcEl);
-  storyWorkTime  = 0;
-  storyWorkFrame = 0;
-  // ふだんは作業しながら、決まった方角(木)を向いている
-  if (n.faceX !== undefined) faceActorTowards(storyNpcEl, n.x, n.faceX);
+    const el = document.createElement('div');
+    el.className = 'story-actor npc' + ((n.idle || n.work) ? ' sprite' : '');
+    if (!n.idle && !n.work) el.style.background = n.color;
+    storyWorldEl.appendChild(el);
+
+    // ふだん向いている方角(祖父なら自分の木のほう)
+    if (n.faceX !== undefined) faceActorTowards(el, n.x, n.faceX);
+
+    storyNpcs.push({ def: n, el: el, ladderEl: ladderEl,
+                     workTime: 0, workFrame: 0, topY: 0 });
+  }
 
   // --- 出口の目印 ---
   storyExitEl = document.createElement('div');
@@ -719,13 +814,13 @@ function buildStoryScene(scene) {
     storyWorldEl.appendChild(el);
     storyHitboxEls.push({ el: el, x: p.x });
   }
-  {
+  for (const npc of storyNpcs) {
     const el = document.createElement('div');
     el.className = 'story-hitbox';
-    el.innerHTML = '<span>' + t(n.labelKey) + '</span>';
+    el.innerHTML = '<span>' + t(npc.def.labelKey) + '</span>';
     el.style.display = 'none';
     storyWorldEl.appendChild(el);
-    storyHitboxEls.push({ el: el, x: n.x });
+    storyHitboxEls.push({ el: el, x: npc.def.x });
   }
 
   // --- 名前板の層。キャラより手前、かつキャラの変換を受けない場所に置く ---
@@ -733,8 +828,12 @@ function buildStoryScene(scene) {
   storyPlateLayerEl.className = 'story-plate-layer';
   storyWorldEl.appendChild(storyPlateLayerEl);
   storyPlates = [];
-  // 祖父。いる高さは描画のたびに変わるので、そのつど取りに行く
-  addNamePlate(t(n.labelKey), () => ({ x: n.x, topY: storyNpcTopY }));
+  // NPCの名前板。いる高さは描画のたびに変わるので、そのつど取りに行く。
+  // ★ npc を for の中で受け取ること。let で束ねた変数をそのまま使わないと、
+  //   全員の名前板が最後のひとりの高さを見に行ってしまう。
+  for (const npc of storyNpcs) {
+    addNamePlate(t(npc.def.labelKey), () => ({ x: npc.def.x, topY: npc.topY }));
+  }
 
   storyHintEl.textContent = t(scene.placeKey) + '　/　' + t(scene.titleKey);
   storyBoxEl.style.setProperty('--box-opacity', String(ADV_CONFIG.BOX_OPACITY));
@@ -754,12 +853,14 @@ function nearestStoryTarget() {
       best = { kind: 'prop', data: p, x: (p.markX !== undefined) ? p.markX : p.x, markH: p.markH };
     }
   }
-  const n = storyScene.npc;
-  const dn = Math.abs(n.x - storyX);
-  if (dn < bestD) {
-    bestD = dn;
-    best = { kind: 'npc', data: n, x: n.x,
-             markH: (n.idle || n.work) ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
+  for (const npc of storyNpcs) {
+    const n = npc.def;
+    const dn = Math.abs(n.x - storyX);
+    if (dn < bestD) {
+      bestD = dn;
+      best = { kind: 'npc', data: n, npc: npc, x: n.x,
+               markH: (n.idle || n.work) ? ADV_CONFIG.CHAR_HEIGHT : charHeight(n.scale) };
+    }
   }
 
   return best;
@@ -770,9 +871,10 @@ function nearestStoryTarget() {
 // ===================================================================
 function openStoryLines(lines) {
   if (!lines || !lines.length) return;
-  // 話しかけられたNPCは、相手のほうへ向き直る
-  if (storyScene && storyScene.npc && storyNpcEl) {
-    faceActorTowards(storyNpcEl, storyScene.npc.x, storyX);
+  // 話しかけられたNPCだけが、こちらへ向き直る。
+  // 隣に立っている村人まで一斉に振り向いたら不気味なので、相手を限る。
+  if (storyTalkingNpc) {
+    faceActorTowards(storyTalkingNpc.el, storyTalkingNpc.def.x, storyX);
   }
   storyLines = lines;
   storyIndex = 0;
@@ -814,8 +916,11 @@ function closeStoryLines() {
   storyLines = null;
   storyBoxEl.classList.remove('on');
   // ふだんの向き(祖父なら木のほう)へ戻す
-  const n = storyScene && storyScene.npc;
-  if (n && n.faceX !== undefined && storyNpcEl) faceActorTowards(storyNpcEl, n.x, n.faceX);
+  if (storyTalkingNpc) {
+    const n = storyTalkingNpc.def;
+    if (n.faceX !== undefined) faceActorTowards(storyTalkingNpc.el, n.x, n.faceX);
+    storyTalkingNpc = null;
+  }
 }
 
 // ===================================================================
@@ -838,10 +943,13 @@ function interactStory() {
   }
 
   const npc = target.data;
+  storyTalkingNpc = target.npc;          // 誰と話しているか。向き直る処理が使う
+  // 村人には順番に進む話が無く、repeat だけのことがある
+  const talks = npc.talks || [];
   const step = storyTalkCount[npc.id] || 0;
 
-  if (step < npc.talks.length) {
-    const talk = npc.talks[step];
+  if (step < talks.length) {
+    const talk = talks[step];
     storyTalkCount[npc.id] = step + 1;
     storyFlags.add(talk.flag);
     openStoryLines(talk.lines);
@@ -945,7 +1053,7 @@ function updateStory(dt) {
   // 上端 = 地面 − コマの高さ、左端 = x − コマ幅の半分 でぴたりと合う。
   const SPW = ADV_CONFIG.SPRITE.FRAME_W, SPH = ADV_CONFIG.SPRITE.FRAME_H;
   placeStoryActor(storyActorEl, storyX, SPW, SPH);
-  renderStoryNpc(storyScene.npc, dt, S);
+  for (const npc of storyNpcs) renderStoryNpc(npc, dt, S);
   updateNamePlates(S);
   renderStoryHitboxes(S);
 
@@ -1000,7 +1108,10 @@ function setStoryWalking(walking, distance) {
 // ふだんは作業アニメ(2コマループ)、話しかけられている間は立ち姿。
 // 作業シートとはコマ幅が違うので、どちらを出すかで寸法も切り替える。
 // ===================================================================
-function renderStoryNpc(n, dt, S) {
+function renderStoryNpc(npc, dt, S) {
+  const n  = npc.def;
+  const el = npc.el;
+
   // 手を止める条件は2つ。
   //   ・話しかけられている間
   //   ・仕事を終えたあと(gp_talk_3 の「よし、上がりだ」以降)
@@ -1009,43 +1120,45 @@ function renderStoryNpc(n, dt, S) {
   const talking = !!storyLines || done;
 
   // --- 脚立。底辺を地面に接地させ、縦だけ引き伸ばす ---
-  if (storyLadderEl && n.ladder) {
+  if (npc.ladderEl && n.ladder) {
     const lh = Math.round(n.ladder.h * GRANDPA_POS.LADDER_SCALE_Y);
-    storyLadderEl.style.width  = (n.ladder.w * S) + 'px';
-    storyLadderEl.style.height = (lh * S) + 'px';
-    storyLadderEl.style.backgroundSize = (n.ladder.w * S) + 'px ' + (lh * S) + 'px';
-    storyLadderEl.style.left = Math.round((n.x - storyCamX - n.ladder.w / 2) * S) + 'px';
-    storyLadderEl.style.top  = Math.round((storyGroundY(n.x) - lh) * S) + 'px';
+    npc.ladderEl.style.width  = (n.ladder.w * S) + 'px';
+    npc.ladderEl.style.height = (lh * S) + 'px';
+    npc.ladderEl.style.backgroundSize = (n.ladder.w * S) + 'px ' + (lh * S) + 'px';
+    npc.ladderEl.style.left = Math.round((n.x - storyCamX - n.ladder.w / 2) * S) + 'px';
+    npc.ladderEl.style.top  = Math.round((storyGroundY(n.x) - lh) * S) + 'px';
   }
 
   if (n.work && !talking) {
     // --- 作業中 ---
-    storyWorkTime += dt;
+    // ★ 時計は npc ごとに持つ。共通の変数にすると、2人が別々の速さで
+    //   作業していても片方の時計でしかコマが進まない。
+    npc.workTime += dt;
     const per = 1 / ADV_CONFIG.WORK_ANIM_FPS;
-    while (storyWorkTime >= per) {
-      storyWorkTime -= per;
-      storyWorkFrame = (storyWorkFrame + 1) % n.work.frames;
+    while (npc.workTime >= per) {
+      npc.workTime -= per;
+      npc.workFrame = (npc.workFrame + 1) % n.work.frames;
     }
-    placeStoryActor(storyNpcEl, n.x, n.work.w, n.work.h, n.liftY);
-    storyNpcTopY = storyGroundY(n.x) - (n.liftY || 0) - n.work.h;
-    storyNpcEl.style.backgroundImage = 'url(' + n.work.src + ')';
-    storyNpcEl.style.backgroundSize =
+    placeStoryActor(el, n.x, n.work.w, n.work.h, n.liftY);
+    npc.topY = storyGroundY(n.x) - (n.liftY || 0) - n.work.h;
+    el.style.backgroundImage = 'url(' + n.work.src + ')';
+    el.style.backgroundSize =
       (n.work.w * n.work.frames * S) + 'px ' + (n.work.h * S) + 'px';
-    storyNpcEl.style.backgroundPosition = (-storyWorkFrame * n.work.w * S) + 'px 0px';
+    el.style.backgroundPosition = (-npc.workFrame * n.work.w * S) + 'px 0px';
 
   } else if (n.idle) {
     // --- 手を止めている(会話中、または仕事を終えたあと)---
     // 1コマだけの絵なので、コマ送りの計算はいらない。
     const W = ADV_CONFIG.SPRITE.FRAME_W, H = ADV_CONFIG.SPRITE.FRAME_H;
-    placeStoryActor(storyNpcEl, n.x, W, H, n.liftY);
-    storyNpcTopY = storyGroundY(n.x) - (n.liftY || 0) - H;
-    storyNpcEl.style.backgroundImage = 'url(' + n.idle + ')';
-    storyNpcEl.style.backgroundSize = (W * S) + 'px ' + (H * S) + 'px';
-    storyNpcEl.style.backgroundPosition = '0px 0px';
+    placeStoryActor(el, n.x, W, H, n.liftY);
+    npc.topY = storyGroundY(n.x) - (n.liftY || 0) - H;
+    el.style.backgroundImage = 'url(' + n.idle + ')';
+    el.style.backgroundSize = (W * S) + 'px ' + (H * S) + 'px';
+    el.style.backgroundPosition = '0px 0px';
 
   } else {
-    placeStoryActor(storyNpcEl, n.x, charWidth(n.scale), charHeight(n.scale));
-    storyNpcTopY = storyGroundY(n.x) - charHeight(n.scale);
+    placeStoryActor(el, n.x, charWidth(n.scale), charHeight(n.scale));
+    npc.topY = storyGroundY(n.x) - charHeight(n.scale);
   }
 }
 

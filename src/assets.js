@@ -47,6 +47,24 @@ const ADV_ASSETS = {
       // 剪定の作業アニメ。2コマで、コマ幅だけ56pxと広い(鋏を差し出すぶん)
       work: 'assets/adv/chars/grandpa/grandpa_work.png',
     },
+
+    // --- 収穫祭の村人 ---------------------------------------------
+    // ここから下は基準体(basic_body)から起こした素材。
+    // 動きはカイト・祖父と同じものを使い回し、色と一部の画素だけを変えてある。
+    // 作り方は assets/adv/ASSETS.md の「キャラクターの作り方」を参照。
+    // 定義は development_aids/pixel_kobo/chars/<名前>.json にある。
+    yona: {
+      idle: 'assets/adv/chars/yona/yona_idle.png',
+      walk: 'assets/adv/chars/yona/yona_walk.png',
+    },
+    lisbeth: {
+      idle: 'assets/adv/chars/lisbeth/lisbeth_idle.png',
+      walk: 'assets/adv/chars/lisbeth/lisbeth_walk.png',
+    },
+    ben: {
+      idle: 'assets/adv/chars/ben/ben_idle.png',
+      walk: 'assets/adv/chars/ben/ben_walk.png',
+    },
   },
 
   // --- 小物 ---------------------------------------------------------
