@@ -548,6 +548,135 @@ function playSortie() {
   playTone(523, 0.12, 0.17, 'square', 0.50);
 }
 
+
+// ===================================================================
+// 個別の音 ― ストーリー(ADVパート)
+//
+// ★ ここだけ音の設計方針が違う。
+//   コックピットの音は「重い機械を操っている」手触りを出すために低く・強く
+//   振ってある。ADVパートは村を歩いて人と話す場面なので、同じ強さで鳴らすと
+//   場面の温度が壊れる。全体に小さく、短く、角を丸めてある
+//   (STORY_GAIN で一括して下げられるようにしてある)。
+//
+//   足音だけは毎歩鳴るので、いちばん耳につく。わずかに音程を散らして
+//   同じ音の連打に聞こえないようにしてある。
+// ===================================================================
+
+const STORY_GAIN = 0.75;   // ADVパート全体の音量。うるさければここを下げる
+
+// 0 を中心に ±amount で散らす。足音を機械的に聞こえなくするために使う。
+function jitter(amount) {
+  return 1 + (Math.random() * 2 - 1) * amount;
+}
+
+// 足音。地面の種類で音を変える。
+//   'grass' … 土と草。丸い「サッ」。シーン1・2
+//   'metal' … 格納庫の鉄板。硬い「カツ」。シーン3
+function playStoryStep(surface) {
+  const g = STORY_GAIN;
+  if (surface === 'metal') {
+    playNoise(0.045, 0.075 * g, 2600 * jitter(0.12), 700, 'bandpass');
+    playTone(196 * jitter(0.06), 0.055, 0.055 * g, 'square');
+  } else {
+    playNoise(0.070, 0.070 * g, 1100 * jitter(0.15), 240, 'lowpass');
+    playTone(104 * jitter(0.08), 0.045, 0.035 * g, 'sine');
+  }
+}
+
+// 文字が出ている間の、ごく小さなチッ。
+// ★ 1文字ごとに鳴らしてはいけない。毎秒45文字なので機関銃になる。
+//   数文字に1回だけ、しかも聞こえるか聞こえないかの音量にする。
+function playStoryType() {
+  playTone(1180 * jitter(0.05), 0.014, 0.030 * STORY_GAIN, 'square');
+}
+
+// 次の行へ送る
+function playStoryAdvance() {
+  playTone(560, 0.032, 0.085 * STORY_GAIN, 'square');
+}
+
+// 物を調べる / 人に話しかける(2音で「開いた」感じを出す)
+function playStoryExamine() {
+  const g = STORY_GAIN;
+  playTone(392, 0.038, 0.090 * g, 'square');
+  playTone(523, 0.055, 0.075 * g, 'square', 0.042);
+}
+
+// 出口が開いた。上がっていく3音 ―― 回収音(playSalvage)と同じ形にして
+// 「先へ進める」合図だと分かるようにしつつ、低めに取って場面を壊さない。
+function playStoryUnlock() {
+  const g = STORY_GAIN;
+  playTone(330, 0.055, 0.105 * g, 'square');
+  playTone(440, 0.060, 0.100 * g, 'square', 0.065);
+  playTone(587, 0.110, 0.090 * g, 'square', 0.135);
+}
+
+// シーンの開幕。暗転から明けるのに合わせて、下から立ち上がる
+function playStorySceneIn() {
+  playSweep(48, 132, 1.05, 0.085 * STORY_GAIN, 'sine');
+  playNoise(0.90, 0.030 * STORY_GAIN, 260, 900, 'lowpass', 0.05);
+}
+
+// 場面転換。暗転していくのに合わせて、下へ落ちる
+function playStorySceneOut() {
+  playSweep(140, 34, 0.75, 0.130 * STORY_GAIN, 'sine');
+  playNoise(0.60, 0.045 * STORY_GAIN, 700, 90, 'lowpass');
+}
+
+// 次のシーンの題が出る
+function playStoryTitle() {
+  const g = STORY_GAIN;
+  playTone(147, 0.55, 0.090 * g, 'sine');
+  playTone(220, 0.45, 0.055 * g, 'sine', 0.03);
+}
+
+// --- 場面ごとの音(台詞の se: で指定する)-----------------------------
+
+// 剪定鋏。硬い金属が2度こすれて閉じる「シャキッ」
+function playStorySnip() {
+  const g = STORY_GAIN;
+  playNoise(0.022, 0.130 * g, 5200, 2600, 'bandpass');
+  playNoise(0.030, 0.110 * g, 4200, 1500, 'bandpass', 0.045);
+  playTone(2400, 0.030, 0.045 * g, 'square', 0.045);
+}
+
+// 収穫祭の夜に鳴る警報。
+// ★ この音は物語の折り返し点で1度だけ鳴る。ADVパートの他の音より意図的に
+//   強く・長く取ってある。ここだけは場面の温度を壊してよい ―― 壊すのが仕事。
+function playStoryAlarm() {
+  for (let i = 0; i < 4; i++) {
+    const d = i * 0.62;
+    playTone(622, 0.30, 0.190, 'square', d);
+    playTone(311, 0.30, 0.130, 'square', d);          // 1オクターブ下で厚みを出す
+    playTone(466, 0.28, 0.170, 'square', d + 0.31);
+    playTone(233, 0.28, 0.120, 'square', d + 0.31);
+  }
+}
+
+// 壁の無線が入る。搬送波の雑音 → 事務的な通告 → 切れる
+function playStoryRadio() {
+  const g = STORY_GAIN;
+  playNoise(0.16, 0.100 * g, 3400, 1100, 'bandpass');        // 回線が開く
+  playTone(1046, 0.045, 0.070 * g, 'square', 0.10);
+  playNoise(1.20, 0.035 * g, 1800, 900, 'bandpass', 0.18);   // 搬送波のざらつき
+  playTone(84, 0.90, 0.045 * g, 'square', 0.20);             // 低い唸り
+  playNoise(0.10, 0.080 * g, 2600, 600, 'bandpass', 1.40);   // 切れる
+}
+
+// 台詞の se: から名前で呼ぶための窓口。
+// 知らない名前が来ても落とさない ―― 音が鳴らないだけで、話は進む。
+const STORY_SE = {
+  snip:  playStorySnip,
+  alarm: playStoryAlarm,
+  radio: playStoryRadio,
+};
+
+function playStorySe(name) {
+  const fn = STORY_SE[name];
+  if (fn) fn();
+  else if (name) console.warn('知らない効果音: ' + name);
+}
+
 // ===================================================================
 // エンジンの駆動音
 //

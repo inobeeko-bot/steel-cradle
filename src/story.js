@@ -104,6 +104,7 @@ const ADV_CONFIG = {
   CAM_EDGE:   0.40,    // 画面のどこにカイトを置くか(0.5=中央)
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
   TYPE_SPEED:   45,    // 1秒に何文字出すか
+  TYPE_SE_EVERY: 3,    // 文字送りの音を何文字ごとに鳴らすか(1にすると機関銃になる)
 
   // --- シーンの切り替え(すべて秒)---
   //
@@ -179,6 +180,7 @@ const STORY_SCENES = {
 
   ch1_s1_hill: {
     titleKey: 'adv.title.hill',
+    surface: 'grass',   // 足音の種類。土と草の上を歩く音になる
     placeKey: 'adv.place.arcadia',
     map: 'hill',          // 背景に使う絵(ADV_ASSETS.maps のどれか)
 
@@ -339,6 +341,7 @@ const STORY_SCENES = {
   // ===================================================================
   ch1_s2_festival: {
     titleKey: 'adv.title.festival',
+    surface: 'grass',
     placeKey: 'adv.place.arcadia',
     map: 'hill_night',
 
@@ -482,7 +485,7 @@ const STORY_SCENES = {
           { whoKey: 'adv.name.grandpa',   text: { ja: 'カイト。お前、十九になったな', en: "Kaito. You turned nineteen." } },
           { whoKey: 'adv.name.kaito', text: { ja: '急にどうした', en: "Where did that come from?" } },
           { whoKey: 'adv.name.grandpa',   text: { ja: 'いや。……ちょうど、俺が親父からこれを渡された齢だ', en: "Nothing. …It's the age my father handed me this, that's all." } },
-          { text: { ja: '――警報。', en: "—The alarm." } },
+          { text: { ja: '――警報。', en: "—The alarm." }, se: 'alarm' },
           { text: { ja: '提灯の灯りが、いっせいに揺れた。軸の方向で、何かが減速噴射を焚いている。隠す気のない光だった。', en: "Every lantern swung at once. Somewhere along the axis, something was burning a deceleration blast. It was not trying to hide." } },
           { whoKey: 'adv.name.kaito', text: { ja: '……訓練の日程、今日じゃない', en: "…There's no drill scheduled tonight." } },
           { whoKey: 'adv.name.grandpa',   text: { ja: '……', en: "…" } },
@@ -555,6 +558,7 @@ const STORY_SCENES = {
   // ===================================================================
   ch1_s3_hangar: {
     titleKey: 'adv.title.hangar',
+    surface: 'metal',   // 格納庫の鉄板。硬い足音になる
     placeKey: 'adv.place.dock',
     map: 'hangar',
 
@@ -638,7 +642,7 @@ const STORY_SCENES = {
           ]},
           // 3回目 ― 通告。ここで四番機に乗れるようになる
           { flag: 'bh_3_done', lines: [
-            { text: { ja: '壁の無線が、勝手に鳴った。', en: "The wall set came alive on its own." } },
+            { text: { ja: '壁の無線が、勝手に鳴った。', en: "The wall set came alive on its own." }, se: 'radio' },
             { text: { ja: '『無登録居住体の接収を開始する。抵抗は資産の毀損と見做す』', en: "\"Seizure of the unregistered habitat will now commence. Resistance will be treated as damage to assets.\"" } },
             { text: { ja: '同じ文が、三回繰り返された。抑揚は一度も変わらなかった。', en: "The same sentence, three times. The intonation never changed once." } },
             { whoKey: 'adv.name.ben',   text: { ja: '……資産だってよ', en: "…Assets, he says." } },
@@ -722,6 +726,9 @@ let storyWalking   = false;
 // ===================================================================
 let storyNpcs = null;         // 上の形の配列
 let storyTalkingNpc = null;   // いま話しかけている相手(会話が閉じたら null)
+
+// 出口が開いた合図の音を、会話が終わるまで待たせるための札
+let storyUnlockSePending = false;
 
 // ===================================================================
 // 拡大率を決めて、舞台の大きさを合わせる
@@ -860,6 +867,7 @@ function startStoryScene(id) {
   storyTime      = 0;
   storyHintShown = new Set();
   storyLines     = null;
+  storyUnlockSePending = false;   // 前のシーンの札が残っていると、開幕でいきなり鳴る
 
   screenState = 'story';
   menuEl.classList.remove('on');
@@ -870,6 +878,8 @@ function startStoryScene(id) {
   buildStoryScene(scene);
   layoutStoryStage();
   storyFadeEl.style.opacity = '1';   // 暗転から始めて、開幕でゆっくり明ける
+
+  playStorySceneIn();
 
   setTimeout(() => {
     if (screenState === 'story') openStoryLines(scene.opening.map(l => ({ text: l.text })));
@@ -1046,6 +1056,10 @@ function renderStoryLine() {
   storySpeakerEl.style.display = who ? '' : 'none';
   storyTextEl.textContent = '';
   storyTyped = 0;
+  // ★ 台詞に se: が書いてあれば、その行が出た瞬間に鳴らす。
+  //   この仕掛けは前から書いてあったのに、読む側が無かったので
+  //   一度も鳴っていなかった(祖父の剪定鋏 se:'snip')。
+  if (line.se) playStorySe(line.se);
 }
 
 function advanceStory() {
@@ -1057,12 +1071,13 @@ function advanceStory() {
   storyIndex += 1;
   if (storyIndex >= storyLines.length) { closeStoryLines(); return; }
   renderStoryLine();
-  playViewClick();
+  playStoryAdvance();
 }
 
 function closeStoryLines() {
   storyLines = null;
   storyBoxEl.classList.remove('on');
+  if (storyUnlockSePending) { storyUnlockSePending = false; playStoryUnlock(); }
   // ふだんの向き(祖父なら木のほう)へ戻す
   if (storyTalkingNpc) {
     const n = storyTalkingNpc.def;
@@ -1081,6 +1096,7 @@ function interactStory() {
   //   実際そうなっていて、チュートリアルの案内2つが一度も出ていなかった。
   const target = nearestStoryTarget();
   if (!target) return;
+  playStoryExamine();
 
   if (target.kind === 'prop') {
     const seen = storyTalkCount[target.data.id] || 0;
@@ -1106,6 +1122,10 @@ function interactStory() {
     if (talk.flag === storyScene.exit.unlock) {
       storyExitEl.classList.add('open');
       showStoryHint('exit', t('adv.goRight'));
+      // ★ 音は会話が終わってから鳴らす。ここで鳴らすと、シーン2では
+      //   警報より先に「先へ進める」明るい3音が鳴ってしまい、場面が壊れる。
+      //   目印は今すぐ出してよい(見えるだけなので邪魔にならない)。
+      storyUnlockSePending = true;
     }
   } else {
     openStoryLines(npc.repeat);
@@ -1141,8 +1161,17 @@ function updateStory(dt) {
   if (storyLines && storyLines !== 'leaving') {
     const full = lineText(storyLines[storyIndex]);
     if (storyTyped < full.length) {
+      const before = Math.floor(storyTyped);
       storyTyped = Math.min(full.length, storyTyped + ADV_CONFIG.TYPE_SPEED * dt);
-      storyTextEl.textContent = full.slice(0, Math.floor(storyTyped));
+      const after = Math.floor(storyTyped);
+      storyTextEl.textContent = full.slice(0, after);
+      // ★ 1文字ごとに鳴らしてはいけない。毎秒45文字なので機関銃になる。
+      //   TYPE_SE_EVERY 文字ごとに1回だけ。空白では鳴らさない。
+      const n = ADV_CONFIG.TYPE_SE_EVERY;
+      if (after > before && Math.floor(after / n) !== Math.floor(before / n)
+          && !/\s/.test(full[after - 1] || '')) {
+        playStoryType();
+      }
     }
   }
 
@@ -1237,6 +1266,13 @@ function setStoryWalking(walking, distance) {
     while (storyAnimTime >= per) {
       storyAnimTime -= per;
       storyAnimFrame = (storyAnimFrame + 1) % ADV_CONFIG.WALK_FRAME_COUNT;
+      // ★ 足音は「コマが進んだとき」ではなく「足が着いたとき」に鳴らす。
+      //   歩行4コマのうち 0 と 2 が接地コマ、1 と 3 は脚の揃った通過コマ
+      //   (実測: f1 と f3 は完全に同じ絵)。4コマ全部で鳴らすと
+      //   歩幅の倍の速さでパタパタ鳴って、足と音が合わない。
+      if (storyAnimFrame % 2 === 0) {
+        playStoryStep(storyScene && storyScene.surface);
+      }
     }
   } else {
     storyAnimFrame = 0;
@@ -1341,6 +1377,7 @@ function leaveStoryScene() {
   storyFadeEl.style.opacity = '1';
   storyBoxEl.classList.remove('on');
   storyMarkEl.classList.remove('on');
+  playStorySceneOut();
 
   // ★ この遷移だけを指す目印。時間で来ても、キーで飛ばしても、
   //   通り道はこの go() ひとつだけにする。
@@ -1368,6 +1405,7 @@ function leaveStoryScene() {
   token.showTimer = setTimeout(() => {
     storyPromptEl.textContent = (nextId ? '' : t('adv.toBeContinued')) + t(titleKey);
     storyPromptEl.classList.add('on', 'big');
+    playStoryTitle();
   }, (C.FADE_OUT + C.TITLE_IN) * 1000);
   token.goTimer = setTimeout(go, (C.FADE_OUT + C.TITLE_IN + hold) * 1000);
   storyTitleSkip = token;
