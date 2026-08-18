@@ -17,7 +17,9 @@
 |---|---|---|
 | `bg_hill_master.png` | シーン1 林檎の丘（夕景）の背景 | 48 |
 | `bg_hill_night_master.png` | シーン2 収穫祭の夜の背景 | 48 |
+| `bg_hangar_master.png` | シーン3 旧ドックの格納庫の背景 | 48 |
 | `palette_hill_night.json` / `.gpl` | 上の夜の原器を色一覧にしたもの | 48 |
+| `palette_hangar.json` / `.gpl` | 上の格納庫の原器を色一覧にしたもの | 48 |
 
 `.gpl` は GIMP / Aseprite が読める形式。手直しの前にこれを読み込ませておけば、
 原器の外の色を使ってしまう事故が起きない。

@@ -32,6 +32,19 @@ const ADV_ASSETS = {
       mid:  'assets/adv/maps/hill_night/bg_hill_night_mid.png',
       near: 'assets/adv/maps/hill_night/bg_hill_night_near.png',
     },
+    // 第3シーン 旧ドックの格納庫。
+    // ★ mid と near は中身が空。手抜きではなく、この絵に層は要らないため。
+    //   層を分ける目的は「横スクロールしたときに奥と手前がずれて見えること」。
+    //   このマップは width === BASE_W の1画面完結なので camX が 0 から動かず、
+    //   3層に分けても永久にずれない。しかも人物は必ず全部の層より手前に描かれる
+    //   (buildStoryScene が層 → 人物 の順に足すため)ので、near で人物を隠すこともできない。
+    //   つまり今ここで分けても、得るものが何も無い。
+    //   将来このマップを横に広げるときは、そのとき初めて far/mid/near を切り出すこと。
+    hangar: {
+      far:  'assets/adv/maps/hangar/bg_hangar_far.png',
+      mid:  'assets/adv/maps/hangar/bg_hangar_mid.png',
+      near: 'assets/adv/maps/hangar/bg_hangar_near.png',
+    },
   },
 
   // --- 人物 ---------------------------------------------------------

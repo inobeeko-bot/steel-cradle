@@ -18,24 +18,41 @@ assets/adv/
 │   │   ├── bg_hill_far.png
 │   │   ├── bg_hill_mid.png
 │   │   └── bg_hill_near.png
-│   └── hill_night/                  … シーン2 収穫祭の夜
-│       ├── bg_hill_night_far.png
-│       ├── bg_hill_night_mid.png
-│       └── bg_hill_night_near.png
+│   ├── hill_night/                  … シーン2 収穫祭の夜
+│   │   ├── bg_hill_night_far.png
+│   │   ├── bg_hill_night_mid.png
+│   │   └── bg_hill_night_near.png
+│   └── hangar/                      … シーン3 旧ドックの格納庫
+│       ├── bg_hangar_far.png        … 全面不透明。この絵の中身は全部ここ
+│       ├── bg_hangar_mid.png        … 空
+│       └── bg_hangar_near.png       … 空
 ├── chars/
-│   ├── kite/
-│   │   ├── kite_idle.png
-│   │   └── kite_walk.png
-│   └── grandpa/
-│       ├── grandpa_idle.png
-│       ├── grandpa_walk.png
-│       └── grandpa_work.png
+│   ├── kite/    … kite_idle.png / kite_walk.png
+│   ├── grandpa/ … grandpa_idle.png / grandpa_walk.png / grandpa_work.png
+│   ├── yona/    … 収穫祭の村人。基準体から起こしたもの
+│   ├── lisbeth/
+│   └── ben/
 └── props/
     └── prop_ladder.png
 ```
 
 同じ場所でも時間帯が違えば、色替えではなく**マップごと新しいフォルダ**を作る。
 `hill` と `hill_night` がその例。
+
+### 層が空でもよい場合がある
+
+`hangar` の mid と near は中身が空だが、これは手抜きではない。
+
+層を分ける目的は「横スクロールしたとき、奥と手前がずれて見えること」。
+このマップは `width === BASE_W` の1画面完結なので `camX` が 0 から動かず、
+3層に分けても**永久にずれない**。しかも人物は必ず全部の層より手前に描かれる
+(`buildStoryScene` が 層 → 人物 の順に足すため)ので、near で人物を隠すこともできない。
+つまり今ここで分けても、得るものが何も無い。
+
+将来このマップを横に広げるときは、そのとき初めて far/mid/near を切り出す。
+
+`kobo verify` は空の層を「中身が空(この絵に層は不要)」と表示する。
+黙って通さないのは、**層分けに失敗して空になった場合と見分けるため**。
 
 ---
 

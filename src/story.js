@@ -105,6 +105,23 @@ const ADV_CONFIG = {
   CAM_SMOOTH: 0.10,    // カメラの追従の緩さ
   TYPE_SPEED:   45,    // 1秒に何文字出すか
 
+  // --- シーンの切り替え(すべて秒)---
+  //
+  // ★ ここが長いと、遊んでいる人はただ待たされる。
+  //   出口を抜けてから次のシーンで動けるまでが「操作できない時間」で、
+  //   以前はこれが 7.2 秒あった(暗転2.0 + 題を3.6 + 明るくなるのに2.0 弱)。
+  //   演出は1回目しか効かないが、待ち時間は毎回かかる。
+  //
+  //   短くしたうえで、題はキーを押せば飛ばせるようにしてある(skipStoryTitle)。
+  //   飛ばせば 0.65 秒で次のシーンが始まる。
+  FADE_OUT:     0.65,  // 暗転にかける時間
+  TITLE_IN:     0.45,  // 暗転してから題を出すまで
+  TITLE_HOLD:   1.30,  // 題を出しておく時間(キーで飛ばせる)
+  FADE_IN:      0.80,  // 次のシーンで明るくなるまで
+  OPENING_IN:   0.30,  // シーンが始まってから地の文を出すまで
+  // 最後のシーン(次が無い)だけは「To be continued」を読ませたいので長めに。
+  TITLE_HOLD_END: 2.60,
+
   // --- 開発用 ---
   // true にすると、調べられるものの判定範囲を四角で表示する。
   // 通常は false。遊んでいる最中は F3 で切り替えられる。
@@ -513,7 +530,7 @@ const STORY_SCENES = {
         { whoKey: 'adv.name.kaito', text: { ja: '……じいちゃんに一杯付き合ってからだな', en: "…One drink with Grandpa first." } },
       ],
       nextTitleKey: 'adv.scene3',
-      // シーン3(戦闘)は未実装。題を出して終わる。
+      nextScene: 'ch1_s3_hangar',
     },
 
     // --- 開幕の地の文 ---
@@ -521,6 +538,136 @@ const STORY_SCENES = {
       { text: { ja: '収穫祭の夜は、軸から吊るした提灯で明るかった。', en: "The night of the harvest festival was bright with lanterns strung from the axis." } },
       { text: { ja: '鏡面帆はとうに畳まれている。内壁の空を満たしているのは、村が自分で灯した火だけだ。', en: "The mirror sails were long since furled. The sky on the inner wall held nothing but the fires the village had lit for itself." } },
       { text: { ja: '――地図にない村の、地図にない祭り。', en: "—A festival that was on no map, in a village that was on no map." } },
+    ],
+  },
+
+  // ===================================================================
+  // シーン3 ― 旧式艇四機(第一部 一章)
+  //
+  // 祭りから走ってきた先。カイトの持ち場。
+  // 小説「一 林檎の木」に「彼の世界は林檎の花と、剪定鋏と、
+  // 格納庫の油の匂いでできていた」とある ―― その三つ目がここ。
+  //
+  // このシーンの仕事は2つ。
+  //   ・奥の隔壁が「開いている」ことを見せる(祖父が先に来ている)
+  //   ・企業連合の通告を聞かせる ―― 人間ではなく「資産」と呼ばれること
+  // そのあと四番機に乗る。3D戦闘はフェーズ3なので、いまはそこで題を出して終わる。
+  // ===================================================================
+  ch1_s3_hangar: {
+    titleKey: 'adv.title.hangar',
+    placeKey: 'adv.place.dock',
+    map: 'hangar',
+
+    width: ADV_CONFIG.BASE_W,   // 1画面ぶん。横スクロールしない
+    start: 40,                  // 左の通路から走り込んでくる
+
+    // --- 接地ライン ---
+    // 格納庫の床なので水平。320 / 336 / 348 を背景に重ねて見比べて決めた
+    // (pixel_kobo の ground_overlay)。336 だと人物が画面の最下段に貼りつき、
+    // 手前の床の帯が消えて奥行きが無くなる。320 なら明るい床の上に立ち、
+    // 足元に暗い床が残って奥行きが出る。
+    groundY: [
+      [   0, 320 ],
+      [ 640, 320 ],
+    ],
+
+    // --- 調べられる物 ---
+    props: [
+      {
+        id: 'examine_boats', x: 230, markX: 230, markH: 78, labelKey: 'adv.label.boats',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '一番から三番。どれも俺が生まれる前からここにある', en: "One through three. All of them were here before I was." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '整備記録は毎月つけてる。……実弾を積んだことは、一度もない', en: "I log the maintenance every month. …We've never once loaded live rounds." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '四機で村を守る、ということになっている', en: "Four boats are supposed to defend the village. That's the arrangement." } },
+        ],
+      },
+      {
+        id: 'examine_rack', x: 320, markX: 320, markH: 96, labelKey: 'adv.label.rack',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '与圧服。訓練で年に二回、着るだけの', en: "Pressure suits. We put them on twice a year, for drills." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: 'ベンのが無い。もう着たのか', en: "Ben's is gone. He's already suited up." } },
+        ],
+      },
+      {
+        id: 'examine_myboat', x: 470, markX: 470, markH: 124, labelKey: 'adv.label.myboat',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '四番機。俺の当番機だ', en: "Number four. My boat." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '点検は今朝済ませた。「異常なし」で上げた', en: "I ran the check this morning. Filed it as \"no faults.\"" } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……今日いちばん役に立たない書類になるな', en: "…That's going to be the least useful piece of paper today." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '右の推力偏向が渋い。前から言ってる', en: "The right thrust vector sticks. I've been saying so for months." } },
+        ],
+      },
+      {
+        // ★ このシーンでいちばん重要な一言。
+        //   祖父は祭りで「俺は祠を開ける」と言った。それがここで見える。
+        id: 'examine_bulkhead', x: 120, markX: 120, markH: 112, labelKey: 'adv.label.bulkhead',
+        first: [
+          { whoKey: 'adv.name.kaito', text: { ja: '祠の隔壁。三重の、一枚目', en: "The shrine bulkhead. The first of three." } },
+          { text: { ja: '開いていた。', en: "It was open." } },
+          { whoKey: 'adv.name.kaito', text: { ja: '……じいちゃん', en: "…Grandpa." } },
+        ],
+        repeat: [
+          { whoKey: 'adv.name.kaito', text: { ja: '奥は暗い。鍵はひとつきりで、それは祖父の首から下がっている', en: "It's dark back there. There's one key, and it hangs around his neck." } },
+        ],
+      },
+    ],
+
+    // --- ベン。先に来て与圧服を着ている ---
+    npcs: [
+      {
+        id: 'ben_hangar', x: 395,
+        idle: ADV_ASSETS.chars.ben.idle,
+        faceX: 120,                 // 開いている隔壁のほうを見ている
+        labelKey: 'adv.name.ben',
+        talks: [
+          { flag: 'bh_1_done', lines: [
+            { whoKey: 'adv.name.ben',   text: { ja: '来たか。……訓練の日程じゃないよな', en: "You made it. …There's no drill tonight, is there." } },
+            { whoKey: 'adv.name.kaito', text: { ja: '違う', en: "No." } },
+            { whoKey: 'adv.name.ben',   text: { ja: 'だよな', en: "Didn't think so." } },
+          ]},
+          { flag: 'bh_2_done', lines: [
+            { whoKey: 'adv.name.ben',   text: { ja: 'さっき「ここは何も起きない」って言ったやつ、取り消していいか', en: "That thing I said. \"Nothing happens here.\" Can I take it back?" } },
+            { whoKey: 'adv.name.kaito', text: { ja: '取り消すな', en: "Don't." } },
+            { whoKey: 'adv.name.ben',   text: { ja: '……そうだな。取り消したら、あれが嘘になる', en: "…Yeah. If I take it back, it turns into a lie." } },
+          ]},
+          // 3回目 ― 通告。ここで四番機に乗れるようになる
+          { flag: 'bh_3_done', lines: [
+            { text: { ja: '壁の無線が、勝手に鳴った。', en: "The wall set came alive on its own." } },
+            { text: { ja: '『無登録居住体の接収を開始する。抵抗は資産の毀損と見做す』', en: "\"Seizure of the unregistered habitat will now commence. Resistance will be treated as damage to assets.\"" } },
+            { text: { ja: '同じ文が、三回繰り返された。抑揚は一度も変わらなかった。', en: "The same sentence, three times. The intonation never changed once." } },
+            { whoKey: 'adv.name.ben',   text: { ja: '……資産だってよ', en: "…Assets, he says." } },
+            { whoKey: 'adv.name.kaito', text: { ja: '戸籍が無いから、殺されもしない。帳簿から消えるだけだ', en: "No registry, so we don't even get killed. We just come off the books." } },
+            { whoKey: 'adv.name.ben',   text: { ja: '乗るぞ', en: "Let's fly." } },
+          ]},
+        ],
+        repeat: [
+          { whoKey: 'adv.name.ben', text: { ja: '先に上がってる。……カイト、四番機の右の推力偏向、まだ渋いからな', en: "I'll be up first. …Kaito. Number four's right thrust vector still sticks. Remember that." } },
+        ],
+      },
+    ],
+
+    // --- 出口 = 四番機に乗る(右端)---
+    exit: {
+      x: 600,
+      unlock: 'bh_3_done',
+      blocked: [
+        { whoKey: 'adv.name.kaito', text: { ja: '……ベンと話してからだ', en: "…Talk to Ben first." } },
+      ],
+      nextTitleKey: 'adv.scene4',
+      // シーン4(発艦・3D戦闘)はフェーズ3。いまは題を出して終わる。
+    },
+
+    // --- 開幕の地の文 ---
+    opening: [
+      { text: { ja: '提灯の列は、走っているあいだに消えた。', en: "The lanterns went out while he was still running." } },
+      { text: { ja: '格納庫は非常灯だけになっていた。油の匂い。カイトの世界の三分の一は、ずっとこの匂いでできている。', en: "The hangar was down to emergency lights. The smell of oil. A third of Kaito's world had always been made of that smell." } },
+      { text: { ja: '――旧式艇四機。当番表に書かれた、彼の持ち場。', en: "—Four old boats. His post, as written on the duty roster." } },
     ],
   },
 };
@@ -726,10 +873,11 @@ function startStoryScene(id) {
 
   setTimeout(() => {
     if (screenState === 'story') openStoryLines(scene.opening.map(l => ({ text: l.text })));
-  }, 900);
+  }, ADV_CONFIG.OPENING_IN * 1000);
 }
 
 function exitStory() {
+  cancelStoryTransition();
   storyEl.classList.remove('on');
   storyScene = null;
   storyLines = null;
@@ -985,9 +1133,9 @@ function updateStory(dt) {
   const S = storyScale;
 
   // --- 暗転から明ける ---
-  storyFadeEl.style.opacity = String(Math.max(0, 1 - storyTime / 2.0));
+  storyFadeEl.style.opacity = String(Math.max(0, 1 - storyTime / ADV_CONFIG.FADE_IN));
 
-  if (storyTime > 2.0) showStoryHint('move', t('adv.move'));
+  if (storyTime > ADV_CONFIG.FADE_IN) showStoryHint('move', t('adv.move'));
 
   // --- 1文字ずつ出す ---
   if (storyLines && storyLines !== 'leaving') {
@@ -1177,36 +1325,71 @@ function placeStoryActor(el, x, w, h, liftY) {
 // ===================================================================
 // 出口を抜けた:次のシーンへ
 // ===================================================================
+// 題を出している間だけ立っている。キーで飛ばすときに使う。
+let storyTitleSkip = null;
+
 function leaveStoryScene() {
   // ★ 次のシーンの情報は、いまのうちに控えておく。
   //   下の setTimeout が動く頃には exitStory() が storyScene を null にしている。
   const titleKey = storyScene.exit.nextTitleKey;
   const nextId   = storyScene.exit.nextScene || null;
+  const C = ADV_CONFIG;
+  const hold = nextId ? C.TITLE_HOLD : C.TITLE_HOLD_END;
 
   storyLines = 'leaving';
-  storyFadeEl.style.transition = 'opacity 2s';
+  storyFadeEl.style.transition = 'opacity ' + C.FADE_OUT + 's';
   storyFadeEl.style.opacity = '1';
   storyBoxEl.classList.remove('on');
   storyMarkEl.classList.remove('on');
 
-  setTimeout(() => {
-    storyPromptEl.textContent =
-      (nextId ? '' : t('adv.toBeContinued')) + t(titleKey);
-    storyPromptEl.classList.add('on', 'big');
-  }, 1600);
+  // ★ この遷移だけを指す目印。時間で来ても、キーで飛ばしても、
+  //   通り道はこの go() ひとつだけにする。
+  //   自分の目印かどうかを確かめてから動くので、2回呼ばれても、
+  //   別の遷移が始まったあとに古いタイマーが発火しても、何も起きない。
+  const token = {};
+  const go = () => {
+    if (storyTitleSkip !== token) return;
+    clearTimeout(token.showTimer);
+    clearTimeout(token.goTimer);
+    storyTitleSkip = null;
 
-  setTimeout(() => {
     storyPromptEl.classList.remove('on', 'big');
     storyFadeEl.style.transition = '';
 
     // 次のシーンがあれば、そのまま続ける。
-    // 無ければ「To be continued」を出してメニューへ戻る(いままでの動き)。
-    if (nextId && STORY_SCENES[nextId]) {
-      startStoryScene(nextId);
-    } else {
-      exitStory();
-    }
-  }, 5200);
+    // 無ければ「To be continued」を出してメニューへ戻る。
+    if (nextId && STORY_SCENES[nextId]) startStoryScene(nextId);
+    else exitStory();
+  };
+
+  token.go = go;
+  // 暗転しきる前に飛ばされると画面が飛んで見えるので、そこまでは受け付けない
+  token.readyAt = performance.now() + C.FADE_OUT * 1000;
+  token.showTimer = setTimeout(() => {
+    storyPromptEl.textContent = (nextId ? '' : t('adv.toBeContinued')) + t(titleKey);
+    storyPromptEl.classList.add('on', 'big');
+  }, (C.FADE_OUT + C.TITLE_IN) * 1000);
+  token.goTimer = setTimeout(go, (C.FADE_OUT + C.TITLE_IN + hold) * 1000);
+  storyTitleSkip = token;
+}
+
+// 遷移の途中でメニューへ戻ったときに、置き去りのタイマーを止める。
+// 残しておくと、メニュー画面にいる最中に次のシーンが始まってしまう。
+function cancelStoryTransition() {
+  if (!storyTitleSkip) return;
+  clearTimeout(storyTitleSkip.showTimer);
+  clearTimeout(storyTitleSkip.goTimer);
+  storyTitleSkip = null;
+  storyPromptEl.classList.remove('on', 'big');
+  storyFadeEl.style.transition = '';
+}
+
+// 題を出している間にキーを押したら、待たずに次へ。
+function skipStoryTitle() {
+  if (!storyTitleSkip) return false;
+  if (performance.now() < storyTitleSkip.readyAt) return true;  // 暗転中は握りつぶす
+  storyTitleSkip.go();
+  return true;
 }
 
 // ===================================================================
@@ -1231,6 +1414,9 @@ window.addEventListener('keydown', (event) => {
 
   if (event.key === 'Enter' || k === 'e' || event.key === ' ') {
     event.preventDefault();
+    // シーンの題を出している間は、押せば待たずに次へ。
+    // 演出は1回目しか効かないが、待ち時間は毎回かかる。
+    if (skipStoryTitle()) return;
     if (storyLines === 'leaving') return;
     if (storyLines) advanceStory();
     else            interactStory();

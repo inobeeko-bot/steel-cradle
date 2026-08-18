@@ -250,6 +250,10 @@ const TEXT = {
   'adv.scene3':         ['シーン3 ― 旧式艇四機', 'Scene 3 — Four old boats'],
 
   'adv.title.festival': ['第一部 一章 ― 収穫祭の夜', 'Part I, Ch. 1 — The Night of the Harvest Festival'],
+  'adv.title.hangar':   ['第一部 一章 ― 旧式艇四機', 'Part I, Ch. 1 — Four Old Boats'],
+  // シーン3の次。3D戦闘はフェーズ3なので、いまは題を出して終わる。
+  'adv.scene4':         ['シーン4 ― 発艦', 'Scene 4 — Launch'],
+  'adv.place.dock':     ['アルカディア / 旧ドック', 'Arcadia / The old dock'],
 
   'adv.name.kaito':     ['カイト', 'Kaito'],
   'adv.name.grandpa':   ['祖父', 'Grandfather'],
@@ -263,6 +267,10 @@ const TEXT = {
   'adv.label.stall':    ['林檎酒の屋台', 'The cider stall'],
   'adv.label.pumpkin':  ['南瓜', 'The pumpkins'],
   'adv.label.dock':     ['旧ドックの入口', 'The old dock'],
+  'adv.label.boats':    ['一番機から三番機', 'Boats one to three'],
+  'adv.label.myboat':   ['四番機', 'Boat four'],
+  'adv.label.rack':     ['与圧服の棚', 'The suit rack'],
+  'adv.label.bulkhead': ['奥の隔壁', 'The bulkhead at the back'],
 
   // --- 言語切り替え -------------------------------------------------
   'menu.language':      ['言語 / Language', 'Language / 言語'],
