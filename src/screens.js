@@ -217,12 +217,28 @@ function hideMenu() {
 
 // --- TRAINING を選んだ:実際に出撃する ---
 function launchTraining() {
+  launchSortie('standard', 'training');
+}
+
+// --- 物語からの出撃:カイトの当番機(旧式艇 四番機)---
+// 実弾を積んでいないので、ビーム砲しか撃てない。右の推力偏向が渋い。
+// 制限の根拠はすべてシーン3の台詞にある(src/ships.js のコメント参照)。
+function launchStorySortie() {
+  launchSortie('boat4', 'training');
+}
+
+// --- 出撃の共通処理 ---
+// ★ 機体は restartMission() より前に決める。
+//   積み込む弾数を restartMission() が機体から引くので、順番を逆にすると
+//   前の機体の弾を積んだまま飛ぶことになる。
+function launchSortie(shipKey, bgm) {
   hideMenu();
   setEnemiesHidden(false);                          // 敵を戻す
   applyViewMode(OPTIONS.startView === 'cockpit');   // 好みの視点で出撃する
   screenState = 'mission';
+  setShip(shipKey);          // ★ restartMission より前(理由は上)
   restartMission();          // 7パラメーター・弾数・戦果をすべて初期化して開始
-  playBgm('training');       // BGM「Proving Ground」。読み込みは非同期なので待たない
+  if (bgm) playBgm(bgm);     // 読み込みは非同期なので待たない
 }
 
 // --- 戦闘中に Esc:一時停止 ---

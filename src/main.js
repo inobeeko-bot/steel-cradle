@@ -301,8 +301,28 @@ let bombAmmo = BOMBS.map((w) => w.ammo);
 let bombCooldown = 0;
 
 // 今の兵装を取り出す短縮形
-const currentWeapon = () => WEAPONS[weaponIndex];
-const currentBomb   = () => BOMBS[bombIndex];
+// 機体ごとの性能差を被せて返す(ships.js)。
+// 元の WEAPONS / BOMBS は書き換えない ― 書き換えると次の出撃に持ち越される。
+const currentWeapon = () => shipTuned(WEAPONS[weaponIndex]);
+const currentBomb   = () => shipTuned(BOMBS[bombIndex]);
+
+// この機体が積んでいる兵装の番号だけを並べる。
+// 積んでいないものは切替で飛ばす ― 選べてしまうと「撃てないのに選べる」ことになる。
+function carriedWeaponIndexes() {
+  const list = [];
+  for (let i = 0; i < WEAPONS.length; i++) {
+    if (shipHasWeapon(WEAPONS[i].key)) list.push(i);
+  }
+  return list.length ? list : [0];   // 万一ゼロなら1つは残す(操作不能を避ける)
+}
+
+function carriedBombIndexes() {
+  const list = [];
+  for (let i = 0; i < BOMBS.length; i++) {
+    if (shipHasBomb(BOMBS[i].key)) list.push(i);
+  }
+  return list;
+}
 
 // --- 各リソースの現在値 ---------------------------------------------
 let heat = 0;               // 現在の熱量(0〜100)
@@ -1917,8 +1937,12 @@ function renderConsole3D(dt) {
            || effectiveWeaponPower() < w.minPower,
       isBeam: w.key === 'BEAM',
     },
-    bomb: { label: a.label, ammo: bombAmmo[bombIndex],
-            low: bombAmmo[bombIndex] <= 0 || effectiveWeaponPower() < a.minPower },
+    // ★ 1発も積んでいない機体では「―」を出す。
+    //   「0」だと撃ち尽くしたように見えるが、積んでいないのとは別の状態。
+    bomb: carriedBombIndexes().length
+      ? { label: a.label, ammo: bombAmmo[bombIndex],
+          low: bombAmmo[bombIndex] <= 0 || effectiveWeaponPower() < a.minPower }
+      : { label: '---', ammo: '―', low: true },
     flare: flareCount,
     flareLow: flareCount <= Math.ceil(FLARE.COUNT / 6) || heat >= FLARE.HEAT_LIMIT,
 
@@ -1988,13 +2012,19 @@ function renderConsole3D(dt) {
     closure: nearestTargetInfo().closure,
     targetValid: nearestTargetInfo().valid,
     burstsLeft: Math.floor(propellant / PROP.BURST_COST),
-    // 選んでいない武器の残弾も見せる。持ち替える前に残りが分かる
-    allAmmo: WEAPONS.map((wp, i) => ({
-      name: wp.label.slice(0, 4),
-      value: (ammo[i] === Infinity) ? '∞' : String(ammo[i]),
-      low: ammo[i] !== Infinity && ammo[i] <= Math.max(2, Math.ceil(wp.ammo * 0.25)),
-      selected: i === weaponIndex,
-    })),
+    // 選んでいない武器の残弾も見せる。持ち替える前に残りが分かる。
+    // ★ 積んでいない兵装はそもそも並べない ―
+    //   旧式艇で「CANNON 0」と出ると、撃ち尽くしたように見えてしまう。
+    //   積んでいないことと、撃ち尽くしたことは別の状態。
+    allAmmo: WEAPONS
+      .map((wp, i) => ({ wp, i }))
+      .filter(({ wp }) => shipHasWeapon(wp.key))
+      .map(({ wp, i }) => ({
+        name: wp.label.slice(0, 4),
+        value: (ammo[i] === Infinity) ? '∞' : String(ammo[i]),
+        low: ammo[i] !== Infinity && ammo[i] <= Math.max(2, Math.ceil(wp.ammo * 0.25)),
+        selected: i === weaponIndex,
+      })),
 
     speed: Math.round(currentSpeed()),
     target: currentEnemyState(),
@@ -2220,7 +2250,15 @@ function useFlare() {
 
 // 兵装を切り替える(仕様書9.6:R)
 function switchWeapon() {
-  weaponIndex = (weaponIndex + 1) % WEAPONS.length;
+  // 積んでいる兵装だけを順に回す。1種類しか積んでいなければ何も起きない
+  const carried = carriedWeaponIndexes();
+  if (carried.length <= 1) {
+    weaponIndex = carried[0];
+    renderWeapon();
+    return;
+  }
+  const at = carried.indexOf(weaponIndex);
+  weaponIndex = carried[(at + 1) % carried.length];
   fireCooldown = 0;
   burstLeft = 0;      // 前の武器のバーストが残っていたら捨てる
   saidAmmoOut = false;   // 武器が変わったので、また弾切れを知らせてよい
@@ -2872,8 +2910,11 @@ function restartMission() {
   empLeft = 0;
   propellant = PROP.MAX;
   shieldHp = SHIELD.MAX;
-  weaponIndex = 0;
-  ammo = WEAPONS.map((w) => w.ammo);   // 弾を積み直す
+  // 積んでいる兵装の先頭を選ぶ。旧式艇ならビーム砲しか無い
+  weaponIndex = carriedWeaponIndexes()[0];
+  bombIndex = (carriedBombIndexes()[0] !== undefined) ? carriedBombIndexes()[0] : 0;
+  ammo = WEAPONS.map((w) => (shipHasWeapon(w.key) ? w.ammo : 0));   // 積んでいない弾は0
+
   fireCooldown = 0;
   burstLeft = 0;
   deflectCount = 0;
@@ -2882,7 +2923,7 @@ function restartMission() {
   lastRollAt = -99;
   saidAmmoOut = false;
   bombIndex = 0;
-  bombAmmo = BOMBS.map((w) => w.ammo);   // BOMBS も積み直す
+  bombAmmo = BOMBS.map((w) => (shipHasBomb(w.key) ? w.ammo : 0));   // 積んでいないBOMBSは0
   bombCooldown = 0;
   flareCount = FLARE.COUNT;              // フレアも積み直す
 
@@ -3041,6 +3082,9 @@ function updateBurst(dt) {
 // 自分も巻き込まれるので、撃ったら離れる操作とセットになる。
 // ===================================================================
 function fireBomb() {
+  // 積んでいない機体では、そもそも投げられない(旧式艇には1発も無い)
+  if (!carriedBombIndexes().length) return;
+
   const a = currentBomb();
 
   // BOMBS は武器系の故障では止まらない。
@@ -3076,7 +3120,14 @@ function fireBomb() {
 
 // BOMBS の切替(Nキー)
 function switchBomb() {
-  bombIndex = (bombIndex + 1) % BOMBS.length;
+  // 1発も積んでいない機体では、切替そのものが起きない
+  const carried = carriedBombIndexes();
+  if (!carried.length) {
+    addCombatLog('BOMB 未搭載', 'warn');
+    return;
+  }
+  const at = carried.indexOf(bombIndex);
+  bombIndex = carried[(at + 1) % carried.length];
   bombCooldown = 0;
   playPresetConfirm();
   addCombatLog(currentBomb().jp, 'warn');

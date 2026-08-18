@@ -3797,8 +3797,13 @@ function updateRollStep(dt) {
   // バレルロール中は「速く・きびきび」、90度きざみは「ゆっくり・重く」。
   // 使う数字の組を切り替えるだけで、回し方の仕組みは同じ
   const ease  = barrelSpin ? FEEL.BARREL_EASE  : FEEL.ROLL_STEP_EASE;
-  const cap   = barrelSpin ? FEEL.BARREL_RATE  : FEEL.ROLL_STEP_RATE;
-  const accel = barrelSpin ? FEEL.BARREL_ACCEL : FEEL.ROLL_STEP_ACCEL;
+  let   cap   = barrelSpin ? FEEL.BARREL_RATE  : FEEL.ROLL_STEP_RATE;
+  let   accel = barrelSpin ? FEEL.BARREL_ACCEL : FEEL.ROLL_STEP_ACCEL;
+
+  // ★ 右へのロールだけ遅く・重くする機体がある(ships.js)。
+  //   rollStepLeft が負のとき = 右へ回っている最中。
+  cap   = shipRollCap(cap, rollStepLeft);
+  accel = shipRollAccel(accel, rollStepLeft);
 
   // 残り角度から「今出したい速度」を決める。
   // 残りが多ければ頭打ちまで、少なくなれば自然に落ちる
@@ -3838,15 +3843,20 @@ function turnView(dt, pitchDir, yawDir) {
 
   // --- 目標の回転速度 ---
   // キーを押している間だけ「最大の回転速度」を目標にする。
-  const targetYawRate   = yawDir   * FEEL.TURN_SPEED;
-  const targetPitchRate = pitchDir * FEEL.TURN_SPEED;
+  // ★ 機体によっては左右が対称でない(ships.js)。
+  //   旧式艇四番機は「右の推力偏向が渋い」ので、右へ向くときだけ
+  //   効きが弱く、しかも遅れて効く。制式機では素通りする。
+  const targetYawRate   = shipYaw(yawDir) * FEEL.TURN_SPEED;
+  const targetPitchRate = pitchDir        * FEEL.TURN_SPEED;
 
   // --- 今の回転速度を目標へ寄せる ---
   // ここが慣性の正体。押した瞬間に最高速で回らず、離しても即座には止まらない。
   // 1 - Math.exp(-dt / 時間) は「その秒数でだいたい追いつく」割合。
-  const k = 1 - Math.exp(-dt / Math.max(FEEL.TURN_SMOOTH, 0.0001));
-  yawRate   += (targetYawRate   - yawRate)   * k;
-  pitchRate += (targetPitchRate - pitchRate) * k;
+  const smoothYaw = Math.max(shipYawSmooth(FEEL.TURN_SMOOTH, yawDir), 0.0001);
+  const kYaw   = 1 - Math.exp(-dt / smoothYaw);
+  const kPitch = 1 - Math.exp(-dt / Math.max(FEEL.TURN_SMOOTH, 0.0001));
+  yawRate   += (targetYawRate   - yawRate)   * kYaw;
+  pitchRate += (targetPitchRate - pitchRate) * kPitch;
 
   // --- ロールは「残り角度」から速度を作る(90度ずつの急旋回)---
   updateRollStep(dt);
