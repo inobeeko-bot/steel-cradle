@@ -34,18 +34,27 @@ const ESCAPE = {
   CHASE_SEC:       34,    // 射出されてから決着まで(加速に9秒かけるので長めに取る)
   SPEED:            7,    // 港を離れるときの速さ。鈍い
   // 自機は配分25%固定なので巡航17。追いつけない数字にすると追跡が成立しない。
-  LAUNCH_SPEED:    44,    // 射出後の貨物船の速さ(巡航の約6倍)
+  //
+  // ★ 一度加速したあと止まって見えていたので、数字を上げ直した。
+  //   44 と 52 では相対速度が 8 しかなく、画面の中で動いていないように見える。
+  //   いまは 95 と 100 ― どちらも巡航の6倍で、星と塵が真後ろへ飛ぶ。
+  //   差は 5 のままなので、追いつくのに時間がかかる関係は変わらない。
+  LAUNCH_SPEED:    95,    // 射出後の貨物船の速さ
   LAUNCH_RAMP:    9.0,    // この秒数かけて加速する(いきなり消えると何が起きたか分からない)
-  CHASE_SPEED:     52,    // 追跡中の自機の速さ。貨物船よりわずかに速い ―
-                          // 離されはしないが、追いついた実感は自分で作る余地を残す
+  CHASE_MIN:       26,    // 追跡中の自機の最低速度(貨物船がまだ遅いあいだ)
+  CHASE_MARGIN:     9,    // 貨物船より何だけ速いか。追いつくのに時間がかかる差
+  DRIFT_ACCEL:   0.55,    // 加速しきったあとも、毎秒この量だけ速くなり続ける ―
+                          // 一定速度だと「もう終わった」ように見えるため
 
   // ★ 数字は「守り切れるか」から逆算した。最初は HP60・毎秒1.6 にしていたが、
   //   敵1機が近づいただけで38秒で沈む ― 240秒の任務なのに守りようがない。
   //   いまは 敵1機=240秒 / 2機=120秒 / 3機=80秒。
   //   放っておけば必ず沈むが、駆けつければ間に合う。
+  //   狙う機が2割→3割に増えたので、1機あたりの削り量は少し下げて釣り合わせる。
+  //   3機が取り付いて 100秒 ― 放っておけば沈むが、剥がしに行けば間に合う。
   FREIGHTER_HP:   120,
-  THREAT_RANGE:   300,    // 敵がこれより近いと貨物船を削られる
-  THREAT_DPS:     0.5,    // 1機あたり毎秒この量
+  THREAT_RANGE:   340,    // 敵がこれより近いと貨物船を削られる
+  THREAT_DPS:     0.4,    // 1機あたり毎秒この量
 
   // 僚機は escape.js の予定表(LOSS_AT)で必ず落ちる。
   // この削られ方は「敵に囲まれたら予定より早く落ちる」ぶんなので、
@@ -74,7 +83,9 @@ const ESCAPE = {
   // 敵は哨戒機のみ。小説「企業艦隊の哨戒網」。
   // 超弩級戦艦(boss.js)はこの戦闘には出さない ― main.js 側で止めてある。
   ENEMY_TYPE: 'SOLDIER',
-  HUNTER_RATIO: 0.2,      // このうち何割が貨物船を狙うか
+  // ★ 2割では船に取り付く機がほとんど見えなかった。
+  //   9機中3機。常に2〜3機が船のまわりにいる、という圧のかかり方になる。
+  HUNTER_RATIO: 0.34,     // このうち何割が貨物船を狙うか
 
   // 出港前の停泊距離。戦闘圏の内側でなければ「守る」が成立しない。
   // アルカディア(距離1900)の方角に置くので、遠景の村を背にして浮かぶ。
@@ -164,16 +175,18 @@ function buildFreighter() {
 }
 
 // 噴射炎の伸び具合。0=消灯 1=全開
-function setPlume(level) {
+function setPlume(level, speedRatio) {
   if (!freighter) return;
   const p = freighter.getObjectByName('plume');
   const gl = freighter.getObjectByName('glow');
   const v = Math.max(0, Math.min(level, 1));
+  // 速いほど長く伸びる。太さは変えない ― 太くすると爆発に見える
+  const stretch = 1.6 + Math.max(0, Math.min(speedRatio || 0, 1.4)) * 2.4;
   if (p) {
     // 揺らぎを混ぜる。一定だと作り物に見える
     const flicker = 0.88 + Math.random() * 0.24;
     p.scale.set(Math.max(0.001, v * flicker), Math.max(0.001, v * flicker),
-                Math.max(0.001, v * (1.6 + Math.random() * 0.5)));
+                Math.max(0.001, v * (stretch + Math.random() * 0.5)));
   }
   if (gl) gl.material.opacity = v * (0.55 + Math.random() * 0.30);
 }
@@ -406,7 +419,7 @@ function beginLaunch() {
   launchFlareLeft = 3.0;
 
   // 追いつけるように、機体が全力を出す(配分の操作は教えていないので自動)
-  if (typeof setSpeedOverride === 'function') setSpeedOverride(ESCAPE.CHASE_SPEED);
+  if (typeof setSpeedOverride === 'function') setSpeedOverride(ESCAPE.CHASE_MIN);
   if (typeof missionTime !== 'undefined') missionTime = ESCAPE.CHASE_SEC;
 }
 
@@ -419,11 +432,23 @@ function updateLaunchPhase(dt) {
   //   気づくと手が届かない速さになっている ― 「射出された」感じはここで出る。
   const t01 = Math.min(chaseTime / ESCAPE.LAUNCH_RAMP, 1);
   const ramp = t01 * t01;
-  launchSpeed = ESCAPE.LAUNCH_SPEED * ramp;
+  // ★ 加速しきったあとも、わずかに速くなり続ける。
+  //   一定速度で飛ばすと「もう終わった」ように見え、実際そう報告された。
+  //   ずっと押されているものは、ずっと速くなる。
+  const extra = Math.max(0, chaseTime - ESCAPE.LAUNCH_RAMP) * ESCAPE.DRIFT_ACCEL;
+  launchSpeed = ESCAPE.LAUNCH_SPEED * ramp + extra;
   freighter.position.addScaledVector(launchDir, launchSpeed * dt);
 
-  // 噴射炎は加速に先んじて全開になる ― 先に吹いてから動き出すのが正しい順番
-  setPlume(Math.min(1, 0.35 + t01 * 1.4));
+  // ★ 自機の速度を貨物船に合わせて上げていく。
+  //   固定値(100)にしていたら、まだ遅い貨物船(11)を追い越してしまう ―
+  //   追いかけるはずが、置き去りにする側になる。
+  //   常に「少しだけ速い」を保つと、離されもせず追い越しもしない。
+  if (typeof setSpeedOverride === 'function') {
+    setSpeedOverride(Math.max(ESCAPE.CHASE_MIN, launchSpeed + ESCAPE.CHASE_MARGIN));
+  }
+
+  // 噴射炎。速いほど長く伸びる ― 長さそのものが速度計になる
+  setPlume(Math.min(1, 0.35 + t01 * 1.4), launchSpeed / ESCAPE.LAUNCH_SPEED);
 
   // 噴射炎の尾。加速しているあいだ、後ろへ火の粉を落とし続ける ―
   // 点で光るより、線で残るほうが「速い」と分かる
