@@ -19,8 +19,10 @@ const RADIO = {
   MAX_LINES:      3,     // 画面に同時に出す行数
   LIFE_SEC:     4.2,     // 消えるまで(CSS の animation と合わせてある)
   MIN_GAP:      2.2,     // 次の一言までの最短間隔(秒)
-  CHATTER_MIN:   11,     // ひとりでに喋りだす間隔(秒)
-  CHATTER_MAX:   19,
+  // ★ 喋る頻度。前は11〜19秒で、戦況が動いても黙っていた。
+  //   6〜11秒へ詰めたうえで、下の「戦況を見た一言」を優先して選ぶ。
+  CHATTER_MIN:    6,     // ひとりでに喋りだす間隔(秒)
+  CHATTER_MAX:   11,
 };
 
 let radioEl        = null;
@@ -44,6 +46,71 @@ const RADIO_CHATTER = [
   ['wing.n1', '訓練どおりだ。訓練どおり'],
   ['wing.n2', '訓練で撃たれたことないでしょ'],
 ];
+
+// --- 戦況を見て選ぶ一言 ---------------------------------------------
+// ★ 雑談との違いは「いま画面で起きていることを指しているか」。
+//   意味のない相槌が続くと、無線そのものが背景音になって読まれなくなる。
+//   条件に合ったものがあれば、雑談より先にそれを出す。
+function pickSituationLine() {
+  const alive = (typeof wingmen !== 'undefined')
+    ? wingmen.filter(function (w) { return !w.dead; }) : [];
+  if (!alive.length) return null;
+  const who = function (i) { return alive[Math.min(i, alive.length - 1)].def.numKey; };
+
+  const st = (typeof escapeStatus === 'function') ? escapeStatus() : null;
+
+  // 貨物船のそばに敵が何機いるか。これがこの戦いの「危なさ」そのもの
+  let nearFreight = 0;
+  if (st && typeof freighter !== 'undefined' && freighter && typeof enemies !== 'undefined') {
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (e.group.position.distanceTo(freighter.position) < ESCAPE.THREAT_RANGE) nearFreight++;
+    }
+  }
+
+  if (st && st.hp / st.hpMax < 0.35) {
+    return [who(0), ['貨物船がもたない! 剥がせ!', '船体が保たない ― 早く!'][Math.random()<.5?0:1]];
+  }
+  if (nearFreight >= 3) return [who(0), '貨物船に群がってる ― ' + nearFreight + '機だ'];
+  if (nearFreight >= 1) return [who(1), '一機、船に取り付いてる'];
+
+  if (alive.length === 1) {
+    return [who(0), ['……こっちは俺だけだ', 'カイト、まだ生きてるか'][Math.random()<.5?0:1]];
+  }
+  if (alive.length === 2) return [who(1), '二機になった。詰めるぞ'];
+
+  // 自機が傷んでいる
+  if (typeof hullDamage === 'number' && hullDamage >= 3) {
+    return [who(0), 'カイト、機体が保ってない。無理をするな'];
+  }
+  // 敵がまだ多い
+  if (typeof enemies !== 'undefined') {
+    const n = enemies.filter(function (e) { return e.alive; }).length;
+    if (n >= 5) return [who(1), 'まだ来る。減った気がしない'];
+  }
+  return null;
+}
+
+// 撃墜したときに一言。main.js の onKill から呼ぶ
+function radioOnKill(killCount) {
+  const alive = (typeof wingmen !== 'undefined')
+    ? wingmen.filter(function (w) { return !w.dead; }) : [];
+  if (!alive.length) return;
+  const lines = ['いまの、カイトか', '一機 落ちた', 'よし ― その調子だ', '当たってる。続けろ'];
+  if (Math.random() < 0.55) {
+    radioSay(alive[Math.floor(Math.random() * alive.length)].def.numKey,
+             lines[Math.floor(Math.random() * lines.length)]);
+  }
+}
+
+// 被弾したときに一言
+function radioOnHullHit(left) {
+  const alive = (typeof wingmen !== 'undefined')
+    ? wingmen.filter(function (w) { return !w.dead; }) : [];
+  if (!alive.length) return;
+  const text = (left <= 1) ? 'カイト、離脱しろ! 死ぬぞ!' : 'カイト! 被弾したか';
+  radioSay(alive[0].def.numKey, text, left <= 1);
+}
 
 function initRadio() {
   radioEl = document.getElementById('radio');
@@ -89,14 +156,7 @@ function radioSay(whoKey, text, force) {
     if (line.parentNode) line.parentNode.removeChild(line);
   }, RADIO.LIFE_SEC * 1000);
 
-  if (typeof playStoryRadio === 'function') playRadioBlip();
-}
-
-// 無線が入るときの短い音。story.js の長い通告とは別物にする
-function playRadioBlip() {
-  if (typeof playTone !== 'function') return;
-  playTone(1180, 0.030, 0.030, 'square');
-  playTone(880,  0.040, 0.024, 'square', 0.035);
+  if (typeof playRadioOpen === 'function') playRadioOpen();
 }
 
 // --- 毎コマ:ひとりでに喋らせる ---------------------------------------
@@ -115,12 +175,18 @@ function updateRadio(dt) {
   }
   if (now < radioChatterAt) return;
 
-  // 生きている僚機の言葉だけを選ぶ ― 落ちた機から声が来ては困る
-  const keys = alive.map(function (w) { return w.def.numKey; });
-  const pool = RADIO_CHATTER.filter(function (c) { return keys.indexOf(c[0]) >= 0; });
-  if (pool.length) {
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    radioSay(pick[0], pick[1]);
+  // ★ まず戦況を見る。指せるものがあれば、雑談より先にそれを言う
+  const sit = pickSituationLine();
+  if (sit) {
+    radioSay(sit[0], sit[1]);
+  } else {
+    // 生きている僚機の言葉だけを選ぶ ― 落ちた機から声が来ては困る
+    const keys = alive.map(function (w) { return w.def.numKey; });
+    const pool = RADIO_CHATTER.filter(function (c) { return keys.indexOf(c[0]) >= 0; });
+    if (pool.length) {
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      radioSay(pick[0], pick[1]);
+    }
   }
   radioChatterAt = now + RADIO.CHATTER_MIN
     + Math.random() * (RADIO.CHATTER_MAX - RADIO.CHATTER_MIN);

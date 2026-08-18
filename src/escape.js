@@ -50,16 +50,20 @@ const ESCAPE = {
   // 僚機は escape.js の予定表(LOSS_AT)で必ず落ちる。
   // この削られ方は「敵に囲まれたら予定より早く落ちる」ぶんなので、
   // 予定を追い越しすぎない速さにしてある(敵2機で約18秒)。
-  // ★ 粘らせる。敵が6機に増えたので、前の HP16 だと囲まれた瞬間に消えた。
-  WING_HP:         34,
+  // ★ さらに粘らせる。予定表(LOSS_AT)より先に消えてしまうと、
+  //   「ぎりぎりまで一緒に飛んでいた」という段取りが崩れる。
+  //   敵6機に囲まれ続けても 100秒 は保つ数字にしてある。
+  WING_HP:         72,
   WING_THREAT:    170,    // 敵がこれより近いと僚機が削られる
-  WING_DPS:      0.40,
+  WING_DPS:      0.12,
 
   // 進行度がここを超えたら、まだ生きている僚機を1機失う。
   // 「守り切れない」を保証するための仕掛け。
   // ★ 後ろへ寄せた。早々に一人になると、守っている実感の前に諦めが来る。
   //   最後の一機は射出の直前まで残る ― 誰もいなくなってから追いかける。
-  LOSS_AT: [0.46, 0.72, 0.93],
+  // ★★ さらに後ろへ。0.46 では前半で独りになり、守っている相手がいなくなった。
+  //   いまは 111秒 / 135秒 / 148秒 ― 最後の一機は射出の2秒前まで飛んでいる。
+  LOSS_AT: [0.74, 0.90, 0.987],
 
   SURVIVORS: 311,         // 貨物船に詰めた人数(小説の数字)
 
@@ -77,6 +81,8 @@ let escapePhase  = 'defend';   // 'defend'(港を守る) → 'launch'(射出・�
 let launchDir    = null;       // 射出の向き。決まった一方向へまっすぐ出る
 let launchSpeed  = 0;
 let chaseTime    = 0;
+let launchFlareLeft = 0;   // 点火の炎を出し続ける残り秒
+let spoolSaid    = false;  // 主機の回り始めを予告したか
 
 // --- 貨物船を組み立てる -------------------------------------------
 // 戦艦(boss.js)とは別物。武装が無く、鈍く、大きいだけの船。
@@ -119,9 +125,8 @@ function startEscape() {
   if (typeof scene === 'undefined' || !scene || !playerShip) return;
 
   freighter = buildFreighter();
-  // 自機の少し前・下に置く。プレイヤーが振り返れば必ず見える位置
-  freighter.position.copy(playerShip.position).add(new THREE.Vector3(0, -40, 210));
   scene.add(freighter);
+  parkAtColony();      // 出港前はアルカディアの縁に着けてある
 
   freighterHp  = ESCAPE.FREIGHTER_HP;
   escapeTime   = 0;
@@ -131,6 +136,8 @@ function startEscape() {
   launchSpeed  = 0;
   chaseTime    = 0;
   launchDir    = null;
+  launchFlareLeft = 0;
+  spoolSaid    = false;
   if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
 
   if (typeof missionTime !== 'undefined') missionTime = ESCAPE.DEFEND_SEC;
@@ -142,6 +149,24 @@ function startEscape() {
   if (typeof enemies !== 'undefined' && typeof assignArchetype === 'function') {
     for (const e of enemies) assignArchetype(e, ESCAPE.ENEMY_TYPE);
   }
+}
+
+// ★ 出港前の貨物船は、アルカディアの縁に着けておく。
+//   コロニーは自機について来る遠景なので、貨物船も一緒に動かさないと
+//   「あの村から出てくる船」に見えない。
+//   射出したら追従をやめ、そこから先は本当に飛ぶ。
+function parkAtColony() {
+  if (!freighter) return;
+  const c = (typeof colonyPosition === 'function') ? colonyPosition() : null;
+  if (!c) {
+    // コロニーが無ければ自機の前に置く(訓練などで単体で試すとき)
+    if (playerShip) freighter.position.copy(playerShip.position).add(new THREE.Vector3(0, -40, -260));
+    return;
+  }
+  const r = (typeof colonyRadius === 'function') ? colonyRadius() : 1000;
+  // リングの手前・下寄り。輪に重ならず、しかし明らかに「その村の船」に見える位置
+  freighter.position.set(c.x + r * 0.42, c.y - r * 0.52, c.z + r * 0.60);
+  if (playerShip) freighter.lookAt(playerShip.position);
 }
 
 function clearEscape() {
@@ -199,11 +224,24 @@ function updateEscape(dt) {
 function updateDefendPhase(dt) {
   const progress = Math.min(escapeTime / ESCAPE.DEFEND_SEC, 1);
 
-  freighter.position.z += ESCAPE.SPEED * dt;      // 港をゆっくり離れる
+  // 港に着けたまま。コロニーが自機について来る遠景なので、
+  // 貨物船も一緒に動かさないと村から離れて見えてしまう。
+  // 「まだ出られない」ことを、動かないことで見せる。
+  parkAtColony();
   updateWingmanLosses(dt, progress);
 
   // 残り時間を知らせる。数字を見なくても段取りが分かるように
   const left = ESCAPE.DEFEND_SEC - escapeTime;
+
+  // 射出の3秒前から主機が回り始める。音と光で「もうすぐ出る」を予告する
+  if (!spoolSaid && left <= 3.2) {
+    spoolSaid = true;
+    if (typeof playFreighterSpool === 'function') playFreighterSpool();
+    if (typeof spawnFlash === 'function' && typeof scene !== 'undefined' && scene) {
+      spawnFlash(freighter.position.clone(), 60, 0xffd9a0, 1.4);
+    }
+  }
+
   for (const mark of [60, 30, 10]) {
     if (left <= mark && left + dt > mark) {
       if (typeof addCombatLog === 'function') {
@@ -248,7 +286,21 @@ function beginLaunch() {
 
   if (typeof addCombatLog === 'function') addCombatLog(t('esc.launch'), 'warn');
   if (typeof radioSay === 'function') radioSay('wing.n3', '行った ― 追え、カイト', true);
-  if (typeof playSortie === 'function') playSortie();
+
+  // --- 点火の見た目 ---------------------------------------------
+  // 「いつ出たのか分からない」のが一番まずい。
+  // 音・光・揺れ・尾を引く炎、全部いっぺんに出して、見逃しようがなくする。
+  if (typeof playFreighterLaunch === 'function') playFreighterLaunch();
+  if (typeof startShake === 'function') startShake(1.6);
+  if (typeof scene !== 'undefined' && scene) {
+    const back = freighter.position.clone().addScaledVector(launchDir, -52);
+    if (typeof spawnFlash === 'function') {
+      spawnFlash(back, 150, 0xffe9b0, 0.9);      // 主機の閃光
+      spawnFlash(back, 90, 0xffffff, 0.45);
+    }
+    if (typeof spawnBlast === 'function') spawnBlast(back, 70, 0xffc070);
+  }
+  launchFlareLeft = 3.0;
 
   // 追いつけるように、機体が全力を出す(配分の操作は教えていないので自動)
   if (typeof setSpeedOverride === 'function') setSpeedOverride(ESCAPE.CHASE_SPEED);
@@ -263,6 +315,17 @@ function updateLaunchPhase(dt) {
   const ramp = Math.min(chaseTime / ESCAPE.LAUNCH_RAMP, 1);
   launchSpeed = ESCAPE.LAUNCH_SPEED * ramp;
   freighter.position.addScaledVector(launchDir, launchSpeed * dt);
+
+  // 噴射炎の尾。加速しているあいだ、後ろへ火の粉を落とし続ける ―
+  // 点で光るより、線で残るほうが「速い」と分かる
+  if (launchFlareLeft > 0 && typeof spawnFlash === 'function'
+      && typeof scene !== 'undefined' && scene) {
+    launchFlareLeft -= dt;
+    if (Math.random() < 0.55) {
+      const back = freighter.position.clone().addScaledVector(launchDir, -46);
+      spawnFlash(back, 34 + Math.random() * 26, 0xffc070, 0.30);
+    }
+  }
 
   if (chaseTime >= ESCAPE.CHASE_SEC) {
     if (typeof setSpeedOverride === 'function') setSpeedOverride(0);

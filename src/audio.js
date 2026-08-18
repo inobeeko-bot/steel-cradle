@@ -679,6 +679,36 @@ function playStoryAlarm() {
 //   あれは「今それが起きた」ための音で、数分間ずっとだと耳が痛むだけになる。
 //   ここは半分以下の音量にして、唸りと低音だけ残す ―
 //   鳴っていることは分かるが、会話の邪魔はしない高さに落としてある。
+// 貨物船の主機点火 → 射出。ゲーム中でいちばん長く、いちばん低い音。
+// 「大きな物が動き出した」ことを、音の長さと低さで伝える。
+function playFreighterLaunch() {
+  // 点火:低いところから唸りが立ち上がる
+  playSweep(28, 96, 2.60, 0.230, 'sawtooth');
+  playSweep(41, 132, 2.60, 0.170, 'square');
+  playNoise(2.80, 0.180, 320, 1500, 'lowpass');       // 噴射の風
+  // 抜けていく:高くなりながら遠ざかる
+  playSweep(150, 44, 3.20, 0.150, 'sawtooth', 2.40);
+  playNoise(3.40, 0.120, 1800, 240, 'lowpass', 2.40);
+  playTone(58, 2.20, 0.130, 'square', 0.10);          // 腹に来る低音
+}
+
+// 射出の直前、主機が回り始める音。3秒ほど前から鳴らして予告する
+function playFreighterSpool() {
+  playSweep(22, 58, 3.00, 0.130, 'square');
+  playNoise(3.00, 0.070, 200, 620, 'lowpass');
+}
+
+// 無線を受信したときの音。
+// ★ 前は playTone を2つ鳴らすだけで、聞こえているのか分からなかった。
+//   無線らしさは「開く音」にある ― 帯域の狭い雑音を短く差すと、
+//   スケルチ(回線が開く)に聞こえる。
+function playRadioOpen() {
+  playNoise(0.055, 0.115, 2600, 900, 'bandpass');     // 回線が開く「ザッ」
+  playTone(1420, 0.030, 0.075, 'square', 0.020);
+  playTone(1060, 0.045, 0.060, 'square', 0.052);
+  playNoise(0.040, 0.045, 1800, 700, 'bandpass', 0.10);
+}
+
 const ALARM_LOOP_SEC = 1.20;   // 1周の長さ。story.js がこの間隔で呼ぶ
 function playStoryAlarmLoop() {
   playTone(622, 0.30, 0.105, 'square',   0);

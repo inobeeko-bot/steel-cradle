@@ -293,7 +293,7 @@ function drawAdvanced(g, x, y, s) {
     ohColor = s.heatToShutdown < 8 ? CONSOLE3D.WARN
             : (s.heatToShutdown < 20 ? CONSOLE3D.AMBER : CONSOLE3D.TEXT);
   }
-  drawReadout(g, x, y + 18, 'OVERHEAT', ohText, s.heatToShutdown !== null ? 's' : '', ohColor);
+  if (showsHeat()) drawReadout(g, x, y + 18, 'OVERHEAT', ohText, s.heatToShutdown !== null ? 's' : '', ohColor);
 
   // --- LOCK:ロックの進み具合 ---
   const lockOn = (s.aimState === 'LOCKED');
@@ -357,7 +357,15 @@ function drawHeading(g, x, y, w, text) {
 // 熱が上がるのか下がるのかは、発熱(武器+エンジン)と放熱の差で決まる。
 // その3つを並べて見せると、どちらを削れば冷えるのかが一目で決まる。
 // ===================================================================
+// 熱の計器を出してよいか。
+// 熱管理はまだ物語で教えていない(ヨナスの講義は第三章)ので、
+// 旧式艇のあいだはコックピット側でも一切出さない。DOM 側は body.no-heat が受け持つ。
+function showsHeat() {
+  return !(typeof ship === 'function' && ship().powerLocked);
+}
+
 function drawHeatBudget(g, x, y, s) {
+  if (!showsHeat()) return;
   drawHeading(g, x, y, 150, 'HEAT BUDGET');
 
   const scale = 34;   // この値を「棒いっぱい」とする(毎秒の熱)
@@ -482,9 +490,11 @@ function drawTargetBlock(g, x, y, s) {
   // 敵の熱
   g.font = '11px monospace';
   g.fillStyle = CONSOLE3D.DIM;
-  g.fillText('T-HEAT', x, y + 40);
-  drawBar(g, x + 56, y + 30, 92, 11, e.heat / 100,
-          e.heat >= 70 ? CONSOLE3D.WARN : (e.heat >= 35 ? CONSOLE3D.AMBER : '#5f8f7c'));
+  if (showsHeat()) {
+    g.fillText('T-HEAT', x, y + 40);
+    drawBar(g, x + 56, y + 30, 92, 11, e.heat / 100,
+            e.heat >= 70 ? CONSOLE3D.WARN : (e.heat >= 35 ? CONSOLE3D.AMBER : '#5f8f7c'));
+  }
   g.textAlign = 'right';
   g.font = '13px monospace';
   g.fillStyle = e.ventDown ? '#ff7a2a' : CONSOLE3D.DIM;
@@ -567,7 +577,7 @@ function drawConsole3D(s, dt) {
   drawRadar(g, 112, 118, 92, s);
 
   // --- 熱(その右)---
-  drawGauge(g, {
+  if (showsHeat()) drawGauge(g, {
     x: 248, y: 34, w: 34, h: 118,
     ratio: s.heat / 100,
     color: 'hsl(' + (30 - 30 * (s.heat / 100)) + ', 90%, ' + (30 + 34 * (s.heat / 100)) + '%)',
@@ -691,10 +701,12 @@ function drawConsole3D(s, dt) {
 
   // --- 下段の情報行 ---
   const items = [
-    ['SPEED', s.speed], ['TARGET', s.target], ['T-HEAT', s.tHeat + '%'],
-    ['HULL', s.hull + '/' + s.hullMax], ['HEAT RATE', s.heatRate],
-    ['PRESET', s.preset],
+    ['SPEED', s.speed], ['TARGET', s.target],
   ];
+  if (showsHeat()) items.push(['T-HEAT', s.tHeat + '%']);
+  items.push(['HULL', s.hull + '/' + s.hullMax]);
+  if (showsHeat()) items.push(['HEAT RATE', s.heatRate]);
+  items.push(['PRESET', s.preset]);
   items.push(['A-TRK', s.autoTrack ? 'ON' : 'OFF']);
   if (s.empLeft > 0) items.push(['EMP', s.empLeft.toFixed(1) + 's']);
   // 回収した機材の効果。効いているときだけ欄が増える(EMPと同じ扱い)

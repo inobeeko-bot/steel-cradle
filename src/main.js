@@ -1403,6 +1403,7 @@ function onPlayerMissileHit() {
     if (shieldHp <= 0) { addCombatLog('SHIELD DOWN', 'hull'); playShieldDown(); }
   } else {
     hullDamage += 1;
+    if (typeof radioOnHullHit === 'function') radioOnHullHit(HULL.MAX_DAMAGE - hullDamage);
     playHullDamage();
     const brokenName = breakRandomInstrument();
     addCombatLog('MISSILE HIT ― HULL ' + hullDamage + '/' + HULL.MAX_DAMAGE, 'hull');
@@ -1434,6 +1435,7 @@ function onPlayerCollide() {
   hitsTaken += 1;
   if (before <= 0 || shieldHp <= 0) {
     hullDamage += 1;
+    if (typeof radioOnHullHit === 'function') radioOnHullHit(HULL.MAX_DAMAGE - hullDamage);
     playHullDamage();
     const brokenName = breakRandomInstrument();
     addCombatLog('HULL DAMAGE ' + hullDamage + '/' + HULL.MAX_DAMAGE, 'hull');
@@ -2537,6 +2539,7 @@ function onHit(remainingHp) {
 
 // 撃墜したとき
 function onKill() {
+  if (typeof radioOnKill === 'function') radioOnKill(killCount);
   playExplosion();
   speakVoice('TARGET_DESTROYED');
   killCount += 1;
@@ -2738,6 +2741,7 @@ function onPlayerHit(damageMult) {
   } else {
     // --- シールドが割れている:HULL損傷 ---
     hullDamage += 1;
+    if (typeof radioOnHullHit === 'function') radioOnHullHit(HULL.MAX_DAMAGE - hullDamage);
     startShake(INCOMING.SHAKE_HULL);
 
     playHullDamage();
