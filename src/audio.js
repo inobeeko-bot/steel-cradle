@@ -777,10 +777,31 @@ function ensureBgmGain() {
   return bgmGain;
 }
 
+// ★ file:// で開くと BGM だけ鳴らない。
+//   効果音は波形をその場で合成しているのでファイルが要らず、普通に鳴る。
+//   BGM だけは音声ファイルを fetch() で読むが、file:// ではブラウザの
+//   セキュリティ制限で fetch() が必ず失敗する(Firefox も Chrome も)。
+//   「効果音は鳴るのに音楽だけ鳴らない」ときは、まずこれを疑う。
+let warnedFileProtocol = false;
+function bgmBlockedByFileProtocol() {
+  if (location.protocol !== 'file:') return false;
+  if (!warnedFileProtocol) {
+    warnedFileProtocol = true;
+    console.error(
+      'BGM が鳴りません:index.html を直接開いています(file://)。\n' +
+      '効果音は合成なので鳴りますが、BGM は音声ファイルを読むため file:// では読めません。\n' +
+      'リポジトリの run.bat をダブルクリックするか、次を実行してから\n' +
+      'http://127.0.0.1:8765/ を開いてください:\n' +
+      '    python -m http.server 8765');
+  }
+  return true;
+}
+
 // 曲を読み込む。すでに読んであれば何もしない。
 function loadBgm(name) {
   const url = BGM.TRACKS[name];
   if (!url) return Promise.reject(new Error('知らない曲: ' + name));
+  if (bgmBlockedByFileProtocol()) return Promise.reject(new Error('file:// では読めません'));
   if (bgmBuffers[name]) return Promise.resolve(bgmBuffers[name]);
   if (bgmLoading[name]) return bgmLoading[name];
 
@@ -798,7 +819,8 @@ function loadBgm(name) {
     })
     .catch(function (e) {
       delete bgmLoading[name];
-      console.warn('BGM を読めませんでした:', name, e);
+      // 黙って鳴らないのが一番たちが悪いので、必ず理由を出す
+      console.error('BGM を読めませんでした:', name, url, e);
       throw e;
     });
   return bgmLoading[name];
