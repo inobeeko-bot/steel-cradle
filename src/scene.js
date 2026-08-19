@@ -1812,7 +1812,13 @@ function buildScene() {
   // 描画限界(最後の数字)は 3000 → 4600 に伸ばしてある。
   // 背景の巨大コロニー(colony.js)は自機から2800の距離に半径1150で置くので、
   // いちばん遠い縁が4115。3000のままだと、そこだけ切り取られて消える。
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 4600);
+  // ★ 映る最長距離を 4600 → 9000 へ広げた。
+  //   アルカディアを背景ではなく「戻れる場所」としてワールドに固定したため
+  //   (colony.js の anchorColony)、自機が村から離れると
+  //   距離が 4200 → 5600 まで開く。4600 のままだと村の奥側が切れて消える。
+  //   手前(0.1)は変えていないので、奥行きの精度は 4600 のときの約1.5分の1。
+  //   このゲームは面が大きく離れているので、そこで困る場面は出ていない。
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 9000);
   camera.position.set(0, 0, 0);   // 自機＝原点。カメラは初期状態で -Z方向(奥)を向いている
   // 回転の適用順。'YXZ' = 先に左右(Y)、次に上下(X)。
   // この順にしないと、上を向いた状態で左右に振ったときに首がねじれてしまう。
@@ -1822,10 +1828,10 @@ function buildScene() {
   // 本カメラと同じ空間を、後ろ向きに、もう一度描くために使う
   // 本カメラと描画限界を揃える。ここだけ 3000 のままだと、
   // 後方ミラーの中でだけコロニーが消える
-  mirrorCamera = new THREE.PerspectiveCamera(MIRROR.FOV, 2, 0.1, 4600);
+  mirrorCamera = new THREE.PerspectiveCamera(MIRROR.FOV, 2, 0.1, 9000);
 
   // 照準スコープのカメラ。視野角は倍率に合わせて毎コマ書き換えるので、ここでは仮の値
-  scopeCamera = new THREE.PerspectiveCamera(SCOPE.BASE_FOV, 2, 0.1, 4600);
+  scopeCamera = new THREE.PerspectiveCamera(SCOPE.BASE_FOV, 2, 0.1, 9000);
 
   // --- 光 ---
   // フラットシェーディング(面ごとに単色)を活かすため、光は2つだけの単純構成にする。

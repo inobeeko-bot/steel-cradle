@@ -40,7 +40,17 @@ const COLONY = {
   //   近すぎると星がコロニーの手前に描かれ、遠すぎると消える。
   // 2600 では、いちばん手前の縁が1285 ― 遠い星の層(900〜1300)に食い込み、
   // 星がコロニーの手前に描かれてしまう。星の層より外へ出すこと。
-  DIST: 1900,
+  // ★ 1900 → 4200。
+  //   防衛戦のあいだ、アルカディアはワールドに固定される(anchorColony)。
+  //   自機は出撃地点から最大1400まで離れられるので、村との距離は
+  //   2800〜5600 のあいだで動く。見かけの大きさは31度〜45度 ―
+  //   近づけば大きくなる。背景ではなく「そこにある場所」になる。
+  //
+  //   この数字は、間に挟まる2つの層から決まっている:
+  //     手前 … 遠い星の層(自機から1300)より村の手前の縁が外にあること
+  //     奥   … カメラの描画限界(9000)より村の奥の縁が内にあること
+  //   1900 のままだと、村へ寄ったとき自機が輪の内側へ入ってしまう。
+  DIST: 4200,
   // 自機から見てどの方角に置くか。
   // ★ 背後 ― 正面から約125度 ― の左上に置く。
   //   一章の戦闘は「村を背負って敵の前に出る」構図なので、
@@ -320,17 +330,49 @@ function colonyPosition() {
 // リングの半径。着弾点を輪の上に散らすのに使う
 function colonyRadius() { return COLONY.RING_R; }
 
-function updateColony(dt) {
-  if (!colony || !playerShip) return;
+// --- ワールドに固定する / 解除する -----------------------------------
+//
+// ★ ふだんのアルカディアは「遠い星空」と同じ背景で、自機について来る。
+//   どこまで飛んでも同じ方角・同じ距離にいるので、近づくことはできない。
+//
+//   防衛戦のあいだだけ、これをやめて世界の一点に釘で留める。
+//   理由は交戦空域の境界(defence.js)― 境界を越えたときに
+//   「機首を村へ向けて引き戻す」ので、村が付いて来てしまうと
+//   向いた先に何も無く、戻ってもいないことになる。
+//   固定して初めて「離れた/戻った」が成立する。
+//
+//   メニューの背景や訓練飛行では固定しない(追従のまま)。
+let colonyAnchor = null;
 
-  // --- 自機について来させる ---
-  // 遠い星空と同じ扱い(scene.js の stars.position.copy と同じ考え方)。
-  // 向きは動かさないので、機首を振ればちゃんと視界の中を流れていく。
-  colony.group.position.set(
+function anchorColony() {
+  if (!colony || !playerShip) return null;
+  colonyAnchor = new THREE.Vector3(
     playerShip.position.x + COLONY.DIR.x * COLONY.DIST,
     playerShip.position.y + COLONY.DIR.y * COLONY.DIST,
     playerShip.position.z + COLONY.DIR.z * COLONY.DIST
   );
+  colony.group.position.copy(colonyAnchor);
+  return colonyAnchor.clone();
+}
+
+function releaseColony() { colonyAnchor = null; }
+
+function updateColony(dt) {
+  if (!colony || !playerShip) return;
+
+  if (colonyAnchor) {
+    // 固定中。世界の一点に留まり続ける ― 自機が動けば見え方が変わる
+    colony.group.position.copy(colonyAnchor);
+  } else {
+    // --- 自機について来させる ---
+    // 遠い星空と同じ扱い(scene.js の stars.position.copy と同じ考え方)。
+    // 向きは動かさないので、機首を振ればちゃんと視界の中を流れていく。
+    colony.group.position.set(
+      playerShip.position.x + COLONY.DIR.x * COLONY.DIST,
+      playerShip.position.y + COLONY.DIR.y * COLONY.DIST,
+      playerShip.position.z + COLONY.DIR.z * COLONY.DIST
+    );
+  }
 
   // --- 回す ---
   // これが人工重力そのもの。止めると、ただの浮いている輪になってしまう

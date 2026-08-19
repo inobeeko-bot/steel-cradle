@@ -3627,6 +3627,12 @@ function updateView(dt) {
   // 押されっぱなしかどうかではなく、押した瞬間だけが意味を持つ ―
   // だから keydown の側(requestRollStep)で受けている。
 
+  // ★ 交戦空域の外へ出たときだけ、機首を村へ向ける(defence.js)。
+  //   奪うのは舵だけ ― 射撃も速度も視点も、プレイヤーのまま。
+  //   1〜2秒で村を向いたら、すぐ返す。
+  const back = (typeof defenceAutoAim === 'function') ? defenceAutoAim() : null;
+  if (back) { pitchDir = back.pitch; yawDir = back.yaw; }
+
   turnView(dt, pitchDir, yawDir);
 }
 

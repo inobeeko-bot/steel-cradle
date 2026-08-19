@@ -74,6 +74,27 @@ const DEFENCE = {
   LOSS_AT: [0.40, 0.66, 0.88],
 
   ENEMY_TYPE: 'SOLDIER',   // 哨戒機だけ。超弩級戦艦は出さない
+
+  // --- 交戦空域の境界 -----------------------------------------------
+  // ★ 縛る理由は「当番士の職務」。
+  //   カイトは避難民を誘導する当番で出ている。村から離れれば
+  //   誘導する相手が視界から消える ― だから戻る。
+  //   罰ではない。失敗にもしないし、焼失率も増えない。
+  //   引き戻す演出だけを置く。
+  //
+  //   広さは自由度優先で決めた。自機は配分25%固定で巡航17なので、
+  //   1400 まっすぐ飛び続けて82秒。180秒の任務の半分近くを
+  //   逃げ続けて初めて届く。ふつうに戦っている限り一生出ない。
+  //   敵との交戦距離は85しかないので、戦闘は自機の周囲300で完結する。
+  BOUND_WARN:     1100,  // ここを越えると一言だけ(操作は奪わない)
+  BOUND_TURN:     1400,  // ここを越えると強制的に機首を村へ向ける
+  BOUND_RELEASE:    40,  // 機首が村からこの角度以内に入ったら操作を返す(度)
+  BOUND_MAX_SEC:   2.5,  // 万一向き切れなくても、この秒数で必ず返す
+  // ★ 操作を返したあと、すぐには再発動させない。
+  //   これが無いと、境界の外に留まったとき毎コマ発動と解除を繰り返し、
+  //   舵が点滅して操縦できなくなる(実際にそうなった)。
+  //   内側へ戻れば即座に再武装するので、外に居座り続けたときだけ効く。
+  BOUND_REARM:       6,  // 外に留まったまま、次に引き戻すまでの秒数
 };
 
 let defenceActive = false;
@@ -82,6 +103,14 @@ let burnPct       = 0;     // 焼失率(0〜100)
 let defenceLosses = 0;     // 失った僚機の数
 let bombRounds    = [];    // 飛んでいる砲撃弾
 let burnSaid      = 0;     // どこまで焼失を報告したか(25/50/75/100)
+
+let homePos       = null;  // 出撃地点。境界はここを中心に測る
+let colonyPos     = null;  // 固定したアルカディアの位置
+let boundSaid     = 0;     // 何回、戻れと言ったか(初回だけ理由を言う)
+let boundRearm    = 0;     // 外に留まったまま、次に引き戻すまでの残り秒
+let lastBoundLine = '';    // 直前に言った一言(同じものを続けないため)
+let pullbackLeft  = 0;     // 引き戻し中の残り秒(0 なら操作はプレイヤーのもの)
+let warnedOut     = false; // 注意の輪の外にいるか(出入りのたびに言わないため)
 
 // --- 始める ---------------------------------------------------------
 function startDefence() {
@@ -97,6 +126,12 @@ function startDefence() {
   if (typeof setArchetypeLock === 'function') setArchetypeLock(DEFENCE.ENEMY_TYPE);
   assignBombardiers();
 
+  // 境界の中心は出撃地点。村はここから決まった方角へ固定する
+  boundSaid = 0; boundRearm = 0; pullbackLeft = 0; warnedOut = false; lastBoundLine = '';
+  homePos = (typeof playerShip !== 'undefined' && playerShip)
+    ? playerShip.position.clone() : null;
+  colonyPos = (typeof anchorColony === 'function') ? anchorColony() : null;
+
   // 任務時間は「生き延びる時間」そのもの
   if (typeof missionTime !== 'undefined') missionTime = DEFENCE.HOLD_SEC;
 }
@@ -111,7 +146,10 @@ function clearDefence() {
     if (r.mesh && r.mesh.parent) r.mesh.parent.remove(r.mesh);
   }
   bombRounds = [];
+  homePos = null; colonyPos = null;
+  boundSaid = 0; boundRearm = 0; pullbackLeft = 0; warnedOut = false; lastBoundLine = '';
   if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
+  if (typeof releaseColony === 'function') releaseColony();   // 背景の追従へ戻す
 }
 
 const defenceRunning = () => defenceActive;
@@ -145,6 +183,7 @@ function updateDefence(dt) {
   addBurn(DEFENCE.BURN_CREEP * dt);
 
   updateBombardment(dt);
+  updateBoundary(dt);
   updateWingmanLosses(dt, progress);
 
   // 生き延びた
@@ -286,6 +325,124 @@ function colonyImpact(point) {
     if (typeof spawnBlast === 'function') spawnBlast(point, 55, 0xff8a3c);
   }
   if (typeof playColonyHit === 'function') playColonyHit();
+}
+
+// --- 交戦空域の境界 ---------------------------------------------------
+//
+// 「守備範囲から出るな」ではなく「誘導する相手が見えなくなる」で縛る。
+// カイトは戦闘機乗りではなく、避難の誘導に出ている当番士なので、
+// 持ち場を離れることの意味が、勝ち負けではなく職務の側にある。
+//
+// ★ 罰は置かない。失敗にもしないし、焼失率も増えない ―
+//   決まっている結末で罰しない、という焼失率と同じ考え方。
+//   起きるのは「一言」と「機首が村へ向く」だけ。
+function updateBoundary(dt) {
+  if (!homePos || typeof playerShip === 'undefined' || !playerShip) return;
+
+  // 引き戻し中。向き切ったら操作を返す
+  if (pullbackLeft > 0) {
+    pullbackLeft -= dt;
+    if (pullbackLeft <= 0 || headingErrorToColony() <= DEFENCE.BOUND_RELEASE) {
+      pullbackLeft = 0;
+      boundRearm = DEFENCE.BOUND_REARM;   // すぐには次を発動させない
+    }
+    return;
+  }
+
+  const out = playerShip.position.distanceTo(homePos);
+
+  // --- 引き戻し ---
+  if (out >= DEFENCE.BOUND_TURN) {
+    // 外に居座っているあいだは、間を置いてから次を出す。
+    // 毎コマ発動すると舵が点滅して、操縦そのものができなくなる
+    if (boundRearm > 0) { boundRearm -= dt; return; }
+    pullbackLeft = DEFENCE.BOUND_MAX_SEC;
+    warnedOut = true;
+    sayComeBack();
+    return;
+  }
+
+  boundRearm = 0;   // 内側へ戻ったら、次の一回はすぐ効く
+
+  // --- 注意(操作は奪わない)---
+  // 一度しっかり中へ戻るまで、二度は言わない
+  if (out >= DEFENCE.BOUND_WARN) {
+    if (!warnedOut) {
+      warnedOut = true;
+      if (typeof radioSay === 'function') radioSay('radio.kaito', t('bound.far'), true);
+    }
+  } else if (out < DEFENCE.BOUND_WARN * 0.85) {
+    warnedOut = false;   // 十分に戻ったら、また言えるようにする
+  }
+}
+
+// 戻れ、と言う。初回だけ理由まで言い、そのあとは短く言い直す
+function sayComeBack() {
+  if (typeof radioSay !== 'function') return;
+
+  if (boundSaid === 0) {
+    // ★ 初回だけ二段。「こっちに人はいない」を先に置くのは、
+    //   職務を説明せずに職務を伝えられるから ―
+    //   避難民を誘導する係が、人のいないほうへ流されていたと気付く順番になる。
+    radioSay('radio.kaito', t('bound.first1'), true);
+    setTimeout(function () { radioSay('radio.kaito', t('bound.first2'), true); }, 1300);
+    // 僚機が返す。独り言だけだと無線の場から浮くので、初回だけ受ける
+    setTimeout(function () {
+      if (typeof wingmen === 'undefined') return;
+      const alive = wingmen.filter(function (w) { return !w.dead; });
+      if (alive.length) radioSay(alive[alive.length - 1].def.numKey, t('bound.answer'), true);
+    }, 2700);
+  } else {
+    // 2回目以降。直前と同じものは出さない ―
+    // 同じ一言が続くと、人の声ではなく警告灯に聞こえる。
+    // ★ 前は「boundSaid から計算する」書き方にしていて、
+    //   実際には同じものが二度続いていた(検証で出た)。
+    //   最後に使ったものを覚えて、そこから外して選ぶのが確実。
+    const keys = ['bound.again1', 'bound.again2', 'bound.again3'];
+    const pool = keys.filter(function (k) { return k !== lastBoundLine; });
+    lastBoundLine = pool[Math.floor(Math.random() * pool.length)];
+    radioSay('radio.kaito', t(lastBoundLine), true);
+  }
+  boundSaid++;
+}
+
+// 機首と村のあいだの角度(度)。0 なら真っすぐ村を向いている
+const _bFwd = new THREE.Vector3();
+const _bTo  = new THREE.Vector3();
+function headingErrorToColony() {
+  if (!colonyPos || typeof playerShip === 'undefined' || !playerShip) return 0;
+  _bFwd.set(0, 0, -1).applyQuaternion(playerShip.quaternion);
+  _bTo.subVectors(colonyPos, playerShip.position).normalize();
+  return Math.acos(Math.max(-1, Math.min(1, _bFwd.dot(_bTo)))) * 180 / Math.PI;
+}
+
+// いま引き戻し中か。main.js が舵を差し替えるのに使う
+function defencePullingBack() { return pullbackLeft > 0; }
+
+const _pInv = new THREE.Quaternion();
+const _pTo  = new THREE.Vector3();
+
+// 村へ機首を向けるための舵。turnView() にそのまま渡せる形で返す。
+// 戻り値 { pitch, yaw } の範囲はキー入力と同じ −1〜+1。
+// ★ 奪うのは舵だけ。射撃も速度も視点も、プレイヤーのまま。
+function defenceAutoAim() {
+  if (!defencePullingBack() || !colonyPos) return null;
+  if (typeof playerShip === 'undefined' || !playerShip) return null;
+
+  // 村の位置を「機体から見た座標」へ移す。
+  // 向きの逆回転を掛けると、前が −Z・上が +Y・左が −X になる
+  _pInv.copy(playerShip.quaternion).invert();
+  _pTo.subVectors(colonyPos, playerShip.position).applyQuaternion(_pInv);
+
+  const flat     = Math.sqrt(_pTo.x * _pTo.x + _pTo.z * _pTo.z);
+  const yawErr   = Math.atan2(-_pTo.x, -_pTo.z);   // 左にいれば正
+  const pitchErr = Math.atan2(_pTo.y, flat);       // 上にいれば正
+
+  // 角度をそのまま舵にすると、正面に来た瞬間に舵が0になって行き過ぎる。
+  // 3倍してから −1〜+1 に収めると、20度ほどずれた時点で目一杯になり、
+  // 近づくにつれて自然に緩む
+  const hold = function (x) { return Math.max(-1, Math.min(1, x * 3)); };
+  return { pitch: hold(pitchErr), yaw: hold(yawErr) };
 }
 
 // --- 僚機の消耗 -------------------------------------------------------

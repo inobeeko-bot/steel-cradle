@@ -98,6 +98,23 @@ const TEXT = {
   'wing.call.label':    ['呼集', 'CALL'],
 
   // --- アルカディア防衛戦 ------------------------------------------
+  // --- 交戦空域の境界(defence.js)-----------------------------------
+  // ★ 19歳の当番士の口。軍隊口調にも決め台詞にもしない。
+  //   改稿ノート「6. 名前の解体」― 人物の口語では語彙を崩す、に従う。
+  //   「守備範囲」「戦域」のような言葉は使わない ―
+  //   戦闘中の19歳が使う語彙ではない。
+  'radio.kaito':        ['カイト', 'KAITO'],
+  'bound.far':          ['……ちょっと出すぎたか', '…drifted out a bit'],
+  'bound.first1':       ['離れすぎた ― こっちに人はいない',
+                         'Too far out — there is nobody over here'],
+  'bound.first2':       ['誘導の当番だぞ、俺は。戻る',
+                         'I am on evacuation duty. Going back'],
+  'bound.answer':       ['戻れ。列はまだ動いてない',
+                         'Come back. The column has not moved yet'],
+  'bound.again1':       ['また離れてる ― 戻る', 'Drifting again — heading back'],
+  'bound.again2':       ['持ち場じゃない', 'This is not my station'],
+  'bound.again3':       ['遠い。誘導に戻らないと', 'Too far. Back to the column'],
+
   'def.marker':         ['アルカディア', 'ARCADIA'],
   'def.burnLabel':      ['焼失', 'BURNED'],
   'def.burn':           ['アルカディア 焼失 %s%', 'Arcadia — %s% burned'],
