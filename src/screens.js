@@ -277,7 +277,7 @@ function launchSortie(shipKey, bgm) {
 
   // 僚機。物語の出撃では一人で飛んでいない(シーン3「四機で村を守る」)
   if (typeof clearWingmen === 'function') clearWingmen();
-  if (typeof clearEscape === 'function') clearEscape();
+  if (typeof clearDefence === 'function') clearDefence();
   if (typeof initRadio === 'function') initRadio();
 
   // ★ 熱の計器を出すかどうか。
@@ -288,10 +288,11 @@ function launchSortie(shipKey, bgm) {
 
   if (shipKey === 'boat4') {
     if (typeof spawnWingmen === 'function') spawnWingmen();
-    if (typeof startEscape === 'function') startEscape();   // 貨物船を出す
+    if (typeof startDefence === 'function') startDefence();   // 防衛戦を始める
     briefSortie();
     if (typeof radioSay === 'function') {
-      setTimeout(() => radioSay('wing.n3', '編隊 組め。貨物船から離れるな', true), 5200);
+      // ★ 発艦直後の一言。四機で出たことを、まず耳から伝える。
+      setTimeout(() => radioSay('wing.n3', '四機 全機 発艦。村を背にしろ', true), 5200);
     }
   }
 
@@ -327,11 +328,14 @@ function resumeMission() {
 function briefSortie() {
   if (typeof addCombatLog !== 'function') return;
   // ★ 何をすれば達成なのかを最初に言う。
-  //   前は「アルカディア防衛戦」と出していたが、これは嘘だった ―
-  //   守る戦いではなく、貨物船を出すまでの時間稼ぎ。
+  //   達成条件は「持ちこたえる」であって、村を守り切ることではない。
+  //   守り切れないことは決まっている(defence.js の LOSS_AT と BURN_CREEP)ので、
+  //   最初から「逃がすための時間」だと言っておく。
+  //   言わないと、プレイヤーは守れなかった自分を責めることになる。
+  const hold = (typeof DEFENCE !== 'undefined') ? DEFENCE.HOLD_SEC : 180;
   const lines = [
     [0,    t('brief.title'), 'warn'],
-    [900,  t('brief.goal'),  'warn'],
+    [900,  t('brief.goal').replace('%s', String(hold)),  'warn'],
     [1700, t('brief.goal2'), null],
     [2600, t('brief.enemy'), 'warn'],
     [3400, t('brief.friend'), null],
@@ -351,7 +355,7 @@ function abortMission() {
   missionState = 'aborted';   // 'active' 以外にしておく(戦闘の各処理が止まる)
   stopBgm();
   if (typeof clearWingmen === 'function') clearWingmen();
-  if (typeof clearEscape === 'function') clearEscape();
+  if (typeof clearDefence === 'function') clearDefence();
   if (typeof clearRadio === 'function') clearRadio();
   showMenu('root');
 }

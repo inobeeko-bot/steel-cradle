@@ -1256,8 +1256,6 @@ window.addEventListener('keydown', (event) => {
       }
       lastRollKey = key;
       lastRollAt  = now;
-      // 自動操縦中(貨物船の追跡)は姿勢も機体が持つので、ロールも受けない
-      if (typeof escapeAutoPilot === 'function' && escapeAutoPilot()) return;
       requestRollStep(dir);
     }
     return;
@@ -1370,8 +1368,6 @@ window.addEventListener('keydown', (event) => {
   // Space キー … 回避バースト
   if (event.key === ' ') {
     event.preventDefault();   // Spaceで画面がスクロールするのを止める
-    // 自動操縦中は速度も機体が決めているので、バーストは効かせない
-    if (typeof escapeAutoPilot === 'function' && escapeAutoPilot()) return;
     if (!event.repeat) burst();   // 押しっぱなしの連射は無効(1回押して1回)
     return;
   }
@@ -1701,8 +1697,8 @@ const enemyMarkers = [];   // 3D画面に重ねる敵マーカー
 // 表示が別の輝点に飛び移ってちらつく。1隻しか出ないのだから、
 // 専用の枠を1つ用意しておくのがいちばん素直で確実。
 let bossBlip   = null;
-let freightBlip = null;    // 貨物船のレーダー輝点(無条件で映る)
-let freightMark = null;    // 画面内のマーカー
+let colonyBlip = null;     // アルカディアのレーダー輝点(無条件で映る)
+let colonyMark = null;     // 画面内のマーカー
 let bossMarker = null;
 
 // 落ちている回収物の輝点。同時に出せる数だけ先に作っておく
@@ -1725,14 +1721,14 @@ function setupRadar() {
   radarEl.appendChild(bossBlip);
 
   // 貨物船。守る対象なので、センサー配分にも熱にも関係なく必ず映す
-  freightBlip = document.createElement('div');
-  freightBlip.className = 'radar-blip friendly-ship';
-  radarEl.appendChild(freightBlip);
+  colonyBlip = document.createElement('div');
+  colonyBlip.className = 'radar-blip colony-blip';
+  radarEl.appendChild(colonyBlip);
 
-  freightMark = document.createElement('div');
-  freightMark.className = 'freight-marker';
-  freightMark.innerHTML = '<span class="tag"></span>';
-  markerLayer.appendChild(freightMark);
+  colonyMark = document.createElement('div');
+  colonyMark.className = 'colony-marker';
+  colonyMark.innerHTML = '<span class="tag"></span>';
+  markerLayer.appendChild(colonyMark);
 
   bossMarker = document.createElement('div');
   bossMarker.className = 'enemy-marker capital';
@@ -2063,7 +2059,7 @@ function renderConsole3D(dt) {
     // 貨物船の残り。三人称では画面上端の帯で出しているが、
     // コックピットでは計器盤の中に置く(空いた電力配分の場所)。
     // 脱出戦でなければ null で、欄ごと出ない
-    freight: (typeof escapeStatus === 'function') ? escapeStatus() : null,
+    defence: (typeof defenceStatus === 'function') ? defenceStatus() : null,
 
     contacts: getContacts(sensorPct),
     inbound: missileContacts(sensorPct),
@@ -2222,8 +2218,8 @@ function renderRadar() {
   }
 
   renderBossBlip(range);
-  renderFreightBlip(range);
-  renderFreightHp();
+  renderColonyBlip(range);
+  renderBurn();
   renderSalvageBlips(sensorPct, range);
 
   // --- 接近しているミサイル ---
@@ -2253,44 +2249,50 @@ function renderRadar() {
 // 貨物船の輝点とマーカー。
 // ★ 敵と違って「見つける」対象ではないので、探知の条件を一切通さない。
 //   守れと言われたものが見えないのは、難易度ではなく不親切。
-// 貨物船の耐久。守る対象の状態は、探さなくても目に入る場所に出す
-function renderFreightHp() {
-  const box = document.getElementById('freight-hp');
+// アルカディアの焼失率。守っている場所の状態は、探さなくても目に入る場所に出す。
+// ★ これは「守り切れるかどうか」の計器ではない ― 焼失率が100%でも任務は失敗しない。
+//   最後にどこまで焼けたかが、この戦闘のプレイヤーの成績になる。
+function renderBurn() {
+  const box = document.getElementById('burn-meter');
   if (!box) return;
-  const st = (typeof escapeStatus === 'function') ? escapeStatus() : null;
+  const st = (typeof defenceStatus === 'function') ? defenceStatus() : null;
   if (!st) { box.classList.remove('on'); return; }
 
-  const ratio = st.hp / st.hpMax;
+  const ratio = st.burn / st.burnMax;
   box.classList.add('on');
-  box.classList.toggle('warn', ratio < 0.6 && ratio >= 0.3);
-  box.classList.toggle('bad', ratio < 0.3);
-  document.getElementById('freight-hp-bar').style.width = (ratio * 100) + '%';
-  document.getElementById('freight-hp-label').textContent =
-    t('esc.marker') + '  ' + st.hp + ' / ' + st.hpMax;
+  box.classList.toggle('warn', ratio >= 0.35 && ratio < 0.7);
+  box.classList.toggle('bad', ratio >= 0.7);
+  document.getElementById('burn-bar').style.width = (ratio * 100) + '%';
+  document.getElementById('burn-label').textContent =
+    t('def.marker') + '  ' + t('def.burnLabel') + ' ' + Math.round(st.burn) + '%';
 }
 
-function renderFreightBlip(range) {
-  if (!freightBlip) return;
-  const c = (typeof freighterContact === 'function') ? freighterContact() : null;
+// コロニーのレーダー輝点と画面マーカー。
+// ★ 無条件で映す。センサー配分にも熱にも左右されない ―
+//   守れと言われたものが見えないのは、難易度ではなく不親切。
+function renderColonyBlip(range) {
+  if (!colonyBlip) return;
+  const c = (typeof colonyContact === 'function') ? colonyContact() : null;
   if (!c) {
-    freightBlip.style.display = 'none';
-    freightMark.style.display = 'none';
+    colonyBlip.style.display = 'none';
+    colonyMark.style.display = 'none';
     return;
   }
 
-  placeBlip(freightBlip, c, range);
+  placeBlip(colonyBlip, c, range);
 
-  if (!c.inFront) { freightMark.style.display = 'none'; return; }
-  freightMark.style.display = 'block';
-  freightMark.style.left = ((c.ndcX * 0.5 + 0.5) * 100) + '%';
-  freightMark.style.top  = ((-c.ndcY * 0.5 + 0.5) * 100) + '%';
+  if (!c.inFront) { colonyMark.style.display = 'none'; return; }
+  colonyMark.style.display = 'block';
+  colonyMark.style.left = ((c.ndcX * 0.5 + 0.5) * 100) + '%';
+  colonyMark.style.top  = ((-c.ndcY * 0.5 + 0.5) * 100) + '%';
 
-  const size = Math.max(46, Math.min(14000 / Math.max(c.dist, 1), 260));
-  freightMark.style.width  = size + 'px';
-  freightMark.style.height = (size * 0.42) + 'px';
-  freightMark.classList.toggle('launching', !!c.launching);
-  freightMark.querySelector('.tag').textContent =
-    t('esc.marker') + '  ' + Math.round(c.dist) + '  ' + Math.round(c.hpRatio * 100) + '%';
+  // コロニーは直径6kmある。距離で大きさを変えると画面からはみ出すので、
+  // 枠は一定にして、距離は文字で読ませる
+  colonyMark.style.width  = '150px';
+  colonyMark.style.height = '54px';
+  colonyMark.classList.toggle('burning', c.burn >= 50);
+  colonyMark.querySelector('.tag').textContent =
+    t('def.marker') + '  ' + t('def.burnLabel') + ' ' + Math.round(c.burn) + '%';
 }
 
 function renderBossBlip(range) {
@@ -2634,7 +2636,7 @@ function onKill() {
   //   小説では砲火が桟橋ごと呑んでいる ― 艦隊は「倒す相手」ではなく、
   //   村を焼いていく環境。初戦で超弩級戦艦と一騎討ちさせるのは筋が違うし、
   //   実弾を積んでいない旧式艇では、そもそも勝ち目の設計になっていない。
-  if (typeof escapeRunning === 'function' && escapeRunning()) return;
+  if (typeof defenceRunning === 'function' && defenceRunning()) return;
   if (!BOSS.SPAWN_AT_START && killCount >= BOSS.SPAWN_KILLS && !bossStatus()) spawnBoss();
 }
 
@@ -3019,12 +3021,14 @@ function endMission(result, reason) {
 
   // 見出しと理由。同じ枠を色違いで使い回す
   resultPanel.classList.remove('win', 'timeup');
-  if (result === 'escaped') {
-    // ★ 勝ちだが「MISSION COMPLETE」ではない。
-    //   貨物船は出た。村は落ちた。両方を同時に言う表示にしてある。
+  if (result === 'held') {
+    // ★ 生き延びたが「MISSION COMPLETE」ではない。
+    //   見出しは勝っても負けても同じ ― 小説v2の一行をそのまま置く。
+    //   どちらの終わり方でも村は落ちる。それがこの章の内容なので、
+    //   達成を祝う言葉をここに置いてはいけない。
     resultPanel.classList.add('win');
-    resultTitleEl.textContent = t('esc.win.title');
-    resultReasonEl.textContent = t('esc.win.reason');
+    resultTitleEl.textContent = t('def.title');
+    resultReasonEl.textContent = defenceReason(true);
     playMissionComplete();
   } else if (result === 'complete') {
     resultPanel.classList.add('win');
@@ -3042,8 +3046,16 @@ function endMission(result, reason) {
     playPlayerExplosion();
     startShake(1.6);
     playMissionFailed(1.1);
-    resultTitleEl.textContent = 'MISSION FAILED';
-    resultReasonEl.textContent = reason || '機体構造 崩壊';
+    // ★ 防衛戦だけは見出しを変える。
+    //   生き延びたときと同じ「一時間もたなかった」を出す ―
+    //   勝っても負けても結末が同じ、というのがこの章の内容そのもの。
+    if (typeof defenceRunning === 'function' && defenceRunning()) {
+      resultTitleEl.textContent = t('def.title');
+      resultReasonEl.textContent = defenceReason(false);
+    } else {
+      resultTitleEl.textContent = 'MISSION FAILED';
+      resultReasonEl.textContent = reason || '機体構造 崩壊';
+    }
   }
 
   // ロックオン表示を消す(戦闘が止まるので、出しっぱなしにしない)
@@ -3054,9 +3066,33 @@ function endMission(result, reason) {
   rHitsEl.textContent  = hitsTaken;
   rTimeEl.textContent  = formatTime(missionTime);
 
+  // ★ 防衛戦の成績は撃墜数ではない。焼失率と、持ちこたえた時間。
+  //   撃墜数の欄も残すが、主役から降ろして最後に置く。
+  const burnRow = document.getElementById('r-burn-row');
+  if (burnRow) {
+    const wasDef = (typeof defenceBurn === 'function')
+      && (result === 'held' || (typeof defenceRunning === 'function' && defenceRunning()));
+    burnRow.style.display = wasDef ? '' : 'none';
+    if (wasDef) {
+      document.getElementById('r-burn').textContent = Math.round(defenceBurn()) + '%';
+      document.getElementById('r-held').textContent = formatTime(defenceHeldSec());
+    }
+  }
+
   console.log('MISSION ' + result.toUpperCase() +
               ' ― 撃墜' + killCount + ' / 被弾' + hitsTaken +
               ' / 残り' + formatTime(missionTime));
+}
+
+// 防衛戦の結果の副題。
+// ★ 四機のうち何機残ったかを、そのまま数える。
+//   生き延びたときは自機を足し、落とされたときは足さない ―
+//   「残存1」と出ているのに自機が燃えている、では嘘になる。
+//   誰も残らなかったときだけ「全滅」と言い切る。
+function defenceReason(survived) {
+  const wings = (typeof defenceWingAlive === 'function') ? defenceWingAlive() : 0;
+  const left = wings + (survived ? 1 : 0);
+  return (left <= 0) ? t('def.lost') : t('def.held').replace('%s', String(left));
 }
 
 function restartMission() {
@@ -3436,9 +3472,9 @@ function tickBody(now) {
     speakVoice('ONE_MINUTE');
     lastTimeWarned = true;
   }
-  // 脱出戦のときは、時間切れ = 貨物船が港を出た = 勝ち。
-  // 決着は escape.js が出すので、こちらの時間切れ処理は通さない。
-  if (typeof escapeRunning === 'function' && escapeRunning()) { /* escape.js に任せる */ }
+  // 防衛戦のときは、時間切れ = 生き延びた = 任務達成。
+  // 決着は defence.js が出すので、こちらの時間切れ処理は通さない。
+  if (typeof defenceRunning === 'function' && defenceRunning()) { /* defence.js に任せる */ }
   else if (missionTime <= 0) {
     missionTime = 0;
     endMission('timeup');
@@ -3452,7 +3488,7 @@ function tickBody(now) {
   // 僚機(味方の旧式艇)。読み込まれていなければ何もしない
   if (typeof updateWingmen === 'function') updateWingmen(dt);
   // アルカディア脱出戦。貨物船と僚機の消耗はここで進む
-  if (typeof updateEscape === 'function') updateEscape(dt);
+  if (typeof updateDefence === 'function') updateDefence(dt);
   if (typeof updateRadio === 'function') updateRadio(dt);
   updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)
@@ -3590,12 +3626,6 @@ function updateView(dt) {
   // 「押している間ずっと回る」のをやめて「1回押すと90度回って止まる」に変えたので、
   // 押されっぱなしかどうかではなく、押した瞬間だけが意味を持つ ―
   // だから keydown の側(requestRollStep)で受けている。
-
-  // ★ 貨物船が射出されたあとは、機首を機体に預ける。
-  //   プレイヤーに残るのは引き金だけ ― 追いかけること自体は自動でやる。
-  //   ここでキー入力を捨てて、貨物船へ向く舵に差し替える。
-  const auto = (typeof escapeAutoAim === 'function') ? escapeAutoAim() : null;
-  if (auto) { pitchDir = auto.pitch; yawDir = auto.yaw; }
 
   turnView(dt, pitchDir, yawDir);
 }

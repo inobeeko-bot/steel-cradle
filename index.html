@@ -2076,16 +2076,18 @@
        ふち「だけ」を光らせるのは、絵と文字の邪魔をしないため ―
        inset の box-shadow なら中央は素通しになる。
        戦闘の近接警告(.proximity)と同じ作り方で揃えてある。 */
-    /* 貨物船のレーダー輝点。敵の赤とはっきり離した水色にする ―
-       守る対象と落とす対象が同じ色だと、一瞬で判断できない */
-    .radar-blip.friendly-ship {
+    /* アルカディアのレーダー輝点。敵の赤とはっきり離した水色にする ―
+       守る場所と落とす相手が同じ色だと、一瞬で判断できない */
+    .radar-blip.colony-blip {
       background: #7fe3ff;
       box-shadow: 0 0 6px #7fe3ff;
-      width: 9px; height: 9px;
+      width: 11px; height: 11px;
+      border-radius: 2px;      /* 機体(丸)と場所(角)を形でも分ける */
     }
 
-    /* 画面内の貨物船マーカー。追跡中は色を変えて目立たせる */
-    .freight-marker {
+    /* 画面内のアルカディアのマーカー。
+       半分以上焼けたら色が変わる ― 数字を読まなくても分かるように */
+    .colony-marker {
       position: absolute;
       transform: translate(-50%, -50%);
       border: 2px solid #7fe3ff;
@@ -2094,7 +2096,7 @@
       display: none;
       box-shadow: 0 0 10px rgba(127,227,255,.55);
     }
-    .freight-marker .tag {
+    .colony-marker .tag {
       position: absolute; left: 50%; top: 100%;
       transform: translateX(-50%);
       margin-top: 4px;
@@ -2103,26 +2105,24 @@
       white-space: nowrap;
       text-shadow: 0 0 6px rgba(0,0,0,.9);
     }
-    .freight-marker.launching { border-color: #ffe27f; box-shadow: 0 0 14px rgba(255,226,127,.7); }
-    .freight-marker.launching .tag { color: #ffe27f; }
+    .colony-marker.burning { border-color: #ff8a4a; box-shadow: 0 0 14px rgba(255,138,74,.7); }
+    .colony-marker.burning .tag { color: #ff8a4a; }
 
     /* 僚機の無線。
        ★ 操縦の邪魔をしないことが最優先なので:
          - 画面の左下に置き、中央(照準)と計器を避ける
          - pointer-events: none で、絶対に操作を奪わない
          - すぐ消える。読めなくても操縦は続く */
-    /* 貨物船の状態。守る対象なので、探さなくても目に入る位置に置く。
+    /* アルカディアの焼失率。守っている場所の状態なので、探さなくても目に入る位置。
        画面上端の中央 ― 照準(中心)と計器(下)を避けたうえで、
-       視線の移動がいちばん短い場所 */
-    .freight-hp {
+       視線の移動がいちばん短い場所。残り時間(.mission-timer)の真下。
+
+       ★ これは「守り切れるか」の計器ではない。100%でも任務は失敗しない ―
+         村が落ちることは決まっている。どこまで焼けたかが成績になる。 */
+    .burn-meter {
       position: absolute;
       left: 50%;
-      /* ★ 残り時間(.mission-timer)と真正面からぶつかっていた ―
-         どちらも画面上端の中央で、上から14px。文字が重なって読めない。
-         タイマーの下端は43pxなので、その下へ降ろす。
-         タイマーのほうを動かさないのは、あれが仕様書9.1の
-         「1ゲーム最長10分」を示す主計器で、位置が変わると探す羽目になるため。 */
-      top: 50px;
+      top: 50px;              /* 残り時間の下端(43px)より下 */
       transform: translateX(-50%);
       width: 260px;
       pointer-events: none;
@@ -2130,36 +2130,35 @@
       z-index: 6;
       text-align: center;
     }
-    .freight-hp.on { display: block; }
+    .burn-meter.on { display: block; }
     /* コックピットでは出さない。
-       あちらは計器盤の中(電力配分が空けた場所)に、
-       console3d.js が同じ内容を描いている ―
-       視界に貼り付いた帯より、計器として並んでいるほうが場に合う。 */
-    body.cockpit .freight-hp { display: none; }
-    .freight-hp .label {
+       あちらは計器盤の中(電力配分が空けた場所)に console3d.js が描いている。 */
+    body.cockpit .burn-meter { display: none; }
+    .burn-meter .label {
       font: 600 11px/1.3 monospace;
       color: #7fe3ff;
       letter-spacing: .12em;
       text-shadow: 0 0 6px rgba(0,0,0,.9);
     }
-    .freight-hp .tube {
+    .burn-meter .tube {
       margin-top: 3px;
       height: 9px;
       background: rgba(4, 16, 22, .72);
       border: 1px solid rgba(127,227,255,.55);
     }
-    .freight-hp .bar {
+    /* ★ 棒は「焼けた量」なので、増えるほど悪い。
+       残量ゲージ(減ると悪い)と逆なので、色で取り違えを防ぐ。 */
+    .burn-meter .bar {
       height: 100%;
-      width: 100%;
+      width: 0%;
       background: #7fe3ff;
-      transition: width .2s linear;
+      transition: width .3s linear;
     }
-    .freight-hp.warn .bar { background: #ffc04a; }
-    .freight-hp.bad  .bar { background: #ff5f5f; }
-    .freight-hp.bad  .label { color: #ff8f8f; }
-    /* 半分を切ったら脈打つ。数字を読まなくても危ないと分かる */
-    .freight-hp.bad .tube { animation: freightPulse .7s ease-in-out infinite; }
-    @keyframes freightPulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    .burn-meter.warn .bar { background: #ffc04a; }
+    .burn-meter.bad  .bar { background: #ff5f5f; }
+    .burn-meter.bad  .label { color: #ff8f8f; }
+    .burn-meter.bad  .tube { animation: burnPulse .9s ease-in-out infinite; }
+    @keyframes burnPulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
 
     .radio {
       position: absolute;
@@ -2549,9 +2548,9 @@
 
     <!-- 敵マーカーの置き場。中身は main.js が敵の数だけ作る -->
     <div id="marker-layer" style="position:absolute; inset:0; pointer-events:none;"></div>
-    <div class="freight-hp" id="freight-hp">
-      <div class="label" id="freight-hp-label">FREIGHTER</div>
-      <div class="tube"><div class="bar" id="freight-hp-bar"></div></div>
+    <div class="burn-meter" id="burn-meter">
+      <div class="label" id="burn-label">ARCADIA</div>
+      <div class="tube"><div class="bar" id="burn-bar"></div></div>
     </div>
     <div class="radio" id="radio"></div>
 
@@ -2571,6 +2570,11 @@
         <div>撃墜 <b id="r-kills">0</b> / <span id="r-goal">10</span></div>
         <div>被弾 <b id="r-hits">0</b></div>
         <div><span data-i18n="hud.timeLeft">残り時間</span> <b id="r-time">00:00</b></div>
+      </div>
+      <!-- 防衛戦のときだけ出る行。撃墜数ではなく、こちらがこの戦闘の成績 -->
+      <div class="result-rows" id="r-burn-row" style="display:none">
+        <div><span data-i18n="def.burnResult">果樹園 焼失</span> <b id="r-burn">0%</b></div>
+        <div><span data-i18n="def.heldTime">持ちこたえた時間</span> <b id="r-held">00:00</b></div>
       </div>
       <div class="result-hint" data-i18n="hud.resultHint">Enter 再出撃　/　Esc メニューへ戻る</div>
     </div>
@@ -2664,7 +2668,7 @@
   <!-- 残骸から拾える機材(scene.js の関数を使うので、その後ろ) -->
   <script src="src/salvage.js"></script>
   <script src="src/wingmen.js"></script>
-  <script src="src/escape.js"></script>
+  <script src="src/defence.js"></script>
   <script src="src/radio.js"></script>
   <!-- 背景の巨大コロニー(同上) -->
   <script src="src/colony.js"></script>

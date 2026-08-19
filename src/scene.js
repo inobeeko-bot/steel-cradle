@@ -5405,13 +5405,14 @@ function shiftEnemyTrack(e, axis, amount) {
   if (e.prevPos) e.prevPos.set(e.prevPos.x + dx, e.prevPos.y + dy, e.prevPos.z + dz);
 }
 
-// この敵が向かう先。ふだんは自機。
-// escape.js が huntsFreighter の印を付けた個体だけ、貨物船へ向かう。
+// この敵が向かう先。いまはどの個体も自機。
+//
+// ★ 以前は「貨物船を狙う個体」がいて、そちらへ向かわせていた。
+//   貨物船の設計を取り下げたので、その分岐は無くなっている。
+//   コロニーを撃つ個体(defence.js の bombards)は、向かう先は変えない ―
+//   遠くから撃つだけなので、飛び方まで変える必要がないため。
+//   将来また「別のものを狙う敵」を出すときは、ここに戻ってくる。
 function enemyTargetPos(e) {
-  if (e && e.huntsFreighter && typeof freighterPosition === 'function') {
-    const p = freighterPosition();
-    if (p) return p;
-  }
   return playerShip.position;
 }
 
@@ -5482,8 +5483,6 @@ function updateEnemyAI(e, dt) {
   }
 
   // 自機へのベクトルと距離を求める(すべての判断のもとになる)
-  // ★ ただし「貨物船を狙う個体」は、狙い先が自機ではない(escape.js が印を付ける)。
-  //   哨戒隊の全機が主人公だけを追いかけるのでは、守るものがある戦いにならない。
   const toPlayer = enemyTargetPos(e).clone().sub(e.group.position);
   const distance = toPlayer.length();
   const toPlayerDir = toPlayer.clone().normalize();

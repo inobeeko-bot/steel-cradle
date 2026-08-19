@@ -37,7 +37,7 @@ const RADIO_CHATTER = [
   ['wing.n3', '編隊 崩れてるぞ'],
   ['wing.n2', '見えてる。右から来てる'],
   ['wing.n1', '一番機 交戦中'],
-  ['wing.n3', '貨物船から離れるな'],
+  ['wing.n3', '村を背にしろ。抜かせるな'],
   ['wing.n2', 'こんなに来るなんて聞いてない'],
   ['wing.n1', '弾が…… ビームしか無いんだった'],
   ['wing.n3', '無駄撃ちするな。炉が持たん'],
@@ -57,22 +57,24 @@ function pickSituationLine() {
   if (!alive.length) return null;
   const who = function (i) { return alive[Math.min(i, alive.length - 1)].def.numKey; };
 
-  const st = (typeof escapeStatus === 'function') ? escapeStatus() : null;
+  const st = (typeof defenceStatus === 'function') ? defenceStatus() : null;
 
-  // 貨物船のそばに敵が何機いるか。これがこの戦いの「危なさ」そのもの
-  let nearFreight = 0;
-  if (st && typeof freighter !== 'undefined' && freighter && typeof enemies !== 'undefined') {
-    for (const e of enemies) {
-      if (!e.alive) continue;
-      if (e.group.position.distanceTo(freighter.position) < ESCAPE.THREAT_RANGE) nearFreight++;
+  // ★ この戦闘でいちばん言うべきことは「畑が焼かれている」。
+  //   不文律を知っているのは大人たちで、カイトはまだ知らない ―
+  //   だから説明ではなく、信じられないという反応で出す。
+  if (st) {
+    // コロニーを撃っている敵が何機いるか。この戦闘の「異常さ」そのもの
+    let bombers = 0;
+    if (typeof enemies !== 'undefined') {
+      for (const e of enemies) if (e.alive && e.bombards) bombers++;
     }
+    if (st.burn >= 60) {
+      return [who(0), ['村が見えない ― 煙で', 'まだ人がいるんだぞ、あそこには'][Math.random()<.5?0:1]];
+    }
+    if (bombers >= 3) return [who(0), '砲撃機が ' + bombers + '機 ― 村を向いてる'];
+    if (bombers >= 1) return [who(1), 'こっちを見てない機がいる。畑を撃ってる'];
+    if (st.holdLeft <= 45) return [who(0), 'あと少しだ ― 保たせろ'];
   }
-
-  if (st && st.hp / st.hpMax < 0.35) {
-    return [who(0), ['貨物船がもたない! 剥がせ!', '船体が保たない ― 早く!'][Math.random()<.5?0:1]];
-  }
-  if (nearFreight >= 3) return [who(0), '貨物船に群がってる ― ' + nearFreight + '機だ'];
-  if (nearFreight >= 1) return [who(1), '一機、船に取り付いてる'];
 
   if (alive.length === 1) {
     return [who(0), ['……こっちは俺だけだ', 'カイト、まだ生きてるか'][Math.random()<.5?0:1]];

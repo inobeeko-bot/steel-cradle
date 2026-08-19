@@ -743,6 +743,25 @@ function playWingCall() {
   playTone( 214, 0.130, 0.12, 'square', 0.035);           // 低い胴鳴り
 }
 
+// 敵がコロニーへ撃った(defence.js)。
+// 自機に向いていない砲なので、乾いた発射音だけを短く。
+// 自分の射撃音と紛れないよう、低くこもらせてある。
+function playBombardFire() {
+  playNoise(0.070, 0.16, 700, 240, 'lowpass');
+  playTone(96, 0.100, 0.10, 'square', 0.010);
+}
+
+// 果樹園に着弾した。
+// ★ 遠くの爆発。近くの爆発と同じ音にしてはいけない ―
+//   「自分は無事なのに村が燃えている」という距離感がこの戦闘の中身なので、
+//   高い成分を落として、腹に来る低い音だけを残す。
+function playColonyHit() {
+  playNoise(0.55, 0.30, 420, 70, 'lowpass');          // ずしん
+  playTone(52, 0.60, 0.16, 'square', 0.02);           // 低い余韻
+  playTone(78, 0.34, 0.09, 'square', 0.05);
+  playNoise(0.90, 0.09, 240, 50, 'lowpass', 0.10);    // 尾を引く鳴り
+}
+
 const ALARM_LOOP_SEC = 1.20;   // 1周の長さ。story.js がこの間隔で呼ぶ
 function playStoryAlarmLoop() {
   playTone(622, 0.30, 0.105, 'square',   0);

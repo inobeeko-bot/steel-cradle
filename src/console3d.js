@@ -374,46 +374,42 @@ function showsHeat() {
 }
 
 // ===================================================================
-// 貨物船の残り(脱出戦だけ)
+// アルカディアの焼失率(防衛戦だけ)
 //
 // 三人称では画面上端に帯で出しているが、コックピットでは計器盤に置く。
 // 場所は電力配分の四本があったところ ―
 // 旧式艇では配分を動かせないので、この区画はまるごと空いている。
-// (制式機で配分を出しているときは脱出戦をやっていないので、重ならない)
+// (制式機で配分を出しているときは防衛戦をやっていないので、重ならない)
 // ===================================================================
-function drawFreight(g, x, y, s) {
-  const f = s.freight;
+function drawDefence(g, x, y, s) {
+  const f = s.defence;
   if (!f) return;
 
-  drawHeading(g, x, y, 300, 'FREIGHTER');
+  drawHeading(g, x, y, 300, 'ARCADIA');
 
-  const ratio = Math.max(0, Math.min(f.hp / f.hpMax, 1));
-  // 守る対象なので色は自機と分ける(水色)。減ったら黄 → 赤
-  const color = (ratio < 0.35) ? CONSOLE3D.WARN
-              : (ratio < 0.70) ? CONSOLE3D.AMBER : '#7fe3ff';
+  const ratio = Math.max(0, Math.min(f.burn / f.burnMax, 1));
+  // ★ 増えるほど悪い計器なので、色は水色 → 黄 → 赤へ「上がって」いく。
+  //   残量ゲージと逆向きなので、取り違えないよう色で分ける。
+  const color = (ratio >= 0.70) ? CONSOLE3D.WARN
+              : (ratio >= 0.35) ? CONSOLE3D.AMBER : '#7fe3ff';
 
   g.textAlign = 'left';
   g.font = 'bold 17px monospace';
   g.fillStyle = color;
-  g.fillText('貨物船', x, y + 20);
+  g.fillText('焼失', x, y + 20);
 
-  // 残り。数字は右端に揃えて、桁が変わっても位置が動かないようにする
   g.textAlign = 'right';
   g.font = 'bold 26px monospace';
-  g.fillText(String(f.hp), x + 232, y + 22);
-  g.font = '13px monospace';
-  g.fillStyle = CONSOLE3D.DIM;
-  g.fillText('/ ' + f.hpMax, x + 296, y + 22);
+  g.fillText(Math.round(f.burn) + '%', x + 232, y + 22);
 
   drawBar(g, x, y + 32, 296, 12, ratio, color);
 
-  // 積んでいる人数。守っている対象が「数」ではないことを忘れないための一行
+  // 残り時間と僚機。呼び寄せ(H)を使うかどうかの判断がここで付く
   g.textAlign = 'left';
   g.font = '11px monospace';
   g.fillStyle = CONSOLE3D.DIM;
-  g.fillText((f.survivors || 311) + ' ABOARD', x, y + 62);
+  g.fillText('HOLD ' + Math.ceil(f.holdLeft) + 's', x, y + 62);
 
-  // 僚機の残り。呼び寄せ(H)を使うかどうかの判断がここで付く
   g.textAlign = 'right';
   g.fillStyle = (f.wingAlive > 0) ? CONSOLE3D.DIM : CONSOLE3D.WARN;
   g.fillText('WINGMEN ' + f.wingAlive, x + 296, y + 62);
@@ -688,8 +684,8 @@ function drawConsole3D(s, dt) {
     });
   });
 
-  // 貨物船(電力配分の四本があった場所。脱出戦のときだけ出る)
-  drawFreight(g, 470, 52, s);
+  // アルカディア(電力配分の四本があった場所。防衛戦のときだけ出る)
+  drawDefence(g, 470, 52, s);
 
   // --- 中央の空きに置く計器 ---
   // 照準器の土台をなくしたので、中央も使える。
