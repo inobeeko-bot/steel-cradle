@@ -283,7 +283,7 @@ function launchSortie(shipKey, bgm) {
   // ★ 熱の計器を出すかどうか。
   //   熱管理はまだ物語で教えていない(ヨナスの講義は第三章)。
   //   読み方を知らない計器が並んでいると、他の計器まで読まれなくなる。
-  const teachesHeat = !(typeof ship === 'function' && ship().powerLocked);
+  const teachesHeat = (typeof heatTaught !== 'function') || heatTaught();
   document.body.classList.toggle('no-heat', !teachesHeat);
 
   if (shipKey === 'boat4') {

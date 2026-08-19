@@ -2869,9 +2869,13 @@ function updateFlight(dt, enginePercent) {
 
   // --- エンジンの噴射光をエンジン配分に合わせて伸ばす ---
   // ドリフト中は推力を切っているので、噴射光も消す(見ただけで状態が分かる)
+  // ★ 上限を掛けておく。脱出戦の追走では目標速度が300近くまで上がり、
+  //   素で割ると比が6.5になって、噴射光が normal の6倍の長さに伸びる ―
+  //   炎ではなく槍が生える。カメラの引きと同じ SPEED_OVER_MAX で頭打ちにする。
   const thrustRatio = drifting
     ? 0
-    : (targetSpeed - PLAYER.MIN_SPEED) / (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED);
+    : Math.min((targetSpeed - PLAYER.MIN_SPEED) / (PLAYER.MAX_SPEED - PLAYER.MIN_SPEED),
+               FEEL.SPEED_OVER_MAX);
   // 炎らしく見せるための細かいゆらぎ。周期の違う波を重ねて不規則にする
   const flicker = 1 + FEEL.GLOW_FLICKER *
     (Math.sin(sceneTime * 27) * 0.6 + Math.sin(sceneTime * 41 + 2.1) * 0.4);

@@ -143,3 +143,17 @@ function shipRollCap(base, rollLeft) {
 function shipRollAccel(base, rollLeft) {
   return rollLeft < 0 ? base * ship().rollRightAccel : base;
 }
+
+// 熱管理を「もう教わったか」。
+//
+// ★ ここが唯一の判断元。計器を出すかどうかも、熱そのものを起こすかどうかも、
+//   全部この一箇所を見る。ばらばらに書くと、片方だけ直して
+//   「ゲージは消えたのに強制シャットダウンは出る」という状態になる ―
+//   実際にそうなっていた。
+//
+//   ヨナスの講義は第三章(仕様書フェーズ3)。それより前の出撃では、
+//   熱は計器から消すだけでなく、仕掛けごと止める。
+//   読み方も避け方も教わっていないのに
+//   「⚠ SYSTEM SHUTDOWN ― 操作不能」で4秒間動けなくなるのは、
+//   難しさではなく理不尽になるため。
+function heatTaught() { return !ship().powerLocked; }

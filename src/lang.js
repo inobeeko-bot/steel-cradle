@@ -94,6 +94,8 @@ const TEXT = {
   'esc.spool':          ['貨物船 主機 点火', 'Freighter main drive lit'],
   'esc.launch':         ['貨物船 射出 ― 追え', 'Freighter away — follow it'],
   'esc.down':           ['被撃墜', 'down'],
+  'esc.auto':           ['自動追尾 ― 操縦は機体が引き受ける。撃て',
+                         'Auto-follow engaged — the boat flies itself. Just shoot'],
   'esc.win.title':      ['311 ABOARD', '311 ABOARD'],
   'esc.win.reason':     ['貨物船 離港 ― アルカディア 陥落', 'The freighter cleared port — Arcadia has fallen'],
   'story.chapter.select': ['章とシーンを選ぶ', 'Select chapter and scene'],

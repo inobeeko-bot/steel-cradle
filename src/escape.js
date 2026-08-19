@@ -31,19 +31,26 @@ const ESCAPE = {
   //   前半 = 港で待つ貨物船を守る。後半 = 射出された貨物船を追う。
   //   「時間切れで終わり」ではなく、最後に動きのある締めを置きたかった。
   DEFEND_SEC:     180,    // 守る時間。240秒は長すぎ、150秒では僚機と飛ぶ時間が足りなかった
-  CHASE_SEC:       34,    // 射出されてから決着まで(加速に9秒かけるので長めに取る)
+  // ★ 34秒 → 14秒。
+  //   後半は「ただ加速しているだけ」の時間で、長さがそのまま退屈になっていた。
+  //   加速を見せるのに必要なのは十数秒で足りる。短いほど、締めとして効く。
+  CHASE_SEC:       14,    // 射出されてから決着まで
   SPEED:            7,    // 港を離れるときの速さ。鈍い
-  // 自機は配分25%固定なので巡航17。追いつけない数字にすると追跡が成立しない。
-  //
-  // ★ 一度加速したあと止まって見えていたので、数字を上げ直した。
-  //   44 と 52 では相対速度が 8 しかなく、画面の中で動いていないように見える。
-  //   いまは 95 と 100 ― どちらも巡航の6倍で、星と塵が真後ろへ飛ぶ。
-  //   差は 5 のままなので、追いつくのに時間がかかる関係は変わらない。
-  LAUNCH_SPEED:    95,    // 射出後の貨物船の速さ
-  LAUNCH_RAMP:    9.0,    // この秒数かけて加速する(いきなり消えると何が起きたか分からない)
+
+  // ★ 95 → 285(3倍)。
+  //   95 でも遅かった。貨物船は「必死に逃げている」のだから、
+  //   自機の巡航(17)の十数倍で抜けていってよい。
+  //   数字が大きいぶん、加速にかける時間は短くしないと画面外へ消える。
+  LAUNCH_SPEED:   285,    // 射出後の貨物船の速さ
+  LAUNCH_RAMP:    3.5,    // この秒数かけて加速する(いきなり消えると何が起きたか分からない)
   CHASE_MIN:       26,    // 追跡中の自機の最低速度(貨物船がまだ遅いあいだ)
-  CHASE_MARGIN:     9,    // 貨物船より何だけ速いか。追いつくのに時間がかかる差
-  DRIFT_ACCEL:   0.55,    // 加速しきったあとも、毎秒この量だけ速くなり続ける ―
+  // ★ 追う自機は「一定の距離を保つ」ように速度を作る(updateLaunchPhase)。
+  //   前は「貨物船+9」で、285になると差が見えず、しかも少しずつ詰めて
+  //   最後には船の中へ入ってしまう。真後ろの定位置に着けるほうが絵になる。
+  CHASE_TRAIL:    170,    // 貨物船の何だけ後ろに着けるか
+  CHASE_CATCH:    0.9,    // 位置のずれを速度に直す強さ(大きいほどきびきび詰める)
+  CHASE_EXTRA:    120,    // 貨物船よりどれだけ速く出してよいか(詰めるとき用)
+  DRIFT_ACCEL:    3.0,    // 加速しきったあとも、毎秒この量だけ速くなり続ける ―
                           // 一定速度だと「もう終わった」ように見えるため
 
   // ★ 数字は「守り切れるか」から逆算した。最初は HP60・毎秒1.6 にしていたが、
@@ -400,7 +407,12 @@ function beginLaunch() {
   if (playerShip) launchDir.applyQuaternion(playerShip.quaternion).normalize();
   freighter.lookAt(freighter.position.clone().addScaledVector(launchDir, 100));
 
-  if (typeof addCombatLog === 'function') addCombatLog(t('esc.launch'), 'warn');
+  if (typeof addCombatLog === 'function') {
+    addCombatLog(t('esc.launch'), 'warn');
+    // ★ 操作を取り上げるときは、必ずそれを言う。
+    //   黙って舵を奪うと「操縦が壊れた」としか思えない。
+    addCombatLog(t('esc.auto'), 'kill');
+  }
   if (typeof radioSay === 'function') radioSay('wing.n3', '行った ― 追え、カイト', true);
 
   // --- 点火の見た目 ---------------------------------------------
@@ -439,12 +451,16 @@ function updateLaunchPhase(dt) {
   launchSpeed = ESCAPE.LAUNCH_SPEED * ramp + extra;
   freighter.position.addScaledVector(launchDir, launchSpeed * dt);
 
-  // ★ 自機の速度を貨物船に合わせて上げていく。
-  //   固定値(100)にしていたら、まだ遅い貨物船(11)を追い越してしまう ―
-  //   追いかけるはずが、置き去りにする側になる。
-  //   常に「少しだけ速い」を保つと、離されもせず追い越しもしない。
-  if (typeof setSpeedOverride === 'function') {
-    setSpeedOverride(Math.max(ESCAPE.CHASE_MIN, launchSpeed + ESCAPE.CHASE_MARGIN));
+  // ★ 自機の速度は「貨物船の真後ろ CHASE_TRAIL に着ける」ように作る。
+  //   前は「貨物船+9」の一本槍だったが、貨物船が285になると
+  //   +9 は誤差でしかなく、しかも詰め続けて最後には船の中へ入ってしまう。
+  //   離れていれば速く、近すぎれば緩める ― 位置を見て速度を決めるほうが、
+  //   どんな速さになっても真後ろに収まる。
+  if (typeof setSpeedOverride === 'function' && playerShip) {
+    const gap = playerShip.position.distanceTo(freighter.position);
+    const want = launchSpeed + (gap - ESCAPE.CHASE_TRAIL) * ESCAPE.CHASE_CATCH;
+    setSpeedOverride(Math.max(ESCAPE.CHASE_MIN,
+                     Math.min(want, launchSpeed + ESCAPE.CHASE_EXTRA)));
   }
 
   // 噴射炎。速いほど長く伸びる ― 長さそのものが速度計になる
@@ -465,6 +481,48 @@ function updateLaunchPhase(dt) {
     if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
     if (typeof endMission === 'function') endMission('escaped');
   }
+}
+
+// --- 射出後の自動操縦 -------------------------------------------------
+//
+// ★「一度貨物船が射出されたらプレイヤーは射撃しかできない」
+//   最後の追跡は操縦の腕を試す場面ではない。ここで見せたいのは
+//   「置いていかれる船に必死でついていく」ことなので、
+//   機首は機体が預かり、プレイヤーの手には引き金だけを残す。
+//
+//   操作を取り上げるのは本来やってはいけないことなので、
+//   奪う範囲は最小にしてある ― 舵とロールと回避バーストだけ。
+//   撃つ・狙う(照準は機首に付いてくる)・視点の切替は今までどおり効く。
+function escapeAutoPilot() {
+  return escapeRunning() && escapePhase === 'launch' && !!freighter;
+}
+
+const _aimInv = new THREE.Quaternion();
+const _aimTo  = new THREE.Vector3();
+
+// 貨物船へ機首を向けるための舵。turnView() にそのまま渡せる形で返す。
+// 戻り値 { pitch, yaw } の範囲はキー入力と同じ −1〜+1。
+function escapeAutoAim() {
+  if (!escapeAutoPilot()) return null;
+  if (typeof playerShip === 'undefined' || !playerShip) return null;
+
+  // 貨物船の位置を「機体から見た座標」へ移す。
+  // 向きの逆回転を掛けると、前が −Z・上が +Y・左が −X になる ―
+  // レーダーで敵の位置を出すときと同じやり方。
+  _aimInv.copy(playerShip.quaternion).invert();
+  _aimTo.subVectors(freighter.position, playerShip.position)
+        .applyQuaternion(_aimInv);
+
+  const flat     = Math.sqrt(_aimTo.x * _aimTo.x + _aimTo.z * _aimTo.z);
+  const yawErr   = Math.atan2(-_aimTo.x, -_aimTo.z);   // 左にいれば正
+  const pitchErr = Math.atan2(_aimTo.y, flat);         // 上にいれば正
+
+  // 角度をそのまま舵にすると、正面に来た瞬間に舵が0になって行き過ぎ、
+  // 左右に揺れ続ける。3倍してから −1〜+1 に収めると、
+  // 20度ほどずれた時点で目一杯・近づくにつれて緩む ―
+  // 人が操縦したときの動きに近くなる。
+  const hold = function (x) { return Math.max(-1, Math.min(1, x * 3)); };
+  return { pitch: hold(pitchErr), yaw: hold(yawErr) };
 }
 
 // --- 僚機の消耗 -----------------------------------------------------

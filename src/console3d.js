@@ -361,7 +361,9 @@ function drawHeading(g, x, y, w, text) {
 // 熱管理はまだ物語で教えていない(ヨナスの講義は第三章)ので、
 // 旧式艇のあいだはコックピット側でも一切出さない。DOM 側は body.no-heat が受け持つ。
 function showsHeat() {
-  return !(typeof ship === 'function' && ship().powerLocked);
+  // 判断は ships.js の heatTaught() 一箇所にまとめてある。
+  // ここで独自に条件を書くと、DOM 側とコックピット側でずれる。
+  return (typeof heatTaught !== 'function') || heatTaught();
 }
 
 function drawHeatBudget(g, x, y, s) {

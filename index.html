@@ -2184,6 +2184,11 @@
        特定の親を前提にするとセレクタが外れる(実際に一度外した) */
     body.no-heat .panel-heat,
     body.no-heat .heat-only { display: none; }
+    /* ★ 強制シャットダウンの警告も熱の一部。
+       ゲージだけ隠しても、過熱すればこれが画面の真ん中に出てしまう。
+       仕掛け自体は main.js の noHeat で止めてあるが、
+       万一どこかで熱が上がっても出さないよう、ここでも塞いでおく。 */
+    body.no-heat .hud.shutdown .shutdown-overlay { display: none; }
 
     .story-alarm {
       position: absolute; inset: 0;

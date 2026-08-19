@@ -940,6 +940,18 @@ function currentShieldRegen() {
   return power.shield * SHIELD.REGEN_PER_POWER * powerOutputMult();
 }
 
+// 熱を足す唯一の口。
+//
+// ★ 発射・バースト・バレルロール・パイロ弾 ― 熱が増える場所は6か所あり、
+//   どれも直後に「HEAT.MAX を超えたら強制シャットダウン」を見ている。
+//   熱を教わっていない機体では、そもそもここで受け付けない。
+//   毎コマ0へ戻す(update)だけでは、1コマの中で跳ね上がったぶんを
+//   拾えないため ― 実際、旧式艇のビームは1回の引き金で +12 入る。
+function addHeat(amount) {
+  if (typeof heatTaught === 'function' && !heatTaught()) return;
+  heat = Math.min(heat + amount, HEAT.MAX);
+}
+
 // 現在の毎秒の熱収支を計算して返す(発熱 − 放熱)
 //
 // ※ 発熱と放熱の式は、予測計器(heatRateIfRadiator / HEAT BUDGET表示)でも
@@ -1076,7 +1088,7 @@ function tryBarrelRoll(dir) {
   if (!requestBarrelRoll(dir)) return false;   // すでに回っている
 
   propellant -= PROP.BARREL_COST;
-  heat = Math.min(heat + PROP.BARREL_HEAT, HEAT.MAX);
+  addHeat(PROP.BARREL_HEAT);
   startShake(0.22);
   playBurst();
   addCombatLog('BARREL ROLL', 'warn');
@@ -1120,7 +1132,7 @@ function burst() {
   }
 
   propellant -= PROP.BURST_COST;
-  heat = Math.min(heat + PROP.BURST_HEAT, HEAT.MAX);   // 高出力機動なので熱も跳ねる
+  addHeat(PROP.BURST_HEAT);   // 高出力機動なので熱も跳ねる
   burstFlash = 0.22;                                   // 演出:一瞬光らせる
 
   // ★ 実際に機体を押し出す(scene.js)。
@@ -1224,6 +1236,8 @@ window.addEventListener('keydown', (event) => {
       }
       lastRollKey = key;
       lastRollAt  = now;
+      // 自動操縦中(貨物船の追跡)は姿勢も機体が持つので、ロールも受けない
+      if (typeof escapeAutoPilot === 'function' && escapeAutoPilot()) return;
       requestRollStep(dir);
     }
     return;
@@ -1322,6 +1336,8 @@ window.addEventListener('keydown', (event) => {
   // Space キー … 回避バースト
   if (event.key === ' ') {
     event.preventDefault();   // Spaceで画面がスクロールするのを止める
+    // 自動操縦中は速度も機体が決めているので、バーストは効かせない
+    if (typeof escapeAutoPilot === 'function' && escapeAutoPilot()) return;
     if (!event.repeat) burst();   // 押しっぱなしの連射は無効(1回押して1回)
     return;
   }
@@ -1415,6 +1431,8 @@ function onPlayerMissileHit() {
 // パイロ弾で敵が熱暴走した。武器仕様書「シャットダウン誘発」の成果
 function onEnemyOverheat() {
   if (missionState !== 'active') return;
+  // 熱を教わっていないあいだは、敵の熱の話もしない
+  if (typeof heatTaught === 'function' && !heatTaught()) return;
   playShutdown();
   addCombatLog('TARGET OVERHEAT', 'kill');
   speakVoice('TARGET_OVERHEAT');
@@ -1510,7 +1528,10 @@ function updateVoiceAlerts(dt) {
   const overheatNear = (heat >= VOICE_TRIGGER.OVERHEAT_PCT) ||
                        (secondsToMax <= VOICE_TRIGGER.OVERHEAT_LEAD);
 
-  if (overheatNear && !saidOverheat && shutdownLeft <= 0) {
+  // 熱を教わっていない機体では「WARNING. OVERHEAT.」とも言わせない。
+  // 意味の分からない英語の警告だけが残るのがいちばん悪い。
+  const teachesHeat = !(typeof heatTaught === 'function') || heatTaught();
+  if (teachesHeat && overheatNear && !saidOverheat && shutdownLeft <= 0) {
     speakVoice('OVERHEAT');
     saidOverheat = true;
   } else if (heat < HEAT.WARN) {
@@ -3121,7 +3142,7 @@ function fire() {
     }
     if (!fireMissile()) { playDenied(); return; }
     ammo[weaponIndex] -= 1;
-    heat = Math.min(heat + w.heat, HEAT.MAX);
+    addHeat(w.heat);
     fireCooldown = w.interval;
     playMissileLaunch();
     speakVoice('MISSILE_AWAY');
@@ -3150,7 +3171,7 @@ function fireOnce(w) {
   const index = WEAPONS.indexOf(w);
   if (ammo[index] !== Infinity) ammo[index] -= 1;
 
-  heat = Math.min(heat + w.heat, HEAT.MAX);
+  addHeat(w.heat);
   fireBolt(w.boltColor, w.damage);   // scene.js:弾を飛ばす(威力は兵装ごと)
   playFireSound();
 
@@ -3222,7 +3243,7 @@ function fireBomb() {
 
   bombAmmo[bombIndex] -= 1;
   bombCooldown = a.interval;
-  heat = Math.min(heat + a.heat, HEAT.MAX);
+  addHeat(a.heat);
   playOrdnanceLaunch(a.kind === 'emp');
   // パイロ弾は連射するので、1発ごとにログを出すとログが埋まってしまう
   if (!a.auto) addCombatLog(a.jp + ' 投下', 'warn');
@@ -3283,7 +3304,7 @@ function onPlayerBlast(damage) {
 // 自分のパイロ弾の燃焼片を浴びた。近すぎる相手に撒くと自分の熱が上がる
 function onPlayerPyro(heatAdd) {
   if (heatAdd <= 0) return;
-  heat = Math.min(heat + heatAdd, HEAT.MAX);
+  addHeat(heatAdd);
   addCombatLog('自機に燃焼片 ― 熱+' + Math.round(heatAdd), 'hull');
   if (heat >= HEAT.MAX) {
     heat = HEAT.MAX;
@@ -3522,6 +3543,13 @@ function updateView(dt) {
   // 「押している間ずっと回る」のをやめて「1回押すと90度回って止まる」に変えたので、
   // 押されっぱなしかどうかではなく、押した瞬間だけが意味を持つ ―
   // だから keydown の側(requestRollStep)で受けている。
+
+  // ★ 貨物船が射出されたあとは、機首を機体に預ける。
+  //   プレイヤーに残るのは引き金だけ ― 追いかけること自体は自動でやる。
+  //   ここでキー入力を捨てて、貨物船へ向く舵に差し替える。
+  const auto = (typeof escapeAutoAim === 'function') ? escapeAutoAim() : null;
+  if (auto) { pitchDir = auto.pitch; yawDir = auto.yaw; }
+
   turnView(dt, pitchDir, yawDir);
 }
 
@@ -3539,6 +3567,15 @@ function update(dt) {
     if (empLeft === 0) playReboot();   // 系統が戻った合図
   }
 
+  // ★ 熱をまだ教わっていないあいだは、熱という仕掛けごと止める。
+  //   計器を隠すだけでは足りなかった ― 熱が満ちると画面の中央に
+  //   「⚠ SYSTEM SHUTDOWN / 強制冷却中 ― 操作不能」が大きく点滅し、
+  //   4秒間まったく動けなくなる。旧式艇のビームは1回の引き金で熱+12、
+  //   しかも電力配分は25%固定で下げようがないので、必ずこれが起きていた。
+  //   熱を0に固定しておけば、この下の判定はどれも成立しなくなる。
+  const noHeat = (typeof heatTaught === 'function') && !heatTaught();
+  if (noHeat) { heat = 0; shutdownLeft = 0; }
+
   if (shutdownLeft > 0) {
     // --- 停止中:強制冷却しながらカウントダウン。シールドは回復しない ---
     shutdownLeft -= dt;
@@ -3552,8 +3589,12 @@ function update(dt) {
   }
 
   // --- 通常時:発熱 − 放熱 ---
-  heat += currentHeatRate() * dt;
-  heat = Math.max(heat, 0);   // 0未満にはしない
+  // 熱を教わっていない機体では溜めない(上の noHeat 参照)。
+  // 撃った瞬間に足された熱も、次のコマでここが0へ戻す。
+  if (!noHeat) {
+    heat += currentHeatRate() * dt;
+    heat = Math.max(heat, 0);   // 0未満にはしない
+  }
 
   // --- シールド回復(シールド系統の配分に比例)---
   shieldHp = Math.min(shieldHp + currentShieldRegen() * dt, SHIELD.MAX);
