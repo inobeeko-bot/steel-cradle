@@ -124,6 +124,10 @@ function startDefence() {
   // 敵は哨戒機だけに固定する。
   // 小説の企業艦隊は「倒す相手」ではなく、村を焼く環境として書かれている。
   if (typeof setArchetypeLock === 'function') setArchetypeLock(DEFENCE.ENEMY_TYPE);
+  // ★ この戦闘では敵のミサイルを封じる。強すぎる ―
+  //   旧式艇の対抗手段はフレアだけで、しかもフレアの使い方は
+  //   まだ物語の中で誰にも教わっていない。
+  if (typeof setEnemyMissiles === 'function') setEnemyMissiles(false);
   assignBombardiers();
 
   // 境界の中心は出撃地点。村はここから決まった方角へ固定する
@@ -146,9 +150,11 @@ function clearDefence() {
     if (r.mesh && r.mesh.parent) r.mesh.parent.remove(r.mesh);
   }
   bombRounds = [];
+  if (typeof clearColonyFires === 'function') clearColonyFires();   // 村を元の色へ戻す
   homePos = null; colonyPos = null;
   boundSaid = 0; boundRearm = 0; pullbackLeft = 0; warnedOut = false; lastBoundLine = '';
   if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
+  if (typeof setEnemyMissiles === 'function') setEnemyMissiles(true);   // 他の出撃へ戻す
   if (typeof releaseColony === 'function') releaseColony();   // 背景の追従へ戻す
 }
 
@@ -197,6 +203,9 @@ function updateDefence(dt) {
 function addBurn(amount) {
   if (amount <= 0) return;
   burnPct = Math.min(burnPct + amount, DEFENCE.BURN_MAX);
+
+  // 村の見た目へ反映する。数字を読まなくても、振り返れば分かる状態にする
+  if (typeof setColonyBurn === 'function') setColonyBurn(burnPct);
 
   // 節目だけ報告する。毎回言うとうるさく、一度も言わないと気付かれない
   const marks = [25, 50, 75, 100];

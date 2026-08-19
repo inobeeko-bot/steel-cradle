@@ -103,7 +103,10 @@ const COLONY = {
   //   外殻の灰色しか見えないと、ただの構造物になる。
   //   果樹園の緑、実った畑の黄、そして水 ― この3色が回っていれば、
   //   遠景でも「人が耕して住んでいる場所」に見える。
-  FIELD:   0x4f7a3a,   // 果樹園・畑の緑
+  // ★ 少し明るくした(0x4f7a3a → 0x5f9548)。
+  //   黄と水は遠くからでも読めたが、緑だけが暗く沈んでいた ―
+  //   「本物の林檎の木があった」村なので、ここがいちばん見えてほしい。
+  FIELD:   0x5f9548,   // 果樹園・畑の緑
   GRAIN:   0xbfa23e,   // 実りの黄。収穫祭の色でもある
   WATER:   0x2f6f86,   // 湖と水路
   MIRROR:  0xbcd4e8,   // 鏡面帆
@@ -156,60 +159,91 @@ let colony2 = null;   // 2つめ(円筒)
 function createColony() {
   const g = new THREE.Group();
 
-  // --- リング(回転体そのもの)---------------------------------------
-  // トーラス = ドーナツ形。分割数を低く抑えて、面ごとの単色が見えるようにする
-  // (このゲームの見た目の決まり。初代スターフォックス調)
-  const ringGeo = new THREE.TorusGeometry(
-    COLONY.RING_R, COLONY.RING_TUBE, 8, 44);
-  const ringMat = new THREE.MeshLambertMaterial({
-    color: COLONY.HULL, flatShading: true,
-  });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
-  g.add(ring);
+  // --- リング本体 -----------------------------------------------------
+  //
+  // ★ 作りを変えた。前はトーラス(ドーナツ)1個の中に、
+  //   内壁の区画を細いトーラスとして埋め込んでいた ―
+  //   区画の半径は854〜970、リング本体の肉厚は830〜1170。
+  //   つまり果樹園はリングの肉の中に完全に埋まっていて、
+  //   外からは一片も見えなかった。実際に画面で確かめて分かった。
+  //
+  //   いまは「外殻」と「内壁の地面」を別の筒に分けてある:
+  //     外殻   … 半径1000の筒。外から見える殻
+  //     内壁   … 半径880の筒。BackSide で描く = 輪の内側からだけ見える
+  //   輪の開口部(軸の方向)から覗き込むと、向こう側の内壁が見える。
+  //   そこに土と水が敷いてある ― これが原典の
+  //   「回転体の内壁に土を敷き」そのもの。
+  const RIN  = COLONY.RING_R - COLONY.RING_TUBE * 0.70;   // 内壁(地面)の半径
+  const RW   = COLONY.RING_TUBE * 2.05;                   // 輪の幅(軸方向)
 
-  // --- 内壁の明かり ---------------------------------------------------
-  // 人が住んでいるのはリングの内側の壁。そこに土が敷かれ、町がある。
-  // 内側を向いた細い輪を1本、加算合成で光らせる ―
-  // 外から見て「中に灯りがある」と分かるのは、この1本だけで足りる。
-  // ★ 内側の地面を区画に分ける。
-  //   TorusGeometry の6番目の引数 arc は「どこまで回すか」(ラジアン)。
-  //   これで円弧の一片だけを作り、rotation.z で位置を回して並べれば、
-  //   リングの内側をぐるりと塗り分けられる。
-  //   区画の並びは決め打ち ― 毎回ばらけると「同じ村」に見えなくなる。
+  // 外殻。openEnded にして両端を開けておく ― ここから中が見える
+  const hull = new THREE.Mesh(
+    new THREE.CylinderGeometry(COLONY.RING_R, COLONY.RING_R, RW, 44, 1, true),
+    new THREE.MeshLambertMaterial({ color: COLONY.HULL, flatShading: true }));
+  hull.rotation.x = Math.PI / 2;   // 筒の軸を輪の軸(z)に合わせる
+  g.add(hull);
+
+  // 端の側面板。外殻と内壁のあいだの厚みを塞ぐ。
+  // 開けたままだと、輪を横から見たときに壁の断面が透けて安っぽくなる
+  const sideMat = new THREE.MeshLambertMaterial({
+    color: COLONY.HULL_D, flatShading: true, side: THREE.DoubleSide,
+  });
+  for (const side of [-1, 1]) {
+    const cap = new THREE.Mesh(new THREE.RingGeometry(RIN, COLONY.RING_R, 44, 1), sideMat);
+    cap.position.z = side * RW * 0.5;
+    g.add(cap);
+  }
+
+  // --- 内壁の地面(果樹園・畑・水)-------------------------------------
+  // ここが「自然のあるコロニー」の正体。外殻の灰色しか見えないと、ただの構造物になる。
+  // 区画の並びは決め打ち ― 毎回ばらけると「同じ村」に見えなくなる。
+  //
+  // ★ BackSide で描く。筒を内側から見た面だけが残るので、
+  //   手前の壁は消え、開口部の向こうにある壁が見える ―
+  //   輪の中を覗き込んでいる絵になる。
   const PLOTS = [
     'FIELD', 'FIELD', 'WATER', 'GRAIN', 'FIELD', 'GRAIN',
     'WATER', 'FIELD', 'GRAIN', 'FIELD', 'WATER', 'FIELD',
   ];
   const step = (Math.PI * 2) / PLOTS.length;
-  const groundR = COLONY.RING_R - COLONY.RING_TUBE * 0.52;
+  const plots = [];
   for (let i = 0; i < PLOTS.length; i++) {
-    const geo = new THREE.TorusGeometry(
-      groundR, COLONY.RING_TUBE * 0.34, 5, 5, step * 0.94);   // 0.94 = 区画の境に隙間
-    const plot = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
-      color: COLONY[PLOTS[i]], flatShading: true,
-    }));
-    plot.rotation.z = i * step;
+    const geo = new THREE.CylinderGeometry(
+      RIN, RIN, RW * 0.90, 5, 1, true,
+      i * step, step * 0.965);          // 0.965 = 区画の境にわずかな隙間
+    // ★ emissive を入れて、影の側でも色が沈まないようにする。
+    //   原典では「鏡面帆で採った陽光を軸から降らせる」― この面は
+    //   常に光が当たっている側なので、暗くなるほうが嘘になる。
+    //   実際、素の Lambert だと緑がほぼ黒になって果樹園に見えなかった。
+    const mat = new THREE.MeshLambertMaterial({
+      color: COLONY[PLOTS[i]], flatShading: true, side: THREE.BackSide,
+      emissive: COLONY[PLOTS[i]], emissiveIntensity: 0.62,
+    });
+    const plot = new THREE.Mesh(geo, mat);
+    plot.rotation.x = Math.PI / 2;
     g.add(plot);
+    // 焼失の演出(defence.js)で色を変えるので、名前と元の色を覚えておく
+    plots.push({ mesh: plot, kind: PLOTS[i], base: COLONY[PLOTS[i]], burnt: 0 });
   }
 
-  // その上に暖色の明かりを薄く重ねる。畑の色を殺さない程度に。
+  // 内壁の明かり。畑の色を殺さない程度に、薄い暖色を重ねる。
   // 「灯りがある」ことと「耕されている」ことを両方見せたい
-  const glowGeo = new THREE.TorusGeometry(
-    groundR, COLONY.RING_TUBE * 0.24, 6, 44);
-  const glowMat = new THREE.MeshBasicMaterial({
-    color: COLONY.WINDOW, transparent: true, opacity: 0.22,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  });
-  g.add(new THREE.Mesh(glowGeo, glowMat));
+  const glow = new THREE.Mesh(
+    new THREE.CylinderGeometry(RIN * 0.995, RIN * 0.995, RW * 0.86, 30, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: COLONY.WINDOW, transparent: true, opacity: 0.10,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide,
+    }));
+  glow.rotation.x = Math.PI / 2;
+  g.add(glow);
 
   // --- リングの縁の輪郭線 ---------------------------------------------
-  // トーラスに EdgesGeometry を掛けると線が出すぎて滲むので、
   // 細い輪を2本、明るい色で重ねて「縁」に見せる
   const rimMat = new THREE.MeshBasicMaterial({ color: COLONY.EDGE });
   for (const side of [-1, 1]) {
     const rim = new THREE.Mesh(
       new THREE.TorusGeometry(COLONY.RING_R, COLONY.RING_TUBE * 0.055, 4, 44), rimMat);
-    rim.position.z = side * COLONY.RING_TUBE * 0.92;
+    rim.position.z = side * RW * 0.5;
     g.add(rim);
   }
 
@@ -223,7 +257,7 @@ function createColony() {
   for (let i = 0; i < BANDS; i++) {
     const a = (i / BANDS) * Math.PI * 2;
     const band = new THREE.Mesh(
-      new THREE.BoxGeometry(38, COLONY.RING_TUBE * 0.55, COLONY.RING_TUBE * 2.25),
+      new THREE.BoxGeometry(38, COLONY.RING_TUBE * 0.30, COLONY.RING_TUBE * 2.05),
       bandMat);
     band.position.set(Math.cos(a) * COLONY.RING_R, Math.sin(a) * COLONY.RING_R, 0);
     band.rotation.z = a;
@@ -269,16 +303,19 @@ function createColony() {
   const mirrorMat = new THREE.MeshLambertMaterial({
     color: COLONY.MIRROR, flatShading: true, side: THREE.DoubleSide,
   });
+  // ★ 置き場所を変えた。前は軸の周り(半径600)に置いていて、
+  //   輪の開口部を正面から塞いでいた ― 中の果樹園が帆の裏に隠れる。
+  //   いまはリングの外(半径1.28倍)へ出し、軸のほうへ傾けてある。
+  //   「外で陽を受けて、中へ落としている」形になり、開口部は空く。
   for (let i = 0; i < 3; i++) {
     const a = (i / 3) * Math.PI * 2;
     const sail = new THREE.Mesh(
-      new THREE.PlaneGeometry(COLONY.RING_R * 1.05, COLONY.RING_R * 0.62),
+      new THREE.PlaneGeometry(COLONY.RING_R * 0.86, COLONY.RING_R * 0.50),
       mirrorMat);
-    // 軸の外側に、軸へ向けて傾けて置く
-    const out = COLONY.RING_R * 0.60;
-    sail.position.set(Math.cos(a) * out, Math.sin(a) * out, -COLONY.HUB_LEN * 0.62);
-    sail.rotation.z = a;
-    sail.rotation.y = 0.55;
+    const out = COLONY.RING_R * 1.28;
+    sail.position.set(Math.cos(a) * out, Math.sin(a) * out, -COLONY.RING_TUBE * 1.5);
+    sail.rotation.z = a + Math.PI / 2;   // 板の長辺を輪の接線方向へ
+    sail.rotation.y = -0.75;             // 軸のほうへ向けて倒す
     g.add(sail);
     sail.add(new THREE.LineSegments(
       new THREE.EdgesGeometry(sail.geometry),
@@ -314,7 +351,7 @@ function createColony() {
 
   scene.add(tilt);
 
-  colony = { group: tilt, spin: g, beacons: beacons };
+  colony = { group: tilt, spin: g, beacons: beacons, plots: plots };
   updateColony(0);   // 最初の1コマから正しい位置に置く
   return colony;
 }
@@ -357,6 +394,94 @@ function anchorColony() {
 
 function releaseColony() { colonyAnchor = null; }
 
+// ===================================================================
+// 焼失の見た目(defence.js の焼失率が動かす)
+//
+// ★ 数字ではなく面で見せる。
+//   帯の「焼失 62%」を読まなくても、村を振り返れば分かる状態にしたい。
+//   小説v2でカイトが最後に見たのは「燃える果樹園」で、
+//   数字ではなく色だった。
+//
+//   区画は12枚。焼ける順番は決め打ちで散らしてある ―
+//   端から順に焼くと火事ではなく塗り替えに見えるため。
+// ===================================================================
+const BURN_ORDER = [3, 8, 0, 5, 10, 1, 6, 11, 4, 9, 2, 7];
+const CHAR = 0x2a2119;      // 焼けたあとの土。黒ではなく焦げ茶
+const EMBER = 0xff7a2a;     // 燃えている面の色
+
+let colonyFires = [];       // 燃えている区画に置く光
+
+function setColonyBurn(pct) {
+  if (!colony || !colony.plots) return;
+  const n = colony.plots.length;
+
+  for (let k = 0; k < n; k++) {
+    const p = colony.plots[BURN_ORDER[k]];
+    // この区画が焼け始める/焼け終わる進み具合。
+    // 隣と少し重ねてあるので、常にどこかが「燃えている途中」になる
+    const from = (k / n) * 100 * 0.92;
+    const to   = from + (100 / n) * 1.7;
+    const t = Math.max(0, Math.min((pct - from) / Math.max(to - from, 0.001), 1));
+    if (Math.abs(t - p.burnt) < 0.004) continue;   // 変化が無ければ触らない
+    p.burnt = t;
+
+    // 元の色 → 燃える橙 → 焦げ茶。山なりに通す ―
+    // いきなり黒くすると「消えた」に見えて、燃えたように見えない
+    const fire = Math.sin(Math.min(t, 1) * Math.PI);          // 途中で最大
+    const c = new THREE.Color(p.base).lerp(new THREE.Color(CHAR), t);
+    c.lerp(new THREE.Color(EMBER), fire * 0.75);
+    p.mesh.material.color.copy(c);
+    p.mesh.material.emissive.copy(c);
+    p.mesh.material.emissiveIntensity = 0.62 + fire * 0.5;    // 燃えている間だけ明るい
+  }
+
+  updateColonyFires(pct);
+}
+
+// 燃えている面の上に置く光と煙。数は焼失率で増える
+function updateColonyFires(pct) {
+  if (!colony || typeof scene === 'undefined' || !scene) return;
+  if (!flareGlowTex && typeof makeFlareGlowTexture === 'function') {
+    flareGlowTex = makeFlareGlowTexture();
+  }
+  if (!flareGlowTex) return;
+
+  const want = Math.min(Math.round(pct / 6), 16);   // 焼失6%ごとに1つ、最大16
+  while (colonyFires.length < want) {
+    // 内壁の上のどこか。輪に沿って散らす
+    const a = Math.random() * Math.PI * 2;
+    const r = COLONY.RING_R - COLONY.RING_TUBE * 0.70;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: flareGlowTex, color: 0xff8a3a, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    sp.position.set(Math.cos(a) * r, Math.sin(a) * r,
+                    (Math.random() - 0.5) * COLONY.RING_TUBE * 1.4);
+    const base = 90 + Math.random() * 70;
+    sp.scale.setScalar(base);
+    colony.spin.add(sp);      // 輪と一緒に回る = 地面に付いている火に見える
+    colonyFires.push({ sprite: sp, base: base, speed: 2.4 + Math.random() * 2.2,
+                       phase: Math.random() * 6.28 });
+  }
+  while (colonyFires.length > want) {
+    const f = colonyFires.pop();
+    if (f.sprite.parent) f.sprite.parent.remove(f.sprite);
+  }
+}
+
+function clearColonyFires() {
+  for (const f of colonyFires) if (f.sprite.parent) f.sprite.parent.remove(f.sprite);
+  colonyFires = [];
+  if (colony && colony.plots) {
+    for (const p of colony.plots) {
+      p.burnt = 0;
+      p.mesh.material.color.setHex(p.base);
+      p.mesh.material.emissive.setHex(p.base);
+      p.mesh.material.emissiveIntensity = 0.62;
+    }
+  }
+}
+
 function updateColony(dt) {
   if (!colony || !playerShip) return;
 
@@ -372,6 +497,18 @@ function updateColony(dt) {
       playerShip.position.y + COLONY.DIR.y * COLONY.DIST,
       playerShip.position.z + COLONY.DIR.z * COLONY.DIST
     );
+  }
+
+  // --- 火のゆらぎ ---
+  // 大きさを不規則に揺らすだけ。止まった光だと、火ではなく灯りに見える
+  if (colonyFires.length) {
+    for (const f of colonyFires) {
+      f.phase += dt * f.speed;
+      // 周期の違う波を重ねて、規則正しく見えないようにする
+      const k = 1 + 0.22 * Math.sin(f.phase) + 0.12 * Math.sin(f.phase * 2.3);
+      f.sprite.material.opacity = 0.62 + 0.28 * (0.5 + 0.5 * Math.sin(f.phase * 1.7));
+      f.sprite.scale.setScalar(f.base * k);
+    }
   }
 
   // --- 回す ---

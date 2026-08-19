@@ -1291,6 +1291,13 @@ function squadLineup() {
 //   小説の敵は「企業艦隊の哨戒網」― 精鋭の一騎討ち相手ではなく、
 //   数で押してくる哨戒機。だから初戦は SOLDIER だけにする。
 //   null に戻せば、また3タイプが混ざる。
+// ミサイルを封じるか(出撃ごとに決める)。
+// 兵装そのものを機体から抜くのではなく、この出撃では撃たない、という扱い ―
+// 同じ敵タイプを後の章でそのまま使えるようにしておくため。
+let missilesOff = false;
+function setEnemyMissiles(on) { missilesOff = !on; }
+function enemyMissilesOff() { return missilesOff; }
+
 let archetypeLock = null;
 function setArchetypeLock(key) {
   archetypeLock = (key && AI_ARCHETYPES[key]) ? key : null;
@@ -5702,6 +5709,16 @@ function updateEnemyAI(e, dt) {
 // ===================================================================
 function updateEnemyMissileLogic(e, dt, distance) {
   const M = e.arch.MISSILE;   // このタイプのミサイル性能
+
+  // ★ 敵のミサイルを封じている出撃がある(いまはアルカディア防衛戦)。
+  //   旧式艇にはフレアしか対抗手段が無く、ロック警報 → 判断 → フレア
+  //   という読み合いは、まだ何も教わっていない初戦には重すぎる。
+  //   予告(missileTele)も含めて丸ごと止めるので、警報自体が鳴らない。
+  if (typeof enemyMissilesOff === 'function' && enemyMissilesOff()) {
+    e.missileTele = 0;
+    e.missileBluff = false;
+    return;
+  }
 
   // 武器を壊されている間はミサイルも撃てない(スコープの部位破壊)。
   // 銃だけ止めてミサイルが飛んでくると「武器を壊した」意味が伝わらない
