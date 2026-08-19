@@ -3585,26 +3585,33 @@ function tickBody(now) {
   // ★ 発艦の移動中(defence.js の 'run')は数えない。
   //   持ち場へ着くまでは戦闘が始まっていないので、
   //   ここで減らすと「見ているだけの時間」で持ち時間が削られる。
-  if (typeof defenceLocked === 'function' && defenceLocked()
-      && typeof defencePullingBack === 'function' && !defencePullingBack()) {
-    return;
-  }
-  missionTime -= dt;
-  timerElMission.textContent = formatTime(missionTime);
-  // 残り1分を切ったら赤く点滅させる(音の代わりの警告)
-  timerElMission.classList.toggle('warn', missionTime <= MISSION.WARN_SEC);
-  // 残り1分を切った瞬間に1回だけ警告を鳴らす
-  if (missionTime <= MISSION.WARN_SEC && !lastTimeWarned) {
-    playTimeWarning();
-    speakVoice('ONE_MINUTE');
-    lastTimeWarned = true;
-  }
-  // 防衛戦のときは、時間切れ = 生き延びた = 任務達成。
-  // 決着は defence.js が出すので、こちらの時間切れ処理は通さない。
-  if (typeof defenceRunning === 'function' && defenceRunning()) { /* defence.js に任せる */ }
-  else if (missionTime <= 0) {
-    missionTime = 0;
-    endMission('timeup');
+  //
+  // ★★ ここで return してはいけない。
+  //   一度そう書いて、この下にある updateDefence(dt) ごと止めてしまい、
+  //   発艦の移動が永久に終わらなくなった ―
+  //   編隊を組んだまま画面が固まる、という形で表に出た。
+  //   飛ばすのは「時間を数えること」だけ。あとの処理は必ず通す。
+  const launchRun = (typeof defenceLocked === 'function') && defenceLocked()
+    && ((typeof defencePullingBack !== 'function') || !defencePullingBack());
+
+  if (!launchRun) {
+    missionTime -= dt;
+    timerElMission.textContent = formatTime(missionTime);
+    // 残り1分を切ったら赤く点滅させる(音の代わりの警告)
+    timerElMission.classList.toggle('warn', missionTime <= MISSION.WARN_SEC);
+    // 残り1分を切った瞬間に1回だけ警告を鳴らす
+    if (missionTime <= MISSION.WARN_SEC && !lastTimeWarned) {
+      playTimeWarning();
+      speakVoice('ONE_MINUTE');
+      lastTimeWarned = true;
+    }
+    // 防衛戦のときは、時間切れ = 生き延びた = 任務達成。
+    // 決着は defence.js が出すので、こちらの時間切れ処理は通さない。
+    if (typeof defenceRunning === 'function' && defenceRunning()) { /* defence.js に任せる */ }
+    else if (missionTime <= 0) {
+      missionTime = 0;
+      endMission('timeup');
+    }
   }
 
   updateAutoFire(dt);               // 機関砲の連射
