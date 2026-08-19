@@ -87,9 +87,14 @@ const DEFENCE = {
   //   逃げ続けて初めて届く。ふつうに戦っている限り一生出ない。
   //   敵との交戦距離は85しかないので、戦闘は自機の周囲300で完結する。
   BOUND_WARN:     1100,  // ここを越えると一言だけ(操作は奪わない)
-  BOUND_TURN:     1400,  // ここを越えると強制的に機首を村へ向ける
-  BOUND_RELEASE:    40,  // 機首が村からこの角度以内に入ったら操作を返す(度)
-  BOUND_MAX_SEC:   2.5,  // 万一向き切れなくても、この秒数で必ず返す
+  BOUND_TURN:     1400,  // ここを越えると強制的に機首を持ち場へ向ける
+  BOUND_RELEASE:    40,  // 機首が持ち場からこの角度以内に入ったら操作を返す(度)
+  // ★ 万一向き切れなくても、この秒数で必ず返す。
+  //   2.5 にしていたが、実測の最悪が2.4秒で余裕が0.1秒しか無かった ―
+  //   旧式艇は右の推力偏向が渋い(効き0.55)ので、右へ180度回すと遅い。
+  //   打ち切られると、外を向いたまま操作が返る = 引き戻しが効かない。
+  //   向き切れば即座に返るので、上げても普段の体感は変わらない。
+  BOUND_MAX_SEC:   3.5,
   // ★ 操作を返したあと、すぐには再発動させない。
   //   これが無いと、境界の外に留まったとき毎コマ発動と解除を繰り返し、
   //   舵が点滅して操縦できなくなる(実際にそうなった)。
@@ -344,14 +349,14 @@ function colonyImpact(point) {
 //
 // ★ 罰は置かない。失敗にもしないし、焼失率も増えない ―
 //   決まっている結末で罰しない、という焼失率と同じ考え方。
-//   起きるのは「一言」と「機首が村へ向く」だけ。
+//   起きるのは「一言」と「機首が持ち場へ向く」だけ。
 function updateBoundary(dt) {
   if (!homePos || typeof playerShip === 'undefined' || !playerShip) return;
 
   // 引き戻し中。向き切ったら操作を返す
   if (pullbackLeft > 0) {
     pullbackLeft -= dt;
-    if (pullbackLeft <= 0 || headingErrorToColony() <= DEFENCE.BOUND_RELEASE) {
+    if (pullbackLeft <= 0 || headingErrorToStation() <= DEFENCE.BOUND_RELEASE) {
       pullbackLeft = 0;
       boundRearm = DEFENCE.BOUND_REARM;   // すぐには次を発動させない
     }
@@ -415,13 +420,18 @@ function sayComeBack() {
   boundSaid++;
 }
 
-// 機首と村のあいだの角度(度)。0 なら真っすぐ村を向いている
+// 機首と持ち場のあいだの角度(度)。0 なら真っすぐ持ち場を向いている。
+//
+// ★ 向ける先は「持ち場(出撃地点)」であって、村ではない。
+//   村は4200先にあるので、そちらへ向けると戦場からどんどん離れる ―
+//   引き戻したはずが、いちばん遠ざかる向きへ送り出すことになる。
+//   カイトが戻るべきなのは、僚機と敵がいる空域そのもの。
 const _bFwd = new THREE.Vector3();
 const _bTo  = new THREE.Vector3();
-function headingErrorToColony() {
-  if (!colonyPos || typeof playerShip === 'undefined' || !playerShip) return 0;
+function headingErrorToStation() {
+  if (!homePos || typeof playerShip === 'undefined' || !playerShip) return 0;
   _bFwd.set(0, 0, -1).applyQuaternion(playerShip.quaternion);
-  _bTo.subVectors(colonyPos, playerShip.position).normalize();
+  _bTo.subVectors(homePos, playerShip.position).normalize();
   return Math.acos(Math.max(-1, Math.min(1, _bFwd.dot(_bTo)))) * 180 / Math.PI;
 }
 
@@ -431,17 +441,17 @@ function defencePullingBack() { return pullbackLeft > 0; }
 const _pInv = new THREE.Quaternion();
 const _pTo  = new THREE.Vector3();
 
-// 村へ機首を向けるための舵。turnView() にそのまま渡せる形で返す。
+// 持ち場へ機首を向けるための舵。turnView() にそのまま渡せる形で返す。
 // 戻り値 { pitch, yaw } の範囲はキー入力と同じ −1〜+1。
 // ★ 奪うのは舵だけ。射撃も速度も視点も、プレイヤーのまま。
 function defenceAutoAim() {
-  if (!defencePullingBack() || !colonyPos) return null;
+  if (!defencePullingBack() || !homePos) return null;
   if (typeof playerShip === 'undefined' || !playerShip) return null;
 
-  // 村の位置を「機体から見た座標」へ移す。
+  // 持ち場の位置を「機体から見た座標」へ移す。
   // 向きの逆回転を掛けると、前が −Z・上が +Y・左が −X になる
   _pInv.copy(playerShip.quaternion).invert();
-  _pTo.subVectors(colonyPos, playerShip.position).applyQuaternion(_pInv);
+  _pTo.subVectors(homePos, playerShip.position).applyQuaternion(_pInv);
 
   const flat     = Math.sqrt(_pTo.x * _pTo.x + _pTo.z * _pTo.z);
   const yawErr   = Math.atan2(-_pTo.x, -_pTo.z);   // 左にいれば正
