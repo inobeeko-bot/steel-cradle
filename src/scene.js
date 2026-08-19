@@ -314,6 +314,13 @@ const DUST = {
   // 速いほど倍率も上がる作りにすると、加速した瞬間に線が一気に伸びる。
   STREAK:     0.13,   // 基本の尾の長さ(秒)
   STREAK_GAIN: 2.6,   // 最高速で尾が何倍に伸びるか
+  // ★ 尾の長さの上限。
+  //   尾は速度に正比例するので、脱出戦の追走(毎秒1140)では
+  //   1本が726ユニットまで伸びる ― 箱の一辺(95)の8倍で、
+  //   線ではなく画面を覆う板になる。箱より少し短いところで止める。
+  //   通常飛行の最高速(50)でも尾は32、バーストでも50なので、
+  //   ここが効くのは毎秒110を超えたとき ― つまり追走中だけ。
+  TAIL_MAX:     70,
 
   // 濃さも速度で変える。止まっているときは控えめ、加速すると前が線だらけになる
   OPACITY_BASE: 0.42,
@@ -3743,9 +3750,13 @@ function updateDust() {
 
   // 尾を伸ばす向き = 速度の逆向き。速いほど長く、さらに倍率でもっと長くなる
   const k = DUST.STREAK * (1 + ratio * DUST.STREAK_GAIN);
-  const tailX = -shipVelocity.x * k;
-  const tailY = -shipVelocity.y * k;
-  const tailZ = -shipVelocity.z * k;
+  // 長さだけを頭打ちにする(向きは速度の逆向きのまま)。
+  // 速度で割って掛け直すことで、方向を保ったまま長さを抑えられる。
+  const tailLen = Math.min(speedNow * k, DUST.TAIL_MAX);
+  const tailK   = (speedNow > 0.0001) ? (tailLen / speedNow) : 0;
+  const tailX = -shipVelocity.x * tailK;
+  const tailY = -shipVelocity.y * tailK;
+  const tailZ = -shipVelocity.z * tailK;
 
   // 濃さも速度で変える。加速すると前方が線で埋まる
   dust.material.opacity = Math.min(

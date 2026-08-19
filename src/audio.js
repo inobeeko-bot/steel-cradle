@@ -732,6 +732,17 @@ function playRadioOpen() {
   playNoise(0.055, 0.13, 2000, 600, 'bandpass', 0.175);
 }
 
+// 僚機の呼び寄せ(H)。「送信した」と分かる音。
+// 無線を開く音の親戚だが、こちらは上がる三音にして
+// 「こちらから呼んだ」と「向こうから来た」を耳で区別できるようにする。
+function playWingCall() {
+  playNoise(0.070, 0.26, 3000, 800, 'bandpass');          // 送信を開く
+  playTone( 640, 0.075, 0.22, 'square', 0.035);
+  playTone( 860, 0.075, 0.22, 'square', 0.100);
+  playTone(1180, 0.110, 0.24, 'square', 0.165);           // 上がりきる = 呼びかけ
+  playTone( 214, 0.130, 0.12, 'square', 0.035);           // 低い胴鳴り
+}
+
 const ALARM_LOOP_SEC = 1.20;   // 1周の長さ。story.js がこの間隔で呼ぶ
 function playStoryAlarmLoop() {
   playTone(622, 0.30, 0.105, 'square',   0);

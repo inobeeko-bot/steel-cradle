@@ -2182,6 +2182,14 @@
        読めない計器が並んでいると、他の計器まで読まれなくなる */
     /* body に付ける。熱パネルは計器の入れ物の外にあるので、
        特定の親を前提にするとセレクタが外れる(実際に一度外した) */
+    /* 僚機の呼び寄せ(H)の残り回数。
+       僚機のいる出撃でだけ出したいので、既定では隠して main.js が出す。
+       呼んでいる最中は .on を付けて、効いていることを見えるようにする。 */
+    .wing-call-row { display: none; }
+    .wing-call-row.shown { display: block; }
+    .wing-call-row.on { color: #9fe1cb; animation: warnBlink 0.5s steps(2) 3; }
+    .wing-call-row.spent { color: #4a5b66; }
+
     body.no-heat .panel-heat,
     body.no-heat .heat-only { display: none; }
     /* ★ 強制シャットダウンの警告も熱の一部。
@@ -2481,6 +2489,9 @@
         <!-- EMPを浴びている間だけ出す警告。ふだんは非表示 -->
         <div id="emp-badge" class="emp-badge">EMP <b>0.0</b>s</div>
         <div>A-TRK <b id="auto-track">ON</b></div>
+        <!-- 僚機の呼び寄せ(H)。残り回数。僚機のいない出撃では出さない。
+             呼んでいる最中は .on が付いて光る -->
+        <div id="wing-call-row" class="wing-call-row"><span data-i18n="wing.call.label">呼集</span> <b id="wing-call">3</b> &nbsp; H</div>
         <!-- 回収した機材の効果。効いているときだけ光る(EMPバッジと同じ作り) -->
         <div id="salvage-badge" class="salvage-badge">SALVAGE <b id="salvage-buff">――</b></div>
         <!-- 操作説明の出し方だけは常に見えるようにしておく -->

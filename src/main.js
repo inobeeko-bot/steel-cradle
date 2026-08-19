@@ -683,6 +683,8 @@ const bombNameEl    = document.getElementById('wp-bomb-name');
 const bombAmmoEl    = document.getElementById('wp-bomb-ammo');
 const bombRowEl     = document.getElementById('wp-bomb-row');
 const empBadgeEl    = document.getElementById('emp-badge');
+const wingCallRowEl = document.getElementById('wing-call-row');
+const wingCallEl    = document.getElementById('wing-call');
 const salvageBadgeEl = document.getElementById('salvage-badge');
 const salvageBuffEl  = document.getElementById('salvage-buff');
 const proximityEl   = document.getElementById('proximity');
@@ -781,6 +783,9 @@ function renderHeat() {
   // EMPを浴びている間だけ、残り秒数を出す
   empBadgeEl.classList.toggle('on', empLeft > 0);
   if (empLeft > 0) empBadgeEl.querySelector('b').textContent = empLeft.toFixed(1);
+
+  // 僚機の呼び寄せ(H)。残り回数と、いま効いているかどうか
+  renderWingCall();
 
   // 回収した機材の効果。効いているものを短く並べて、残り秒を出す
   renderSalvageBadge();
@@ -896,6 +901,21 @@ function salvageBuffText() {
       + Math.ceil(coolantLeft) + 's');
   }
   return parts.length ? parts.join('  ') : null;
+}
+
+// 僚機の呼び寄せ(H)の計器。
+// 僚機のいない出撃(訓練飛行)では丸ごと隠す ―
+// 押しても何も起きないキーが計器に並んでいると、覚える気をなくす。
+function renderWingCall() {
+  if (!wingCallRowEl) return;
+  const on = (typeof wingCallActive === 'function') && wingCallActive();
+  wingCallRowEl.classList.toggle('shown', on);
+  if (!on) return;
+  const left = (typeof wingCallCount === 'function') ? wingCallCount() : 0;
+  wingCallEl.textContent = String(left);
+  wingCallRowEl.classList.toggle('spent', left <= 0);
+  wingCallRowEl.classList.toggle('on',
+    (typeof wingRallying === 'function') && wingRallying());
 }
 
 function renderSalvageBadge() {
@@ -1280,6 +1300,14 @@ window.addEventListener('keydown', (event) => {
   // 同じ状態を2か所で持つとズレる原因になるので、ここでは尋ねて反転させるだけ。
   if (event.key.toLowerCase() === 'x') {
     applyViewMode(!isCockpitView());
+    return;
+  }
+
+  // H キー … 僚機の呼び寄せ(1回の出撃で3回まで)
+  // 自動追尾中(貨物船の追跡)でも押せる ― 撃つ以外に残る唯一の手なので。
+  // ただしそのころには僚機は落ちているので、たいていは「応答なし」が返る。
+  if (event.key.toLowerCase() === 'h' && !event.repeat) {
+    if (typeof callWingmen === 'function') callWingmen();
     return;
   }
 

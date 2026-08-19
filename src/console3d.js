@@ -710,6 +710,12 @@ function drawConsole3D(s, dt) {
   if (showsHeat()) items.push(['HEAT RATE', s.heatRate]);
   items.push(['PRESET', s.preset]);
   items.push(['A-TRK', s.autoTrack ? 'ON' : 'OFF']);
+  // 僚機の呼び寄せ(H)の残り回数。僚機のいる出撃でだけ欄が増える。
+  // コックピットでは下の DOM の計器盤が隠れるので、ここにも出さないと
+  // 「三回しか押せない」ことが分からない
+  if (typeof wingCallActive === 'function' && wingCallActive()) {
+    items.push([t('wing.call.label'), String(wingCallCount()) + '  H']);
+  }
   if (s.empLeft > 0) items.push(['EMP', s.empLeft.toFixed(1) + 's']);
   // 回収した機材の効果。効いているときだけ欄が増える(EMPと同じ扱い)
   if (s.salvageBuff) items.push(['SALVAGE', s.salvageBuff]);

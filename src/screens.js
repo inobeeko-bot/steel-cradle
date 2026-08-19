@@ -336,6 +336,9 @@ function briefSortie() {
     [2600, t('brief.enemy'), 'warn'],
     [3400, t('brief.friend'), null],
     [4200, t('brief.you'),   'warn'],
+    // ★ 呼集は Tab の説明書きにも書いてあるが、初めての戦闘で
+    //   説明書きを開く人はいない。使える手はここで一度言っておく。
+    [5000, t('brief.call'),  'kill'],
   ];
   for (const [ms, text, kind] of lines) {
     setTimeout(() => {
