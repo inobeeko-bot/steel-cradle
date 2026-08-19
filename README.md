@@ -6,6 +6,7 @@
 - 三部作ストーリー(政治劇・結婚と子世代継承)+横スクロールの母艦生活パート
 - 詳細仕様: [`docs/steel_cradle_setting.md`](docs/steel_cradle_setting.md)
 - 原作小説: [`docs/steel_cradle_novel_v2.md`](docs/steel_cradle_novel_v2.md) ← **こちらが正**
+- 改稿ノート: [`docs/story_revision_v2_notes.md`](docs/story_revision_v2_notes.md) ― v1から何をなぜ変えたか。台詞を書く前に「6. 名前の解体」を読む
 
 ## 遊びかた
 
