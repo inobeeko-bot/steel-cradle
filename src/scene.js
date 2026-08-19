@@ -3260,6 +3260,23 @@ function resetFlight() {
 let speedOverride = 0;
 function setSpeedOverride(v) { speedOverride = Math.max(0, v || 0); }
 
+// 自機を「その向きへ、その速さで飛んでいる状態」に置く。
+// ★ 発艦の演出で使う(defence.js)。
+//   速度を目標へ寄せる処理は 0.4秒ほどかけて追いつく作りなので、
+//   止まった状態から始めると「射出された」ようには見えない。
+//   最初から速度ベクトルを入れてしまう。
+function launchShipToward(target, speed) {
+  if (!playerShip || !shipQuat) return;
+  const dir = target.clone().sub(playerShip.position).normalize();
+  const look = new THREE.Matrix4().lookAt(
+    new THREE.Vector3(0, 0, 0), dir, new THREE.Vector3(0, 1, 0));
+  shipQuat.setFromRotationMatrix(look);
+  playerShip.quaternion.copy(shipQuat);
+  if (typeof camQuat !== 'undefined' && camQuat) camQuat.copy(shipQuat);
+  shipVelocity.copy(dir).multiplyScalar(speed);
+  setSpeedOverride(speed);
+}
+
 function speedFromEnginePower(enginePercent) {
   const cap = (typeof SALVAGE !== 'undefined') ? SALVAGE.POWER_INPUT_MAX : 100;
   const ratio = Math.max(0, Math.min(cap, enginePercent)) / 100;
@@ -3776,9 +3793,18 @@ function updateDust() {
 
   // 尾を伸ばす向き = 速度の逆向き。速いほど長く、さらに倍率でもっと長くなる
   const k = DUST.STREAK * (1 + ratio * DUST.STREAK_GAIN);
+
+  // ★ ものすごく速いとき(発艦の移動など)は、尾を短く・薄くする。
+  //   塵の箱は一辺95しかないので、尾が70もあると1本1本が箱を貫き、
+  //   画面が線で埋まってワープトンネルになる ―
+  //   実際そうなって、見せたいはずの編隊が完全に隠れた。
+  //   通常飛行(最高50・バーストでも78)では fast が0なので、
+  //   これまでの見た目は一切変わらない。
+  const fast = Math.max(0, Math.min((speedNow - 90) / 200, 1));
+
   // 長さだけを頭打ちにする(向きは速度の逆向きのまま)。
   // 速度で割って掛け直すことで、方向を保ったまま長さを抑えられる。
-  const tailLen = Math.min(speedNow * k, DUST.TAIL_MAX);
+  const tailLen = Math.min(speedNow * k, DUST.TAIL_MAX * (1 - fast * 0.75));
   const tailK   = (speedNow > 0.0001) ? (tailLen / speedNow) : 0;
   const tailX = -shipVelocity.x * tailK;
   const tailY = -shipVelocity.y * tailK;
@@ -3786,7 +3812,7 @@ function updateDust() {
 
   // 濃さも速度で変える。加速すると前方が線で埋まる
   dust.material.opacity = Math.min(
-    DUST.OPACITY_BASE + ratio * DUST.OPACITY_GAIN, 0.95);
+    DUST.OPACITY_BASE + ratio * DUST.OPACITY_GAIN, 0.95) * (1 - fast * 0.65);
 
   const center = [p.x, p.y, p.z];
 

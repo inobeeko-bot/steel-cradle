@@ -100,6 +100,17 @@ const DEFENCE = {
   //   舵が点滅して操縦できなくなる(実際にそうなった)。
   //   内側へ戻れば即座に再武装するので、外に居座り続けたときだけ効く。
   BOUND_REARM:       6,  // 外に留まったまま、次に引き戻すまでの秒数
+
+  // --- 発艦(戦闘が始まる前の移動)-----------------------------------
+  // ★ コロニーのすぐ脇から、持ち場まで四機で一気に飛ぶ。
+  //   ここは戦闘ではなく「出てきた」ことを見せるための時間なので、
+  //   操縦も編隊も機体に預ける。プレイヤーは見ているだけでよい。
+  //   ADVの発艦筒から出た直後の続き、という位置づけ。
+  RUN_DIST:       1630,  // 持ち場から何だけ離れた所から始めるか
+                         //(村の中心まで1570 ― 輪の外縁1170の外側400)
+  RUN_SPEED:       340,  // 巡航17の20倍。「射出された」速さ
+  RUN_END:         160,  // 持ち場にこれだけ近づいたら戦闘へ渡す
+  RUN_MAX_SEC:      12,  // 何かあっても、この秒数で必ず戦闘へ渡す
 };
 
 let defenceActive = false;
@@ -108,6 +119,9 @@ let burnPct       = 0;     // 焼失率(0〜100)
 let defenceLosses = 0;     // 失った僚機の数
 let bombRounds    = [];    // 飛んでいる砲撃弾
 let burnSaid      = 0;     // どこまで焼失を報告したか(25/50/75/100)
+
+let defencePhase  = 'fight';   // 'run'(発艦の移動) → 'fight'(戦闘)
+let runLeft       = 0;         // 発艦の移動に使える残り秒(保険)
 
 let homePos       = null;  // 出撃地点。境界はここを中心に測る
 let colonyPos     = null;  // 固定したアルカディアの位置
@@ -143,7 +157,53 @@ function startDefence() {
 
   // 任務時間は「生き延びる時間」そのもの
   if (typeof missionTime !== 'undefined') missionTime = DEFENCE.HOLD_SEC;
+
+  beginLaunchRun();
 }
+
+// --- 発艦。コロニーの脇から持ち場まで、四機で飛ぶ ---------------------
+function beginLaunchRun() {
+  defencePhase = 'fight';
+  runLeft = 0;
+  if (!homePos || !colonyPos) return;          // 3Dが無い状況では省く
+  if (typeof playerShip === 'undefined' || !playerShip) return;
+
+  // 村のすぐ脇へ置く。持ち場から見て村の方向へ RUN_DIST 進んだ所
+  const toVillage = colonyPos.clone().sub(homePos).normalize();
+  playerShip.position.copy(homePos).addScaledVector(toVillage, DEFENCE.RUN_DIST);
+
+  // 持ち場へ向けて、最初から高速で飛んでいる状態にする
+  if (typeof launchShipToward === 'function') launchShipToward(homePos, DEFENCE.RUN_SPEED);
+  if (typeof setWingFormation === 'function') setWingFormation(true);
+  if (typeof placeWingmenNearPlayer === 'function') placeWingmenNearPlayer();
+
+  defencePhase = 'run';
+  runLeft = DEFENCE.RUN_MAX_SEC;
+
+  if (typeof addCombatLog === 'function') addCombatLog(t('run.log'), 'warn');
+  if (typeof playFreighterLaunch === 'function') playFreighterLaunch();
+  if (typeof startShake === 'function') startShake(0.9);
+}
+
+function updateLaunchRun(dt) {
+  runLeft -= dt;
+  const left = playerShip ? playerShip.position.distanceTo(homePos) : 0;
+  if (left <= DEFENCE.RUN_END || runLeft <= 0) endLaunchRun();
+}
+
+function endLaunchRun() {
+  defencePhase = 'fight';
+  if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
+  if (typeof setWingFormation === 'function') setWingFormation(false);
+  // 移動で減ったぶんの時間を戻す。戦うための180秒はここから数える
+  if (typeof missionTime !== 'undefined') missionTime = DEFENCE.HOLD_SEC;
+  if (typeof addCombatLog === 'function') addCombatLog(t('run.arrive'), 'warn');
+  if (typeof radioSay === 'function' && typeof wingmen !== 'undefined') {
+    const alive = wingmen.filter(function (w) { return !w.dead; });
+    if (alive.length) radioSay(alive[alive.length - 1].def.numKey, t('run.say'), true);
+  }
+}
+
 
 function clearDefence() {
   defenceActive = false;
@@ -158,6 +218,9 @@ function clearDefence() {
   if (typeof clearColonyFires === 'function') clearColonyFires();   // 村を元の色へ戻す
   homePos = null; colonyPos = null;
   boundSaid = 0; boundRearm = 0; pullbackLeft = 0; warnedOut = false; lastBoundLine = '';
+  defencePhase = 'fight'; runLeft = 0;
+  if (typeof setWingFormation === 'function') setWingFormation(false);
+  if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
   if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
   if (typeof setEnemyMissiles === 'function') setEnemyMissiles(true);   // 他の出撃へ戻す
   if (typeof releaseColony === 'function') releaseColony();   // 背景の追従へ戻す
@@ -186,6 +249,10 @@ function updateDefence(dt) {
   if (!defenceRunning()) return;
   if (typeof missionState !== 'undefined' && missionState !== 'active') return;
   if (typeof combatFrozen !== 'undefined' && combatFrozen) return;
+
+  // --- 発艦の移動中 ---
+  // 時間も焼失も敵も、まだ数えない。戦闘は持ち場に着いてから始まる
+  if (defencePhase === 'run') { updateLaunchRun(dt); return; }
 
   holdTime += dt;
   const progress = Math.min(holdTime / DEFENCE.HOLD_SEC, 1);
@@ -438,6 +505,11 @@ function headingErrorToStation() {
 // いま引き戻し中か。main.js が舵を差し替えるのに使う
 function defencePullingBack() { return pullbackLeft > 0; }
 
+// 操縦を機体が預かっているか(発艦の移動中 または 引き戻し中)。
+// ★ 奪うのは舵とロールと回避バーストだけ ―
+//   射撃・視点・僚機呼集はどちらの場面でもプレイヤーのまま。
+function defenceLocked() { return pullbackLeft > 0 || defencePhase === 'run'; }
+
 const _pInv = new THREE.Quaternion();
 const _pTo  = new THREE.Vector3();
 
@@ -445,7 +517,7 @@ const _pTo  = new THREE.Vector3();
 // 戻り値 { pitch, yaw } の範囲はキー入力と同じ −1〜+1。
 // ★ 奪うのは舵だけ。射撃も速度も視点も、プレイヤーのまま。
 function defenceAutoAim() {
-  if (!defencePullingBack() || !homePos) return null;
+  if (!defenceLocked() || !homePos) return null;
   if (typeof playerShip === 'undefined' || !playerShip) return null;
 
   // 持ち場の位置を「機体から見た座標」へ移す。

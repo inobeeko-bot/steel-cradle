@@ -63,6 +63,23 @@ const WINGMAN_CALL = {
   SLOT:        90,     // 自機のどれだけ近くに着くか(通常の編隊は70)
 };
 
+// --- 発艦のダイヤモンド編隊 -------------------------------------------
+// ★ 発艦直後だけ、僚機を自機のまわりの定位置に貼り付ける。
+//   ふだんの僚機は各自の判断で動くが(updateWingmen)、
+//   発艦の場面は「四機で出た」ことを見せるための絵なので、
+//   隊形が崩れては意味がない。
+//
+//   自機は菱形のいちばん後ろに置く。三人称のカメラは自機の後ろにあるので、
+//   前を行く三機が視界に入る ― カイトが四番機(いちばん新しい当番)である
+//   ことも、位置関係だけで伝わる。
+const WING_DIAMOND = [
+  [   0,  26, -150],   // 一番機:正面やや上
+  [-115, -10,  -60],   // 二番機:左
+  [ 115, -10,  -60],   // 三番機:右
+];
+let wingFormation = false;
+function setWingFormation(on) { wingFormation = !!on; }
+
 let wingCallsLeft = 0;   // 残りの回数
 let wingCallLeft  = 0;   // 効いている残り秒数
 
@@ -180,6 +197,22 @@ function updateWingmen(dt) {
   if (wingCallLeft > 0) wingCallLeft = Math.max(0, wingCallLeft - dt);
 
   if (!wingmen.length || !playerShip) return;
+
+  // --- 発艦中:編隊を組んだまま自機について来る -----------------------
+  // 各自の判断(下の処理)はいっさい働かせない。撃たないし、敵も見ない。
+  if (wingFormation) {
+    for (let i = 0; i < wingmen.length; i++) {
+      const w = wingmen[i];
+      if (w.dead) continue;
+      const o = WING_DIAMOND[i % WING_DIAMOND.length];
+      const off = new THREE.Vector3(o[0], o[1], o[2]).applyQuaternion(playerShip.quaternion);
+      w.group.position.copy(playerShip.position).add(off);
+      w.group.quaternion.copy(playerShip.quaternion);
+    }
+    updateWingBolts(dt);
+    return;
+  }
+
   const rally = wingCallLeft > 0;
 
   for (const w of wingmen) {

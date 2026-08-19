@@ -2185,6 +2185,17 @@
       animation: momentIn .55s cubic-bezier(.16,.9,.3,1) both;
       white-space: nowrap;
     }
+    .m-stack { text-align: center; }
+    /* 見出しの下の小さい一行。何を成したのかを、ひとことだけ添える */
+    .moment .m-sub {
+      margin-top: 14px;
+      font: 13px/1.6 monospace;
+      letter-spacing: .18em;
+      color: #93a9b6;
+      text-shadow: 0 0 12px rgba(0,0,0,.95);
+      animation: momentIn .55s cubic-bezier(.16,.9,.3,1) .22s both;
+    }
+    .moment .m-sub:empty { display: none; }
     .moment.win  .m-text { color: #9fe1cb; }
     .moment.lose .m-text { color: #ff6a4a; }
     @keyframes momentIn {
@@ -2727,7 +2738,12 @@
     </div>
 
     <!-- 決着の瞬間の一言。リザルトの1.6秒前に出る -->
-    <div class="moment" id="moment"><div class="m-text" id="moment-text"></div></div>
+    <div class="moment" id="moment">
+      <div class="m-stack">
+        <div class="m-text" id="moment-text"></div>
+        <div class="m-sub" id="moment-sub"></div>
+      </div>
+    </div>
 
     <div class="shutdown-overlay">
       <div class="big">⚠ SYSTEM SHUTDOWN</div>

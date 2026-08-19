@@ -964,9 +964,10 @@ function updateObjective(dt) {
 // ===================================================================
 const MOMENT_SEC = 1.6;   // 一言を出してからリザルトへ移るまで
 
-function showMoment(text, kind, after) {
+function showMoment(text, kind, after, sub) {
   if (!momentEl) { if (after) after(); return; }
   document.getElementById('moment-text').textContent = text;
+  document.getElementById('moment-sub').textContent = sub || '';
   momentEl.classList.remove('win', 'lose');
   if (kind) momentEl.classList.add(kind);
   momentEl.classList.add('on');
@@ -1328,6 +1329,8 @@ window.addEventListener('keydown', (event) => {
       }
       lastRollKey = key;
       lastRollAt  = now;
+      // 機体が操縦を預かっているあいだ(発艦の移動・引き戻し)は姿勢も渡さない
+      if (typeof defenceLocked === 'function' && defenceLocked()) return;
       requestRollStep(dir);
     }
     return;
@@ -1449,6 +1452,8 @@ window.addEventListener('keydown', (event) => {
   // Space キー … 回避バースト
   if (event.key === ' ') {
     event.preventDefault();   // Spaceで画面がスクロールするのを止める
+    // 機体が速度を決めているあいだは、バーストを効かせない
+    if (typeof defenceLocked === 'function' && defenceLocked()) return;
     if (!event.repeat) burst();   // 押しっぱなしの連射は無効(1回押して1回)
     return;
   }
@@ -3102,7 +3107,7 @@ function endMission(result, reason) {
 
   // --- 見出しと理由を先に組み立てておく(表示はこのあと)---------------
   resultPanel.classList.remove('win', 'timeup');
-  let momentText = '', momentKind = 'lose';
+  let momentText = '', momentKind = 'lose', momentSub = '';
 
   if (result === 'held') {
     // ★ 生き延びたが「MISSION COMPLETE」ではない。
@@ -3113,6 +3118,7 @@ function endMission(result, reason) {
     resultTitleEl.textContent = t('def.title');
     resultReasonEl.textContent = defenceReason(true);
     momentText = t('moment.held'); momentKind = 'win';
+    momentSub  = t('moment.heldSub');
 
   } else if (result === 'complete') {
     resultPanel.classList.add('win');
@@ -3161,7 +3167,7 @@ function endMission(result, reason) {
 
   showMoment(momentText, momentKind, function () {
     consoleEl.classList.add('failed');   // リザルト画面を表示するクラス
-  });
+  }, momentSub);
 
   // ロックオン表示を消す(戦闘が止まるので、出しっぱなしにしない)
   lockRingEl.classList.remove('on');
@@ -3576,6 +3582,13 @@ function tickBody(now) {
   }
 
   // --- 制限時間のカウントダウン(仕様書9.1)---
+  // ★ 発艦の移動中(defence.js の 'run')は数えない。
+  //   持ち場へ着くまでは戦闘が始まっていないので、
+  //   ここで減らすと「見ているだけの時間」で持ち時間が削られる。
+  if (typeof defenceLocked === 'function' && defenceLocked()
+      && typeof defencePullingBack === 'function' && !defencePullingBack()) {
+    return;
+  }
   missionTime -= dt;
   timerElMission.textContent = formatTime(missionTime);
   // 残り1分を切ったら赤く点滅させる(音の代わりの警告)

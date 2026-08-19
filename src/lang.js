@@ -128,7 +128,13 @@ const TEXT = {
                          'Arrows power　V radiator　Tab controls'],
 
   // 決着の瞬間。リザルトの見出し(まとめ)とは別で、その瞬間の一言
-  'moment.held':        ['持ちこたえた', 'YOU HELD'],
+  // ★「持ちこたえた」から差し替え。
+  //   大きく出すのは任務そのものの結果、小さく添えるのは何を成したか。
+  //   ※ リザルトの見出しは「一時間もたなかった」のまま ―
+  //     任務は果たした / それでも村は落ちた、の二段で読ませる。
+  'moment.held':        ['MISSION COMPLETE', 'MISSION COMPLETE'],
+  'moment.heldSub':     ['脱出の時間を稼ぐことに成功した',
+                         'You bought them the time to get out'],
   'moment.downed':      ['墜とされた', 'SHOT DOWN'],
   'moment.trainWin':    ['規定撃墜 達成', 'QUOTA MET'],
   'moment.trainFail':   ['任務失敗', 'MISSION FAILED'],
@@ -161,6 +167,11 @@ const TEXT = {
   'bound.again1':       ['また離れてる ― 戻る', 'Drifting again — heading back'],
   'bound.again2':       ['持ち場じゃない', 'This is not my station'],
   'bound.again3':       ['遠い。誘導に戻らないと', 'Too far. Back to the column'],
+
+  // --- 発艦(戦闘が始まる前の移動)-----------------------------------
+  'run.log':            ['発艦 ― 四機 編隊', 'Away — four in formation'],
+  'run.arrive':         ['持ち場 到着 ― 各機 散開', 'On station — break formation'],
+  'run.say':            ['散開。村を背にしろ', 'Break. Keep the village behind you'],
 
   'def.marker':         ['アルカディア', 'ARCADIA'],
   'def.burnLabel':      ['焼失', 'BURNED'],
