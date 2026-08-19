@@ -657,5 +657,6 @@ function escapeStatus() {
     progress: Math.min(escapeTime / ESCAPE.DEFEND_SEC, 1),
     wingAlive: (typeof wingmen !== 'undefined')
       ? wingmen.filter((w) => !w.dead).length : 0,
+    survivors: ESCAPE.SURVIVORS,   // 計器に出す人数。直書きすると原典とずれる
   };
 }

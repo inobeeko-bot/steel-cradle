@@ -1350,6 +1350,12 @@ window.addEventListener('keydown', (event) => {
   // V キー … ラジエーター展開/収納
   // toLowerCase() で、Shiftを押していても大文字/小文字どちらでも反応するようにする
   if (event.key.toLowerCase() === 'v') {
+    // ★ 熱をまだ教わっていない機体では動かせない。
+    //   ラジエーターは排熱の操作そのもので、計器(RAD OPEN)も隠してある ―
+    //   表示が無いまま被探知だけが変わるのは、いちばん質の悪い状態になる。
+    if (typeof heatTaught === 'function' && !heatTaught()) {
+      addCombatLog(t('power.locked'), 'warn'); playDenied(); return;
+    }
     // 熱系の計器が壊れているとラジエーターを動かせない
     if (isBroken('heat')) { addCombatLog('冷却系 損傷', 'hull'); playDenied(); return; }
     // 展開 → 収納 → 自動 → 展開 … と順に切り替える
@@ -1418,6 +1424,9 @@ function applyViewMode(isCockpit) {
   playViewClick();
   viewModeEl.textContent = nowCockpit ? 'COCKPIT' : '3RD';
   consoleEl.classList.toggle('cockpit', nowCockpit);
+  // body にも印を付ける。#console の外に置いた表示(貨物船の帯など)を
+  // 視点で出し分けるため ― あれらは計器盤の入れ物の中にいない
+  document.body.classList.toggle('cockpit', nowCockpit);
   // 後方ミラーの枠も、祖先ではなく自分自身に印を付けて出し入れする
   if (mirrorEl) mirrorEl.classList.toggle('on', nowCockpit);
   return nowCockpit;
@@ -2050,6 +2059,11 @@ function renderConsole3D(dt) {
 
     // 効いている回収品の効果(無ければ null で、計器の欄ごと出ない)
     salvageBuff: salvageBuffText(),
+
+    // 貨物船の残り。三人称では画面上端の帯で出しているが、
+    // コックピットでは計器盤の中に置く(空いた電力配分の場所)。
+    // 脱出戦でなければ null で、欄ごと出ない
+    freight: (typeof escapeStatus === 'function') ? escapeStatus() : null,
 
     contacts: getContacts(sensorPct),
     inbound: missileContacts(sensorPct),
@@ -3374,7 +3388,12 @@ function tickBody(now) {
 
   // --- タイトル画面:自機をゆっくり漂わせるだけ。時間も戦闘も進まない ---
   if (screenState === 'menu') {
-    updateMenuBackdrop(dt);   // screens.js:ゆるい旋回と巡航
+    // ★ screens.js は main.js より後ろで読み込まれる。
+    //   スクリプトを1本ずつ取りに行く合間に描画のタイミングが来ると、
+    //   この関数がまだ無いまま1コマ動くことがあり、
+    //   起動直後だけ「updateMenuBackdrop is not defined」が出ていた。
+    //   他のファイルを呼ぶところと同じように、あるときだけ呼ぶ。
+    if (typeof updateMenuBackdrop === 'function') updateMenuBackdrop(dt);
     updateScene(dt, elapsed);
     return;
   }

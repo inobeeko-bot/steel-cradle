@@ -2116,7 +2116,13 @@
        視線の移動がいちばん短い場所 */
     .freight-hp {
       position: absolute;
-      left: 50%; top: 14px;
+      left: 50%;
+      /* ★ 残り時間(.mission-timer)と真正面からぶつかっていた ―
+         どちらも画面上端の中央で、上から14px。文字が重なって読めない。
+         タイマーの下端は43pxなので、その下へ降ろす。
+         タイマーのほうを動かさないのは、あれが仕様書9.1の
+         「1ゲーム最長10分」を示す主計器で、位置が変わると探す羽目になるため。 */
+      top: 50px;
       transform: translateX(-50%);
       width: 260px;
       pointer-events: none;
@@ -2125,6 +2131,11 @@
       text-align: center;
     }
     .freight-hp.on { display: block; }
+    /* コックピットでは出さない。
+       あちらは計器盤の中(電力配分が空けた場所)に、
+       console3d.js が同じ内容を描いている ―
+       視界に貼り付いた帯より、計器として並んでいるほうが場に合う。 */
+    body.cockpit .freight-hp { display: none; }
     .freight-hp .label {
       font: 600 11px/1.3 monospace;
       color: #7fe3ff;
@@ -2192,6 +2203,12 @@
 
     body.no-heat .panel-heat,
     body.no-heat .heat-only { display: none; }
+    /* ★ 電力配分(武器/シールド/エンジン/センサー)も同じ扱い。
+       旧式艇では四系統とも25%で固定されていて、プレイヤーは動かせない。
+       動かせない計器が四つ並んでいると、読める計器まで埋もれる。
+       熱と配分はどちらもヨナスの講義(第三章)で一緒に教わるので、
+       出す・出さないの切り替えも body.no-heat 一つで足りる。 */
+    body.no-heat .power-only { display: none; }
     /* ★ 強制シャットダウンの警告も熱の一部。
        ゲージだけ隠しても、過熱すればこれが画面の真ん中に出てしまう。
        仕掛け自体は main.js の noHeat で止めてあるが、
@@ -2450,7 +2467,7 @@
 
     <!-- 下段中央:電力配分(仕様書9.6「下段中央=電力配分十字パネル」) -->
     <div class="hud-bottom">
-      <div class="panel" id="panel">
+      <div class="panel power-only" id="panel">
         <div class="gauge" data-system="weapon">
           <div class="gauge-key">↑</div>
           <div class="gauge-tube"><div class="gauge-bar"></div></div>
@@ -2478,8 +2495,8 @@
       </div>
 
       <div class="status">
-        <div>TOTAL <b id="total">100</b>%</div>
-        <div>PRESET <b id="preset">MANUAL</b></div>
+        <div class="power-only">TOTAL <b id="total">100</b>%</div>
+        <div class="power-only">PRESET <b id="preset">MANUAL</b></div>
         <div>SPEED <b id="speed">0</b></div>
         <div>TARGET <b id="ai-state">―</b></div>
         <div class="heat-only">T-HEAT <b id="enemy-heat">0</b>%</div>

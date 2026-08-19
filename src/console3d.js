@@ -360,10 +360,63 @@ function drawHeading(g, x, y, w, text) {
 // 熱の計器を出してよいか。
 // 熱管理はまだ物語で教えていない(ヨナスの講義は第三章)ので、
 // 旧式艇のあいだはコックピット側でも一切出さない。DOM 側は body.no-heat が受け持つ。
+// 電力配分の計器を出すかどうか。
+// 熱と配分はどちらも第三章でヨナスから教わるので、いまは同じ判断でよい。
+// 別々に教えることになったら、ここだけ分ければ済む。
+function showsPower() {
+  return (typeof heatTaught !== 'function') || heatTaught();
+}
+
 function showsHeat() {
   // 判断は ships.js の heatTaught() 一箇所にまとめてある。
   // ここで独自に条件を書くと、DOM 側とコックピット側でずれる。
   return (typeof heatTaught !== 'function') || heatTaught();
+}
+
+// ===================================================================
+// 貨物船の残り(脱出戦だけ)
+//
+// 三人称では画面上端に帯で出しているが、コックピットでは計器盤に置く。
+// 場所は電力配分の四本があったところ ―
+// 旧式艇では配分を動かせないので、この区画はまるごと空いている。
+// (制式機で配分を出しているときは脱出戦をやっていないので、重ならない)
+// ===================================================================
+function drawFreight(g, x, y, s) {
+  const f = s.freight;
+  if (!f) return;
+
+  drawHeading(g, x, y, 300, 'FREIGHTER');
+
+  const ratio = Math.max(0, Math.min(f.hp / f.hpMax, 1));
+  // 守る対象なので色は自機と分ける(水色)。減ったら黄 → 赤
+  const color = (ratio < 0.35) ? CONSOLE3D.WARN
+              : (ratio < 0.70) ? CONSOLE3D.AMBER : '#7fe3ff';
+
+  g.textAlign = 'left';
+  g.font = 'bold 17px monospace';
+  g.fillStyle = color;
+  g.fillText('貨物船', x, y + 20);
+
+  // 残り。数字は右端に揃えて、桁が変わっても位置が動かないようにする
+  g.textAlign = 'right';
+  g.font = 'bold 26px monospace';
+  g.fillText(String(f.hp), x + 232, y + 22);
+  g.font = '13px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText('/ ' + f.hpMax, x + 296, y + 22);
+
+  drawBar(g, x, y + 32, 296, 12, ratio, color);
+
+  // 積んでいる人数。守っている対象が「数」ではないことを忘れないための一行
+  g.textAlign = 'left';
+  g.font = '11px monospace';
+  g.fillStyle = CONSOLE3D.DIM;
+  g.fillText((f.survivors || 311) + ' ABOARD', x, y + 62);
+
+  // 僚機の残り。呼び寄せ(H)を使うかどうかの判断がここで付く
+  g.textAlign = 'right';
+  g.fillStyle = (f.wingAlive > 0) ? CONSOLE3D.DIM : CONSOLE3D.WARN;
+  g.fillText('WINGMEN ' + f.wingAlive, x + 296, y + 62);
 }
 
 function drawHeatBudget(g, x, y, s) {
@@ -482,7 +535,8 @@ function drawTargetBlock(g, x, y, s) {
   const stMap = { approach: 'APPROACH', attack: 'ATTACK', evade: 'EVADE' };
   let stText = stMap[e.state] || '----';
   let stColor = CONSOLE3D.TEXT;
-  if (e.heatDown) { stText = 'OVERHEAT'; stColor = CONSOLE3D.AMBER; }
+  // 熱を教わっていないあいだは、敵の状態としての OVERHEAT も出さない
+  if (e.heatDown && showsHeat()) { stText = 'OVERHEAT'; stColor = CONSOLE3D.AMBER; }
   else if (e.empLeft > 0) { stText = 'EMP DOWN'; stColor = '#7fd4ff'; }
   g.textAlign = 'left';
   g.font = 'bold 16px monospace';
@@ -492,16 +546,19 @@ function drawTargetBlock(g, x, y, s) {
   // 敵の熱
   g.font = '11px monospace';
   g.fillStyle = CONSOLE3D.DIM;
+  // ★ 数値も囲いの中へ入れる。
+  //   前は 'T-HEAT' の見出しと棒だけを囲っていて、右端の数値が外に出ていた ―
+  //   見出しの無い数字だけが宙に浮いて残っていた。
   if (showsHeat()) {
     g.fillText('T-HEAT', x, y + 40);
     drawBar(g, x + 56, y + 30, 92, 11, e.heat / 100,
             e.heat >= 70 ? CONSOLE3D.WARN : (e.heat >= 35 ? CONSOLE3D.AMBER : '#5f8f7c'));
+    g.textAlign = 'right';
+    g.font = '13px monospace';
+    g.fillStyle = e.ventDown ? '#ff7a2a' : CONSOLE3D.DIM;
+    // ▼ は放熱不能(パイロ弾が効いている)の印
+    g.fillText(Math.round(e.heat) + (e.ventDown ? ' ▼' : ''), x + 190, y + 40);
   }
-  g.textAlign = 'right';
-  g.font = '13px monospace';
-  g.fillStyle = e.ventDown ? '#ff7a2a' : CONSOLE3D.DIM;
-  // ▼ は放熱不能(パイロ弾が効いている)の印
-  g.fillText(Math.round(e.heat) + (e.ventDown ? ' ▼' : ''), x + 190, y + 40);
 
   // 敵の残弾。センサーが足りないと読めない
   g.textAlign = 'left';
@@ -579,26 +636,34 @@ function drawConsole3D(s, dt) {
   drawRadar(g, 112, 118, 92, s);
 
   // --- 熱(その右)---
-  if (showsHeat()) drawGauge(g, {
-    x: 248, y: 34, w: 34, h: 118,
-    ratio: s.heat / 100,
-    color: 'hsl(' + (30 - 30 * (s.heat / 100)) + ', 90%, ' + (30 + 34 * (s.heat / 100)) + '%)',
-    label: '熱', en: 'HEAT', value: Math.round(s.heat), unit: '%',
-    keyText: 'V', broken: s.broken.heat, low: s.heat >= 80,
-  });
-  // ラジエーターの状態
-  g.font = '13px monospace';
-  g.textAlign = 'center';
-  g.fillStyle = (s.radiatorMode === 'auto') ? CONSOLE3D.AMBER
-              : (s.radiatorOpen ? CONSOLE3D.TEXT : CONSOLE3D.DIM);
-  g.fillText((s.radiatorMode === 'auto')
-    ? ('AUTO ' + (s.radiatorOpen ? '▲' : '▼'))
-    : (s.radiatorOpen ? 'RAD OPEN' : 'RAD CLOSED'), 265, 252);
-  // 危険域の赤線(80%)
-  g.strokeStyle = 'rgba(255,90,60,0.55)';
-  g.beginPath();
-  const warnY = 34 + 118 * 0.2;
-  g.moveTo(248, warnY); g.lineTo(282, warnY); g.stroke();
+  // ★ 熱の一区画はここで丸ごと囲う。
+  //   前は if (showsHeat()) が drawGauge の1文にしか掛かっておらず、
+  //   すぐ下の「RAD OPEN(ラジエーターの開閉)」と「危険域の赤線」が
+  //   外に取り残されて、旧式艇でも描かれていた ―
+  //   ラジエーターは排熱そのものの操作なので、これは熱の計器そのもの。
+  //   1文だけ包む書き方はこの取りこぼしを生むので、区画ごと閉じる。
+  if (showsHeat()) {
+    drawGauge(g, {
+      x: 248, y: 34, w: 34, h: 118,
+      ratio: s.heat / 100,
+      color: 'hsl(' + (30 - 30 * (s.heat / 100)) + ', 90%, ' + (30 + 34 * (s.heat / 100)) + '%)',
+      label: '熱', en: 'HEAT', value: Math.round(s.heat), unit: '%',
+      keyText: 'V', broken: s.broken.heat, low: s.heat >= 80,
+    });
+    // ラジエーターの状態
+    g.font = '13px monospace';
+    g.textAlign = 'center';
+    g.fillStyle = (s.radiatorMode === 'auto') ? CONSOLE3D.AMBER
+                : (s.radiatorOpen ? CONSOLE3D.TEXT : CONSOLE3D.DIM);
+    g.fillText((s.radiatorMode === 'auto')
+      ? ('AUTO ' + (s.radiatorOpen ? '▲' : '▼'))
+      : (s.radiatorOpen ? 'RAD OPEN' : 'RAD CLOSED'), 265, 252);
+    // 危険域の赤線(80%)
+    g.strokeStyle = 'rgba(255,90,60,0.55)';
+    g.beginPath();
+    const warnY = 34 + 118 * 0.2;
+    g.moveTo(248, warnY); g.lineTo(282, warnY); g.stroke();
+  }
 
   // --- 電力配分4本(中央)---
   const sysDefs = [
@@ -608,7 +673,10 @@ function drawConsole3D(s, dt) {
     { key: 'sensor', label: 'センサー', en: 'SENSOR', hue: 130, k: '↓' },
   ];
   const px0 = 470, pgap = 92;
-  sysDefs.forEach((d, i) => {
+  // ★ 配分を動かせない機体では、この四本ごと出さない(showsPower)。
+  //   旧式艇は四系統とも25%固定で、矢印キーもプリセットも封じてある ―
+  //   触れない計器が四つ並んでいるだけになる。
+  if (showsPower()) sysDefs.forEach((d, i) => {
     const v = s.power[d.key];
     const light = Math.min(20 + v * 0.75, 72);
     const sat = Math.min(45 + v * 1.2, 95);
@@ -619,6 +687,9 @@ function drawConsole3D(s, dt) {
       keyText: d.k, broken: s.broken[d.key], low: false,
     });
   });
+
+  // 貨物船(電力配分の四本があった場所。脱出戦のときだけ出る)
+  drawFreight(g, 470, 52, s);
 
   // --- 中央の空きに置く計器 ---
   // 照準器の土台をなくしたので、中央も使える。
@@ -646,7 +717,9 @@ function drawConsole3D(s, dt) {
 
   g.font = '14px monospace';
   g.fillStyle = CONSOLE3D.DIM;
-  g.fillText('熱 ' + s.weapon.heatText + '   R 切替', wx, 146);
+  // 兵装の「熱 +6×2」。撃つたびに何度上がるかの表示なので、これも熱の計器。
+  // 熱を教わっていない機体では、切替キーの案内だけ残す
+  g.fillText(showsHeat() ? ('熱 ' + s.weapon.heatText + '   R 切替') : 'R 切替', wx, 146);
 
   // 兵装の左に色帯
   g.fillStyle = s.weapon.low ? CONSOLE3D.WARN
@@ -708,7 +781,7 @@ function drawConsole3D(s, dt) {
   if (showsHeat()) items.push(['T-HEAT', s.tHeat + '%']);
   items.push(['HULL', s.hull + '/' + s.hullMax]);
   if (showsHeat()) items.push(['HEAT RATE', s.heatRate]);
-  items.push(['PRESET', s.preset]);
+  if (showsPower()) items.push(['PRESET', s.preset]);
   items.push(['A-TRK', s.autoTrack ? 'ON' : 'OFF']);
   // 僚機の呼び寄せ(H)の残り回数。僚機のいる出撃でだけ欄が増える。
   // コックピットでは下の DOM の計器盤が隠れるので、ここにも出さないと
