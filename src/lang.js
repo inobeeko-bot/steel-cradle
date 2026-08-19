@@ -172,6 +172,23 @@ const TEXT = {
   'run.log':            ['発艦 ― 四機 編隊', 'Away — four in formation'],
   'run.arrive':         ['持ち場 到着 ― 各機 散開', 'On station — break formation'],
   'run.say':            ['散開。村を背にしろ', 'Break. Keep the village behind you'],
+  // 発艦の移動中に流れる。進み具合に合わせて順に出る
+  'run.say1':           ['全機 発艦。フォーメーションA ― 訓練どおりだ',
+                         'All away. Formation A — just like the drill'],
+  'run.say2':           ['速度そのまま。離れるなよ、カイト',
+                         'Hold that speed. Do not drift, Kaito'],
+  'run.say3':           ['持ち場が見えた。散開に備えろ',
+                         'Station in sight. Stand by to break'],
+
+  // 戦闘中、戦況を指す一言。数字と方向は実際の位置から作る
+  'r.clock':            ['カイト、%s時 ― 来てる', 'Kaito — %s o clock, closing'],
+  'r.clockW':           ['%s、%s時 注意', '%s — watch your %s o clock'],
+  'r.behind':           ['カイト、後方に%s機', 'Kaito, %s behind you'],
+  'r.behindW':          ['%s、後方に%s機', '%s, %s behind you'],
+  'r.formA':            ['全機! 訓練どおり ― フォーメーションA',
+                         'All craft! Formation A, as drilled'],
+  'r.formBreak':        ['隊形が崩れてる。組み直せ', 'Formation is coming apart. Re-form'],
+  'r.tooMany':          ['数が合わない。三機で持たせるぞ', 'The numbers are wrong. Three of us hold'],
 
   'def.marker':         ['アルカディア', 'ARCADIA'],
   'def.burnLabel':      ['焼失', 'BURNED'],

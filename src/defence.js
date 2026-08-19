@@ -113,6 +113,15 @@ const DEFENCE = {
   RUN_MAX_SEC:      12,  // 何かあっても、この秒数で必ず戦闘へ渡す
 };
 
+// 発艦中に流れる無線。[経過秒, 誰が, 文言のキー]
+// ★ 実時間の setTimeout ではなく「移動の進み具合」で出す。
+//   一時停止や再出撃で時間がずれても、順番が崩れない。
+const RUN_LINES = [
+  [0.4, 'wing.n3', 'run.say1'],
+  [1.9, 'wing.n2', 'run.say2'],
+  [3.4, 'wing.n1', 'run.say3'],
+];
+
 let defenceActive = false;
 let holdTime      = 0;     // 経過(秒)
 let burnPct       = 0;     // 焼失率(0〜100)
@@ -122,6 +131,8 @@ let burnSaid      = 0;     // どこまで焼失を報告したか(25/50/75/100)
 
 let defencePhase  = 'fight';   // 'run'(発艦の移動) → 'fight'(戦闘)
 let runLeft       = 0;         // 発艦の移動に使える残り秒(保険)
+let runTime       = 0;         // 発艦してから何秒たったか
+let runSaid       = 0;         // 発艦の無線をどこまで出したか
 
 let homePos       = null;  // 出撃地点。境界はここを中心に測る
 let colonyPos     = null;  // 固定したアルカディアの位置
@@ -179,6 +190,8 @@ function beginLaunchRun() {
 
   defencePhase = 'run';
   runLeft = DEFENCE.RUN_MAX_SEC;
+  runTime = 0;
+  runSaid = 0;
 
   if (typeof addCombatLog === 'function') addCombatLog(t('run.log'), 'warn');
   if (typeof playFreighterLaunch === 'function') playFreighterLaunch();
@@ -187,6 +200,15 @@ function beginLaunchRun() {
 
 function updateLaunchRun(dt) {
   runLeft -= dt;
+  runTime += dt;
+
+  // 進み具合に合わせて無線を流す。四機で飛んでいることを耳から伝える
+  while (runSaid < RUN_LINES.length && runTime >= RUN_LINES[runSaid][0]) {
+    const line = RUN_LINES[runSaid];
+    runSaid++;
+    if (typeof radioSay === 'function') radioSay(line[1], t(line[2]), true);
+  }
+
   const left = playerShip ? playerShip.position.distanceTo(homePos) : 0;
   if (left <= DEFENCE.RUN_END || runLeft <= 0) endLaunchRun();
 }
@@ -218,7 +240,7 @@ function clearDefence() {
   if (typeof clearColonyFires === 'function') clearColonyFires();   // 村を元の色へ戻す
   homePos = null; colonyPos = null;
   boundSaid = 0; boundRearm = 0; pullbackLeft = 0; warnedOut = false; lastBoundLine = '';
-  defencePhase = 'fight'; runLeft = 0;
+  defencePhase = 'fight'; runLeft = 0; runTime = 0; runSaid = 0;
   if (typeof setWingFormation === 'function') setWingFormation(false);
   if (typeof setSpeedOverride === 'function') setSpeedOverride(0);
   if (typeof setArchetypeLock === 'function') setArchetypeLock(null);
