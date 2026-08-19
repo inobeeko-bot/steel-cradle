@@ -772,6 +772,14 @@ const STORY_SCENES = {
         { whoKey: 'adv.name.kaito',   text: { ja: 'じいちゃん、どこに', en: "Grandpa. Where are you?" } },
         { whoKey: 'adv.name.grandpa', text: { ja: '上がれ。下は見るな', en: "Go up. Don't look down." } },
         { text: { ja: '無線が切れた。', en: "The radio went dead." } },
+        // ★ 出撃前に、地の文で目的を渡しておく。
+        //   このあとブリーフィング画面と戦闘中のHUDでも同じことを言う ―
+        //   三段構えにしてあるのは、一度しか言わないと聞き逃した人に
+        //   最後まで伝わらないため。ここは説明ではなく、物語の側から言う。
+        { text: { ja: '避難の列は、まだ港に着いていない。老人と子どもの足だ。',
+                  en: "The evacuation column has not reached the port. Old people and children walk that slowly." } },
+        { text: { ja: '守り切れるとは、誰も言わなかった。時間を稼げ、とだけ言われた。',
+                  en: "Nobody said they could hold. They were told to buy time. That was all." } },
         { text: { ja: '発艦筒の灯が、赤から青へ変わった。', en: "The lights in the launch tube turned from red to blue." } },
       ],
       // ★ ここでADVが終わり、3D戦闘が始まる。乗る機体は旧式艇四番機(ships.js)

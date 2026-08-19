@@ -270,7 +270,6 @@ function launchSortie(shipKey, bgm) {
   hideMenu();
   setEnemiesHidden(false);                          // 敵を戻す
   applyViewMode(OPTIONS.startView === 'cockpit');   // 好みの視点で出撃する
-  screenState = 'mission';
   setShip(shipKey);          // ★ restartMission より前(理由は上)
   applyShipColors();         // 機体の塗色を反映する(scene.js)
   restartMission();          // 7パラメーター・弾数・戦果をすべて初期化して開始
@@ -286,17 +285,134 @@ function launchSortie(shipKey, bgm) {
   const teachesHeat = (typeof heatTaught !== 'function') || heatTaught();
   document.body.classList.toggle('no-heat', !teachesHeat);
 
-  if (shipKey === 'boat4') {
+  const story = (shipKey === 'boat4');
+
+  if (story) {
     if (typeof spawnWingmen === 'function') spawnWingmen();
     if (typeof startDefence === 'function') startDefence();   // 防衛戦を始める
-    briefSortie();
-    if (typeof radioSay === 'function') {
-      // ★ 発艦直後の一言。四機で出たことを、まず耳から伝える。
-      setTimeout(() => radioSay('wing.n3', '四機 全機 発艦。村を背にしろ', true), 5200);
-    }
   }
 
-  if (bgm) playBgm(bgm);     // 読み込みは非同期なので待たない
+  // ★ ここで一度止めて、ブリーフィングを挟む。
+  //   戦闘はもう組み上がっているので、後ろで景色だけが動いている状態。
+  //   Enter を押すまで時間も敵も進まない。
+  showBriefing(story, function () {
+    screenState = 'mission';
+    setCombatFrozen(false);
+    setSortieObjective(story);
+    if (story) {
+      briefSortie();
+      if (typeof radioSay === 'function') {
+        // ★ 発艦直後の一言。四機で出たことを、まず耳から伝える。
+        setTimeout(() => radioSay('wing.n3', '四機 全機 発艦。村を背にしろ', true), 5200);
+      }
+    }
+    if (bgm) playBgm(bgm);   // 読み込みは非同期なので待たない
+  });
+}
+
+// --- 任務の目的(HUD常時表示)を組み立てる ---------------------------
+// 訓練飛行と物語の出撃、どちらも同じ枠に入れる ―
+// 「何をすれば終わるのか」は、どの出撃でも同じ場所に出ているべき。
+function setSortieObjective(story) {
+  if (typeof setObjective !== 'function') return;
+  if (story) {
+    const hold = (typeof DEFENCE !== 'undefined') ? DEFENCE.HOLD_SEC : 180;
+    setObjective({
+      title: t('brief.title'),
+      goal:  t('obj.hold').replace('%s', String(hold)),
+      goalShort: t('obj.holdShort'),
+      fail:  t('obj.failShip'),
+      // ★ これを最初に言っておく。言わないと、守れなかった自分を責めることになる
+      note:  t('obj.noteFall'),
+      progress: function () {
+        return t('obj.holdLeft').replace('%s', formatTime(missionTime));
+      },
+    });
+  } else {
+    // 訓練飛行の勝利条件は「戦艦を沈める」。
+    // ただし戦艦は最初からいない ― 哨戒機を規定数落とすと出てくる。
+    // そこで目的は二段になる:出すまで / 沈めるまで。
+    setObjective({
+      title: t('menu.training'),
+      goal:  t('obj.boss').replace('%s', BOSS.NAME),
+      goalShort: t('obj.bossShort'),
+      fail:  t('obj.failTime'),
+      note:  '',
+      progress: function () {
+        const st = (typeof bossStatus === 'function') ? bossStatus() : null;
+        if (st) {
+          return t('obj.vents').replace('%s', String(st.ventsLeft))
+                               .replace('%s', String(BOSS.VENT.LIST.length));
+        }
+        return t('obj.killsProg').replace('%s', String(killCount))
+                                 .replace('%s', String(BOSS.SPAWN_KILLS));
+      },
+    });
+  }
+}
+
+// --- 発艦前ブリーフィング ---------------------------------------------
+//
+// ★ ADVの地の文 → この画面 → 戦闘中のHUD、の三段で同じことを言う。
+//   一度しか言わないと、聞き逃した人には最後まで伝わらない。
+let briefingGo = null;   // Enter を押したときに走らせる処理
+
+function showBriefing(story, onStart) {
+  const box = document.getElementById('briefing');
+  if (!box) { if (onStart) onStart(); return; }
+
+  screenState = 'briefing';
+  setCombatFrozen(true);       // 時間も敵も止めておく
+
+  const hold = (typeof DEFENCE !== 'undefined') ? DEFENCE.HOLD_SEC : 180;
+  const rows = [
+    [t('brief.rowEnemy'), story ? t('brief.enemyDef')  : t('brief.enemyTrain')],
+    [t('brief.rowWing'),  story ? t('brief.wingDef')   : t('brief.wingNone')],
+    [t('brief.rowShip'),  story ? t('brief.shipDef')   : t('brief.shipTrain')],
+    [t('brief.rowKeys'),  story ? t('brief.keysDef')   : t('brief.keysTrain')],
+  ];
+
+  document.getElementById('brief-chapter').textContent =
+    story ? t('brief.chapter1') : t('brief.chapterT');
+  document.getElementById('brief-title').textContent =
+    story ? t('brief.title') : t('menu.training');
+  document.getElementById('brief-lead').innerHTML =
+    story ? t('brief.lead1') : t('brief.leadT');
+  document.getElementById('brief-win').textContent = story
+    ? t('obj.hold').replace('%s', String(hold))
+    : t('obj.boss').replace('%s', BOSS.NAME);
+  document.getElementById('brief-lose').textContent =
+    story ? t('obj.failShip') : t('obj.failTime');
+  document.getElementById('brief-rows').innerHTML = rows.map(function (r) {
+    return '<div><span class="k">' + r[0] + '</span>' + r[1] + '</div>';
+  }).join('');
+  document.getElementById('brief-go').textContent = t('brief.go');
+
+  // ★ 残り時間の表示を、この任務の値へ合わせておく。
+  //   restartMission() は既定の10分を書き込むが、防衛戦は180秒 ―
+  //   ブリーフィング中はループが止まっているので、ここで書き換えないと
+  //   「10:00」を見せたまま発艦することになる。
+  if (typeof timerElMission !== 'undefined' && timerElMission) {
+    timerElMission.textContent = formatTime(missionTime);
+  }
+
+  box.classList.add('on');
+  briefingGo = function () {
+    box.classList.remove('on');
+    briefingGo = null;
+    if (typeof playPresetConfirm === 'function') playPresetConfirm();
+    if (onStart) onStart();
+  };
+}
+
+// 物語から出撃したとき、リザルトから物語へ戻る道(main.js の Backspace)
+function returnToStory() {
+  if (typeof clearWingmen === 'function') clearWingmen();
+  if (typeof clearDefence === 'function') clearDefence();
+  if (typeof clearRadio === 'function') clearRadio();
+  if (typeof clearObjective === 'function') clearObjective();
+  stopBgm();
+  showMenu('story_ch1');
 }
 
 // --- 戦闘中に Esc:一時停止 ---
@@ -553,6 +669,24 @@ function updateMenuBackdrop(dt) {
 // 判断させている。ここは純粋にメニューの操作だけを引き受ける。
 // ===================================================================
 window.addEventListener('keydown', (event) => {
+  // --- 発艦前ブリーフィング:Enter で発艦、Esc で取りやめ ---
+  // ★ ここで拾って return するので、操縦のキーは一切通らない。
+  //   ブリーフィングを読んでいる最中に機体が動くと、読む気が失せる。
+  if (screenState === 'briefing') {
+    resumeAudio();
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (briefingGo) briefingGo();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      const box = document.getElementById('briefing');
+      if (box) box.classList.remove('on');
+      briefingGo = null;
+      abortMission();
+    }
+    return;
+  }
+
   if (screenState === 'mission') {
     // 戦闘中に効くのは Esc だけ。
     // 交戦中なら一時停止、リザルト表示中ならメインメニューへ戻る。

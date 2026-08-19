@@ -683,6 +683,8 @@ const bombNameEl    = document.getElementById('wp-bomb-name');
 const bombAmmoEl    = document.getElementById('wp-bomb-ammo');
 const bombRowEl     = document.getElementById('wp-bomb-row');
 const empBadgeEl    = document.getElementById('emp-badge');
+const objectiveEl   = document.getElementById('objective');
+const momentEl      = document.getElementById('moment');
 const wingCallRowEl = document.getElementById('wing-call-row');
 const wingCallEl    = document.getElementById('wing-call');
 const salvageBadgeEl = document.getElementById('salvage-badge');
@@ -906,6 +908,76 @@ function salvageBuffText() {
 // 僚機の呼び寄せ(H)の計器。
 // 僚機のいない出撃(訓練飛行)では丸ごと隠す ―
 // 押しても何も起きないキーが計器に並んでいると、覚える気をなくす。
+// ===================================================================
+// 任務の目的(HUD常時表示)
+//
+// ★ 発艦直後は説明を広げ、12秒で1行へ縮む。
+//   ずっと広げたままだと視界の邪魔になり、最初から1行だと
+//   「何をすれば終わるのか」が伝わらない ―
+//   分からないのは最初だけなので、最初だけ厚く出す。
+// ===================================================================
+const OBJECTIVE_WIDE_SEC = 12;   // この秒数だけ広げて出す
+
+let objective    = null;   // いまの任務の中身(出撃時に組み立てる)
+let objectiveAge = 0;      // 出してから何秒たったか
+
+function setObjective(def) {
+  objective = def;
+  objectiveAge = 0;
+  if (!objectiveEl) return;
+  if (!def) { objectiveEl.classList.remove('on'); return; }
+  objectiveEl.classList.add('on');
+  objectiveEl.classList.remove('slim');
+  document.getElementById('obj-title').textContent = def.title;
+  document.getElementById('obj-goal').textContent  = def.goal;
+  document.getElementById('obj-fail').textContent  = def.fail;
+  const note = document.getElementById('obj-note');
+  note.textContent = def.note || '';
+  note.style.display = def.note ? '' : 'none';
+}
+
+function clearObjective() { setObjective(null); }
+
+function updateObjective(dt) {
+  if (!objective || !objectiveEl) return;
+  objectiveAge += dt;
+  // 12秒たったら畳む。畳んでも目的の一行は残る
+  if (objectiveAge >= OBJECTIVE_WIDE_SEC) objectiveEl.classList.add('slim');
+  // 進み具合は毎コマ書き換える(残り時間・撃墜数)
+  const prog = objective.progress ? objective.progress() : '';
+  const el = document.getElementById('obj-prog');
+  if (el.textContent !== prog) el.textContent = prog;
+  // 縮んだあとは、目的そのものも短い言い方へ差し替える
+  const goal = objectiveEl.classList.contains('slim') && objective.goalShort
+    ? objective.goalShort : objective.goal;
+  const g = document.getElementById('obj-goal');
+  if (g.textContent !== goal) g.textContent = goal;
+}
+
+// ===================================================================
+// 決着の瞬間
+//
+// ★ リザルトの見出し(まとめ)とは別。こちらは「その瞬間」の一言。
+//   文字だけでも音だけでもなく、両方で同時に伝える ―
+//   そして音は「止める」ことで伝える。BGMが鳴り続けたまま
+//   文字だけ出ると、事件が起きた感じにならない。
+// ===================================================================
+const MOMENT_SEC = 1.6;   // 一言を出してからリザルトへ移るまで
+
+function showMoment(text, kind, after) {
+  if (!momentEl) { if (after) after(); return; }
+  document.getElementById('moment-text').textContent = text;
+  momentEl.classList.remove('win', 'lose');
+  if (kind) momentEl.classList.add(kind);
+  momentEl.classList.add('on');
+  setTimeout(function () {
+    momentEl.classList.remove('on');
+    if (after) after();
+  }, MOMENT_SEC * 1000);
+}
+
+function hideMoment() { if (momentEl) momentEl.classList.remove('on'); }
+
 function renderWingCall() {
   if (!wingCallRowEl) return;
   const on = (typeof wingCallActive === 'function') && wingCallActive();
@@ -1313,6 +1385,15 @@ window.addEventListener('keydown', (event) => {
   // (仕様書9.6でRは武器切替と決まっているため、再出撃は別のキーへ移した)
   if (event.key === 'Enter') {
     if (missionState !== 'active') restartMission();
+    return;
+  }
+
+  // Backspace … リザルト表示中に、出撃元の物語へ戻る。
+  // ★ 物語から出撃したのに、終わったあと戻る道が無かった ―
+  //   Enter を押すと戦闘だけが再開して、物語の続きへ行けない。
+  if (event.key === 'Backspace' && missionState !== 'active') {
+    event.preventDefault();
+    if (typeof returnToStory === 'function') returnToStory();
     return;
   }
 
@@ -3016,11 +3097,13 @@ function endMission(result, reason) {
 
   missionState = result;
   setCombatFrozen(true);          // 敵AIと敵弾を止める
-  stopBgm();                      // BGM を引く。結果の音と重ならないように
-  consoleEl.classList.add('failed');   // リザルト画面を表示するクラス
+  stopBgm();                      // ★ まずBGMを切る。無音が演出の地になる
+  clearObjective();               // 目的の表示は役目を終える
 
-  // 見出しと理由。同じ枠を色違いで使い回す
+  // --- 見出しと理由を先に組み立てておく(表示はこのあと)---------------
   resultPanel.classList.remove('win', 'timeup');
+  let momentText = '', momentKind = 'lose';
+
   if (result === 'held') {
     // ★ 生き延びたが「MISSION COMPLETE」ではない。
     //   見出しは勝っても負けても同じ ― 小説v2の一行をそのまま置く。
@@ -3029,34 +3112,56 @@ function endMission(result, reason) {
     resultPanel.classList.add('win');
     resultTitleEl.textContent = t('def.title');
     resultReasonEl.textContent = defenceReason(true);
-    playMissionComplete();
+    momentText = t('moment.held'); momentKind = 'win';
+
   } else if (result === 'complete') {
     resultPanel.classList.add('win');
     resultTitleEl.textContent = 'MISSION COMPLETE';
     resultReasonEl.textContent = BOSS.NAME + ' 撃沈 ― 任務達成';
-    playMissionComplete();
+    momentText = t('moment.trainWin'); momentKind = 'win';
+
   } else if (result === 'timeup') {
-    playTimeUp();
     resultPanel.classList.add('timeup');
     resultTitleEl.textContent = 'TIME UP';
     resultReasonEl.textContent = '制限時間到達 ― 任務失敗';
+    momentText = t('moment.timeup'); momentKind = 'lose';
+
   } else {
-    // 自機の爆発が先。ジングルは爆発が収まってから鳴らす
+    // 自機の爆発が先。爆発そのものが「その瞬間」なので、ここだけは即座に鳴らす
     explodePlayer();          // scene.js:自機の位置に破片をまき散らす
     playPlayerExplosion();
     startShake(1.6);
-    playMissionFailed(1.1);
     // ★ 防衛戦だけは見出しを変える。
     //   生き延びたときと同じ「一時間もたなかった」を出す ―
     //   勝っても負けても結末が同じ、というのがこの章の内容そのもの。
     if (typeof defenceRunning === 'function' && defenceRunning()) {
       resultTitleEl.textContent = t('def.title');
       resultReasonEl.textContent = defenceReason(false);
+      momentText = t('moment.downed');
     } else {
       resultTitleEl.textContent = 'MISSION FAILED';
       resultReasonEl.textContent = reason || '機体構造 崩壊';
+      momentText = t('moment.trainFail');
     }
+    momentKind = 'lose';
   }
+
+  // --- その瞬間の一言。1.6秒たってからリザルトを出す -------------------
+  // ★ 文字と音を同時に。音は「鳴らす」だけでなく「止める」ことでも伝える。
+  if (momentKind === 'win') { if (typeof playMomentWin === 'function') playMomentWin(); }
+  else                      { if (typeof playMomentLose === 'function') playMomentLose(); }
+
+  // 出撃元によって、戻り道の案内を変える。
+  // 物語から来たなら「物語へ戻る」を出さないと、続きへ行けない
+  const hintEl = document.querySelector('.result-hint');
+  if (hintEl) {
+    const fromStory = (typeof ship === 'function') && ship().powerLocked;
+    hintEl.textContent = t(fromStory ? 'hud.resultStory' : 'hud.resultHint');
+  }
+
+  showMoment(momentText, momentKind, function () {
+    consoleEl.classList.add('failed');   // リザルト画面を表示するクラス
+  });
 
   // ロックオン表示を消す(戦闘が止まるので、出しっぱなしにしない)
   lockRingEl.classList.remove('on');
@@ -3105,6 +3210,7 @@ function restartMission() {
   resetVoice();
   consoleEl.classList.remove('failed');
   resultPanel.classList.remove('win', 'timeup');
+  hideMoment();                   // 決着の一言が残っていたら消す
   timerElMission.classList.remove('warn');
   timerElMission.textContent = formatTime(missionTime);   // 表示も即座に戻す
   setCombatFrozen(false);
@@ -3434,6 +3540,14 @@ function tickBody(now) {
     return;
   }
 
+  // --- 発艦前ブリーフィング:景色だけ動かす ---
+  // 機体も敵も時間も止めたまま、後ろで星と村だけが流れている。
+  // 「もう機上にいるが、まだ発艦していない」という間になる。
+  if (screenState === 'briefing') {
+    updateScene(dt, elapsed);
+    return;
+  }
+
   // --- ストーリー:サイドビューのADVパート。3Dは動かさない ---
   if (screenState === 'story') {
     updateStory(dt);          // story.js:歩き・会話・カメラ
@@ -3489,6 +3603,7 @@ function tickBody(now) {
   if (typeof updateWingmen === 'function') updateWingmen(dt);
   // アルカディア脱出戦。貨物船と僚機の消耗はここで進む
   if (typeof updateDefence === 'function') updateDefence(dt);
+  updateObjective(dt);            // 任務の目的(12秒で1行へ縮む)
   if (typeof updateRadio === 'function') updateRadio(dt);
   updateRadiatorAuto(dt);           // ラジエーターの自動開閉
   updateDrift();                    // Shift の押し具合を見る(update より先。熱の計算に効く)

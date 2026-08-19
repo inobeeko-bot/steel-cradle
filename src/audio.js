@@ -762,6 +762,26 @@ function playColonyHit() {
   playNoise(0.90, 0.09, 240, 50, 'lowpass', 0.10);    // 尾を引く鳴り
 }
 
+// 決着の瞬間の音(main.js の showMoment と対で鳴る)。
+//
+// ★ 設計の要は「無音」。BGMを切った直後に低い一本だけ置き、
+//   half秒ほど置いてから短い音形を出す ―
+//   鳴らし続けたまま文字を出すと、事件が起きた感じにならない。
+function playMomentWin() {
+  playTone( 74, 1.10, 0.16, 'square', 0.10);   // 腹に来る低音。ここが「静けさ」の地
+  playTone(111, 0.90, 0.09, 'square', 0.14);
+  playTone(392, 0.16, 0.20, 'square', 0.58);   // 上がる三音。祝いではなく、息をつく音
+  playTone(523, 0.16, 0.20, 'square', 0.75);
+  playTone(659, 0.44, 0.24, 'square', 0.92);
+}
+
+function playMomentLose() {
+  // 爆発そのものは呼び出し側が鳴らす。ここは「そのあとの静けさ」から始める
+  playNoise(0.95, 0.09, 320, 60, 'lowpass', 0.10);   // 遠くの鳴りが尾を引く
+  playTone(196, 0.30, 0.15, 'square', 0.58);         // 下がる二音
+  playTone(147, 0.80, 0.18, 'square', 0.82);
+}
+
 const ALARM_LOOP_SEC = 1.20;   // 1周の長さ。story.js がこの間隔で呼ぶ
 function playStoryAlarmLoop() {
   playTone(622, 0.30, 0.105, 'square',   0);

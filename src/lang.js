@@ -90,6 +90,53 @@ const TEXT = {
   'brief.call':         ['H:僚機 呼集 ― 三回まで', 'H: call the wingmen in — three times'],
   'power.locked':       ['配分 固定 ― 四系統 均等', 'Distribution locked'],
 
+  // --- 任務の目的(HUD)/ ブリーフィング / 決着の瞬間 ------------------
+  'obj.head':           ['任務', 'OBJECTIVE'],
+  'obj.hold':           ['%s秒 持ちこたえる', 'Hold out for %s seconds'],
+  'obj.holdShort':      ['持ちこたえる', 'Hold out'],
+  'obj.holdLeft':       ['残り %s', '%s left'],
+  'obj.boss':           ['戦艦 %s を沈める', 'Sink the battleship %s'],
+  'obj.bossShort':      ['戦艦を沈める', 'Sink the battleship'],
+  'obj.killsProg':      ['撃墜 %s / %s で戦艦が出る', '%s / %s kills to draw it out'],
+  'obj.vents':          ['排熱口 残り %s / %s', 'Vents %s / %s left'],
+  'obj.failShip':       ['自機を失えば失敗', 'Lose your craft and it is over'],
+  'obj.failTime':       ['時間切れ・機体喪失で失敗', 'Fail on time-out or losing your craft'],
+  'obj.noteFall':       ['※ 村は守り切れない', '* The village cannot be saved'],
+
+  'brief.win':          ['達成', 'SUCCESS'],
+  'brief.lose':         ['失敗', 'FAILURE'],
+  'brief.go':           ['Enter   発 艦', 'Enter   LAUNCH'],
+  'brief.chapter1':     ['第一部 一章', 'PART I — CHAPTER 1'],
+  'brief.chapterT':     ['演習空域', 'PRACTICE RANGE'],
+  'brief.lead1':        ['企業連合の接収部隊が村に取り付いた。<br>避難の列は、まだ港に着いていない。<br>―― 時間を稼ぐ。それだけだ。',
+                         'A corporate seizure force has closed on the village.<br>The evacuation column has not reached the port.<br>— Buy them time. That is all.'],
+  'brief.leadT':        ['演習空域での単機戦闘訓練。<br>電力配分・熱・推進剤を同時に回す感覚をつかむ。',
+                         'A solo combat drill in the practice range.<br>Learn to juggle power, heat and propellant at once.'],
+  'brief.rowEnemy':     ['敵', 'HOSTILE'],
+  'brief.rowWing':      ['僚機', 'WING'],
+  'brief.rowShip':      ['本機', 'YOURS'],
+  'brief.rowKeys':      ['操作', 'KEYS'],
+  'brief.enemyDef':     ['企業連合 接収部隊(哨戒機)', 'Corporate seizure force (patrol craft)'],
+  // 訓練の相手は本物の哨戒機と同じ機体。無人機という設定は無いので書かない
+  'brief.enemyTrain':   ['演習相手 三小隊(9機)', 'Three flights of sparring craft (9)'],
+  'brief.wingDef':      ['旧式艇 三機', 'Three old boats'],
+  'brief.wingNone':     ['なし ― 単機', 'None — you fly alone'],
+  'brief.shipDef':      ['四番機 ― 実弾なし(ビーム砲のみ)', 'No.4 — no live rounds, beam only'],
+  'brief.shipTrain':    ['制式機 ― 全兵装', 'Standard — all weapons'],
+  'brief.keysDef':      ['H 僚機呼集(3回)　Tab 操作説明', 'H call wingmen (3)　Tab controls'],
+  'brief.keysTrain':    ['↑←→↓ 電力配分　V ラジエーター　Tab 操作説明',
+                         'Arrows power　V radiator　Tab controls'],
+
+  // 決着の瞬間。リザルトの見出し(まとめ)とは別で、その瞬間の一言
+  'moment.held':        ['持ちこたえた', 'YOU HELD'],
+  'moment.downed':      ['墜とされた', 'SHOT DOWN'],
+  'moment.trainWin':    ['規定撃墜 達成', 'QUOTA MET'],
+  'moment.trainFail':   ['任務失敗', 'MISSION FAILED'],
+  'moment.timeup':      ['時間切れ', 'TIME UP'],
+
+  'hud.resultStory':    ['Enter 再出撃　/　Backspace 物語へ　/　Esc メニューへ',
+                         'Enter sortie again　/　Backspace back to the story　/　Esc menu'],
+
   // --- 僚機の呼び寄せ(H)-------------------------------------------
   'wing.call.on':       ['僚機 呼集', 'Wingmen called in'],
   'wing.call.rest':     ['残り %s 回', '%s left'],

@@ -1965,13 +1965,26 @@ function createStarfield() {
 
   // sizeAttenuation: false = 遠くても点の大きさが変わらない。
   // これが初代スターフォックス期の「くっきりしたドットの星」の見た目になる。
+  // ★ 奥行きを見ない。星は背景であって、何かを隠す物ではない。
+  //
+  //   前は深度テストが効いていたので、この球殻(自機から900〜1300)より
+  //   遠いものは星の点に隠された ― アルカディアを1300より近くに
+  //   置けない、という縛りの正体がこれだった。
+  //   depthTest を切り、depthWrite も切って、いちばん先に描く。
+  //   そうすると星は必ず全部の後ろに回る。
+  //   ※ depthWrite だけ残すと、星の位置に深度が書かれてしまい、
+  //     その奥にある村がまるごと消える。両方切ること。
   const material = new THREE.PointsMaterial({
     color: 0xdfe9f5,
     size: 2,
     sizeAttenuation: false,
+    depthTest: false,
+    depthWrite: false,
   });
 
-  return new THREE.Points(geometry, material);
+  const points = new THREE.Points(geometry, material);
+  points.renderOrder = -2;   // いちばん先に描く = いちばん後ろに見える
+  return points;
 }
 
 // ===================================================================
